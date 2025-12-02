@@ -6,6 +6,10 @@
     "permissions": [
         "storage"
     ],
+    "host_permissions": [
+        "https://api.unsplash.com/*",
+        "https://images.unsplash.com/*"
+    ],
     "chrome_url_overrides": {
         "newtab": "newtab.html"
     },

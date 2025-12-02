@@ -21,16 +21,28 @@
 
 body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     min-height: 100vh;
     color: var(--text-primary);
     overflow-x: hidden;
+    position: relative;
 }
 
-/* 动态背景效果 */
-body::before {
-    content: '';
+/* Background Layer */
+.background-layer {
     position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    z-index: -1;
+    transition: all 0.5s ease;
+}
+
+/* Dynamic background effects */
+.background-layer::before {
+    content: '';
+    position: absolute;
     top: 0;
     left: 0;
     width: 100%;
@@ -40,7 +52,6 @@ body::before {
         radial-gradient(circle at 80% 80%, rgba(88, 86, 214, 0.3) 0%, transparent 50%),
         radial-gradient(circle at 40% 20%, rgba(139, 92, 246, 0.2) 0%, transparent 50%);
     animation: gradient-shift 15s ease infinite;
-    z-index: -1;
 }
 
 @keyframes gradient-shift {
@@ -55,16 +66,43 @@ body::before {
     }
 }
 
+/* Settings Button */
+.settings-btn {
+    position: fixed;
+    top: 2rem;
+    right: 2rem;
+    width: 50px;
+    height: 50px;
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    z-index: 100;
+}
+
+.settings-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: rotate(90deg);
+}
+
 .container {
     max-width: 1400px;
     margin: 0 auto;
     padding: 2rem;
+    position: relative;
+    z-index: 1;
 }
 
-/* 头部样式 */
+/* Header */
 .header {
     text-align: center;
-    margin-bottom: 4rem;
+    margin-bottom: 3rem;
     animation: fadeInDown 0.6s ease;
 }
 
@@ -88,6 +126,7 @@ body::before {
     padding: 2rem;
     display: inline-block;
     box-shadow: var(--shadow);
+    margin-bottom: 2rem;
 }
 
 .time {
@@ -106,7 +145,59 @@ body::before {
     font-weight: 400;
 }
 
-/* 主要内容区域 */
+/* Search Widget */
+.search-widget {
+    max-width: 600px;
+    margin: 0 auto;
+    animation: fadeIn 0.8s ease;
+}
+
+.search-container {
+    position: relative;
+    backdrop-filter: blur(20px);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 50px;
+    padding: 0.75rem 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    transition: all 0.3s ease;
+}
+
+.search-container:focus-within {
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.search-icon {
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.search-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+    font-family: inherit;
+}
+
+.search-input::placeholder {
+    color: var(--text-secondary);
+}
+
+.search-engine-badge {
+    padding: 0.25rem 0.75rem;
+    background: rgba(99, 102, 241, 0.2);
+    border-radius: 20px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* Main Content */
 .main-content {
     position: relative;
     animation: fadeInUp 0.8s ease;
@@ -124,7 +215,177 @@ body::before {
     }
 }
 
-/* 书签网格 */
+/* Widgets Row */
+.widgets-row {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 3rem;
+    flex-wrap: wrap;
+}
+
+.widget {
+    flex: 1;
+    min-width: 300px;
+    backdrop-filter: blur(20px);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.5rem;
+    box-shadow: var(--shadow);
+}
+
+.widget-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.widget-header h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+/* Todo Widget */
+.todo-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.todo-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+    transition: all 0.2s ease;
+}
+
+.todo-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.todo-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--primary);
+}
+
+.todo-text {
+    flex: 1;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+
+.todo-text.completed {
+    text-decoration: line-through;
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+.todo-delete-btn {
+    background: none;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    padding: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.todo-item:hover .todo-delete-btn {
+    opacity: 1;
+}
+
+.add-todo-btn {
+    width: 28px;
+    height: 28px;
+    background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
+    border: none;
+    border-radius: 50%;
+    color: white;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.add-todo-btn:hover {
+    transform: scale(1.1);
+}
+
+.todo-input-container {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.todo-input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: inherit;
+    outline: none;
+}
+
+.todo-input:focus {
+    border-color: var(--primary);
+}
+
+.save-todo-btn {
+    padding: 0.5rem 1rem;
+    background: var(--primary);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.save-todo-btn:hover {
+    background: var(--primary-hover);
+}
+
+/* Bookmarks Section */
+.bookmarks-section {
+    position: relative;
+}
+
+/* Folder Navigation */
+.folder-nav {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+}
+
+.folder-tab {
+    padding: 0.5rem 1.25rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.9rem;
+}
+
+.folder-tab:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.folder-tab.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+/* Bookmarks Grid */
 .bookmarks-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -132,7 +393,7 @@ body::before {
     margin-bottom: 3rem;
 }
 
-/* 书签卡片 */
+/* Bookmark Card */
 .bookmark-card {
     position: relative;
     display: flex;
@@ -232,7 +493,7 @@ body::before {
     transform: scale(1.1);
 }
 
-/* 添加按钮 */
+/* Add Bookmark Button */
 .add-bookmark-btn {
     position: fixed;
     bottom: 3rem;
@@ -257,7 +518,7 @@ body::before {
     box-shadow: 0 25px 60px rgba(99, 102, 241, 0.4);
 }
 
-/* 模态框 */
+/* Modal */
 .modal {
     display: none;
     position: fixed;
@@ -342,7 +603,8 @@ body::before {
     color: var(--text-secondary);
 }
 
-.form-group input {
+.form-group input,
+.form-group select {
     width: 100%;
     padding: 0.75rem 1rem;
     background: rgba(15, 23, 42, 0.5);
@@ -350,10 +612,12 @@ body::before {
     border-radius: 10px;
     color: var(--text-primary);
     font-size: 1rem;
+    font-family: inherit;
     transition: all 0.3s ease;
 }
 
-.form-group input:focus {
+.form-group input:focus,
+.form-group select:focus {
     outline: none;
     border-color: var(--primary);
     background: rgba(15, 23, 42, 0.7);
@@ -414,19 +678,310 @@ body::before {
     color: var(--text-primary);
 }
 
-/* 响应式设计 */
+/* Settings Panel */
+.settings-panel {
+    position: fixed;
+    top: 0;
+    right: -400px;
+    width: 400px;
+    height: 100vh;
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.98) 0%, rgba(15, 23, 42, 0.98) 100%);
+    backdrop-filter: blur(20px);
+    box-shadow: -10px 0 50px rgba(0, 0, 0, 0.5);
+    z-index: 2000;
+    transition: right 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow-y: auto;
+}
+
+.settings-panel.active {
+    right: 0;
+}
+
+.settings-content {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.settings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.settings-header h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.close-settings-btn {
+    background: none;
+    border: none;
+    font-size: 2rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.close-settings-btn:hover {
+    color: var(--text-primary);
+}
+
+.settings-body {
+    flex: 1;
+    padding: 2rem;
+}
+
+/* Settings Tabs */
+.settings-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+}
+
+.tab-btn {
+    padding: 0.5rem 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.9rem;
+}
+
+.tab-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.tab-btn.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+/* Tab Panes */
+.settings-tab-content {
+    min-height: 300px;
+}
+
+.tab-pane {
+    display: none;
+}
+
+.tab-pane.active {
+    display: block;
+    animation: fadeIn 0.3s ease;
+}
+
+/* Setting Items */
+.setting-item {
+    margin-bottom: 2rem;
+}
+
+.setting-item label {
+    display: block;
+    margin-bottom: 0.75rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.setting-select {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.setting-slider {
+    width: 100%;
+    height: 6px;
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 5px;
+    outline: none;
+    -webkit-appearance: none;
+}
+
+.setting-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    background: var(--primary);
+    cursor: pointer;
+    border-radius: 50%;
+}
+
+.setting-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: var(--primary);
+    cursor: pointer;
+    border-radius: 50%;
+    border: none;
+}
+
+/* Toggle Switch */
+.toggle-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+}
+
+.toggle-input {
+    display: none;
+}
+
+.toggle-slider {
+    position: relative;
+    width: 50px;
+    height: 26px;
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 34px;
+    transition: background 0.3s ease;
+}
+
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    height: 20px;
+    width: 20px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.3s ease;
+}
+
+.toggle-input:checked+.toggle-slider {
+    background: var(--primary);
+}
+
+.toggle-input:checked+.toggle-slider::before {
+    transform: translateX(24px);
+}
+
+/* Wallpaper Controls */
+.wallpaper-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.wallpaper-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 10px;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.95rem;
+}
+
+.wallpaper-btn:hover {
+    background: rgba(99, 102, 241, 0.2);
+}
+
+/* Data Controls */
+.data-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.data-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.data-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.export-btn {
+    border-color: rgba(34, 197, 94, 0.3);
+}
+
+.import-btn {
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.reset-btn {
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.data-info {
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+}
+
+.data-info p {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.data-info p:last-child {
+    margin-bottom: 0;
+}
+
+/* Responsive Design */
 @media (max-width: 768px) {
-    .bookmarks-grid {
-        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-        gap: 1.5rem;
+    .container {
+        padding: 1rem;
     }
 
     .time {
         font-size: 3rem;
     }
 
+    .bookmarks-grid {
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 1.5rem;
+    }
+
     .add-bookmark-btn {
         bottom: 2rem;
         right: 2rem;
     }
+
+    .settings-panel {
+        width: 100%;
+        right: -100%;
+    }
+
+    .widgets-row {
+        flex-direction: column;
+    }
+
+    .widget {
+        min-width: unset;
+    }
+}
+
+/* Hidden Class */
+.hidden {
+    display: none !important;
 }

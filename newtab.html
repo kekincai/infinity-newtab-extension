@@ -9,32 +9,83 @@
 </head>
 
 <body>
+    <!-- Background Layer -->
+    <div class="background-layer" id="backgroundLayer"></div>
+
+    <!-- Settings Button -->
+    <button class="settings-btn" id="settingsBtn" title="设置">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 1v6m0 6v6m5.2-13.8l-4.2 4.2m-6 6l-4.2 4.2m13.8-10.4l-4.2 4.2m-6 6l-4.2 4.2M23 12h-6m-6 0H1">
+            </path>
+        </svg>
+    </button>
+
     <div class="container">
-        <!-- 顶部时间和搜索栏 -->
+        <!-- Header with Time and Search -->
         <header class="header">
             <div class="time-display">
                 <div class="time" id="time">12:00</div>
                 <div class="date" id="date">2025年12月2日</div>
             </div>
+
+            <!-- Search Widget -->
+            <div class="search-widget" id="searchWidget">
+                <div class="search-container">
+                    <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                    </svg>
+                    <input type="text" id="searchInput" placeholder="搜索网络..." class="search-input">
+                    <div class="search-engine-badge" id="searchEngineBadge">Google</div>
+                </div>
+            </div>
         </header>
 
-        <!-- 主要内容区域 -->
+        <!-- Main Content Area -->
         <main class="main-content">
-            <div class="bookmarks-grid" id="bookmarksGrid">
-                <!-- 书签会动态添加到这里 -->
+            <!-- Widgets Row -->
+            <div class="widgets-row" id="widgetsRow">
+                <!-- Todo Widget -->
+                <div class="widget todo-widget" id="todoWidget">
+                    <div class="widget-header">
+                        <h3>📝 待办事项</h3>
+                        <button class="add-todo-btn" id="addTodoBtn">+</button>
+                    </div>
+                    <div class="todo-list" id="todoList">
+                        <!-- Todos will be added here -->
+                    </div>
+                    <div class="todo-input-container" id="todoInputContainer" style="display: none;">
+                        <input type="text" id="todoInput" placeholder="新任务..." class="todo-input">
+                        <button class="save-todo-btn" id="saveTodoBtn">保存</button>
+                    </div>
+                </div>
             </div>
 
-            <!-- 添加按钮 -->
-            <button class="add-bookmark-btn" id="addBtn">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="12" y1="5" x2="12" y2="19"></line>
-                    <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-            </button>
+            <!-- Bookmarks Section -->
+            <div class="bookmarks-section">
+                <!-- Folder Navigation -->
+                <div class="folder-nav" id="folderNav">
+                    <button class="folder-tab active" data-folder="全部">全部</button>
+                </div>
+
+                <div class="bookmarks-grid" id="bookmarksGrid">
+                    <!-- Bookmarks will be added here -->
+                </div>
+
+                <!-- Add Bookmark Button -->
+                <button class="add-bookmark-btn" id="addBtn">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                </button>
+            </div>
         </main>
     </div>
 
-    <!-- 添加书签弹窗 -->
+    <!-- Add Bookmark Modal -->
     <div class="modal" id="addModal">
         <div class="modal-content">
             <div class="modal-header">
@@ -50,6 +101,12 @@
                     <label for="nameInput">名称（可选）</label>
                     <input type="text" id="nameInput" placeholder="将自动获取网页标题">
                 </div>
+                <div class="form-group">
+                    <label for="folderSelect">文件夹</label>
+                    <select id="folderSelect" class="folder-select">
+                        <option value="全部">全部</option>
+                    </select>
+                </div>
                 <div class="preview" id="preview" style="display: none;">
                     <img id="previewIcon" src="" alt="图标预览">
                     <span id="previewName"></span>
@@ -62,6 +119,166 @@
         </div>
     </div>
 
+    <!-- Settings Panel -->
+    <div class="settings-panel" id="settingsPanel">
+        <div class="settings-content">
+            <div class="settings-header">
+                <h2>设置</h2>
+                <button class="close-settings-btn" id="closeSettingsBtn">&times;</button>
+            </div>
+
+            <div class="settings-body">
+                <!-- Settings Tabs -->
+                <div class="settings-tabs">
+                    <button class="tab-btn active" data-tab="appearance">外观</button>
+                    <button class="tab-btn" data-tab="wallpaper">壁纸</button>
+                    <button class="tab-btn" data-tab="layout">布局</button>
+                    <button class="tab-btn" data-tab="data">数据</button>
+                </div>
+
+                <!-- Tab Contents -->
+                <div class="settings-tab-content">
+                    <!-- Appearance Tab -->
+                    <div class="tab-pane active" id="appearanceTab">
+                        <div class="setting-item">
+                            <label>时钟格式</label>
+                            <select id="clockFormatSelect" class="setting-select">
+                                <option value="24h">24小时制</option>
+                                <option value="12h">12小时制</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label>搜索引擎</label>
+                            <select id="searchEngineSelect" class="setting-select">
+                                <option value="google">Google</option>
+                                <option value="bing">Bing</option>
+                                <option value="baidu">百度</option>
+                                <option value="duckduckgo">DuckDuckGo</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Wallpaper Tab -->
+                    <div class="tab-pane" id="wallpaperTab">
+                        <div class="wallpaper-controls">
+                            <button class="wallpaper-btn" id="randomWallpaperBtn">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                    <polyline points="21 15 16 10 5 21"></polyline>
+                                </svg>
+                                随机壁纸
+                            </button>
+                            <label class="wallpaper-btn upload-btn">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                                上传本地
+                                <input type="file" id="wallpaperUpload" accept="image/*" style="display: none;">
+                            </label>
+                            <button class="wallpaper-btn" id="resetWallpaperBtn">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                                    <path d="M3 3v5h5"></path>
+                                </svg>
+                                重置默认
+                            </button>
+                        </div>
+                        <div class="setting-item">
+                            <label>模糊度: <span id="blurValue">0</span>px</label>
+                            <input type="range" id="blurSlider" min="0" max="10" value="0" class="setting-slider">
+                        </div>
+                        <div class="setting-item">
+                            <label>暗度: <span id="overlayValue">30</span>%</label>
+                            <input type="range" id="overlaySlider" min="0" max="80" value="30" class="setting-slider">
+                        </div>
+                    </div>
+
+                    <!-- Layout Tab -->
+                    <div class="tab-pane" id="layoutTab">
+                        <div class="setting-item">
+                            <label class="toggle-label">
+                                <span>显示时钟</span>
+                                <input type="checkbox" id="showClockToggle" class="toggle-input" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="setting-item">
+                            <label class="toggle-label">
+                                <span>显示搜索框</span>
+                                <input type="checkbox" id="showSearchToggle" class="toggle-input" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="setting-item">
+                            <label class="toggle-label">
+                                <span>显示书签</span>
+                                <input type="checkbox" id="showBookmarksToggle" class="toggle-input" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="setting-item">
+                            <label class="toggle-label">
+                                <span>显示待办事项</span>
+                                <input type="checkbox" id="showTodoToggle" class="toggle-input" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Data Tab -->
+                    <div class="tab-pane" id="dataTab">
+                        <div class="data-controls">
+                            <button class="data-btn export-btn" id="exportBtn">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="7 10 12 15 17 10"></polyline>
+                                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                                </svg>
+                                导出数据
+                            </button>
+                            <label class="data-btn import-btn">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                                导入数据
+                                <input type="file" id="importInput" accept=".json" style="display: none;">
+                            </label>
+                            <button class="data-btn reset-btn" id="resetBtn">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                                    <path d="M3 3v5h5"></path>
+                                </svg>
+                                重置所有设置
+                            </button>
+                        </div>
+                        <div class="data-info">
+                            <p>💡 导出功能会将所有书签、设置和待办事项保存为JSON文件</p>
+                            <p>⚠️ 导入数据会覆盖当前所有设置</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Imports -->
+    <script src="modules/settings.js"></script>
+    <script src="modules/wallpaper.js"></script>
+    <script src="modules/bookmarks.js"></script>
+    <script src="modules/search.js"></script>
+    <script src="modules/todo.js"></script>
+    <script src="modules/import-export.js"></script>
     <script src="script.js"></script>
 </body>
 
