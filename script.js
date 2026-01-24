@@ -5,6 +5,7 @@
 
 // Application State
 let currentFolder = '全部';
+let statusIntervalId = null;
 
 // Initialize application
 document.addEventListener('DOMContentLoaded', async () => {
@@ -20,6 +21,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Start time updates
     updateTime();
     setInterval(updateTime, 1000);
+    startStatusUpdates();
 
     // Load content
     loadBookmarks();
@@ -39,7 +41,7 @@ function applySettings() {
     const settings = settingsManager.getAllSettings();
 
     // Apply layout settings
-    toggleElement('time-display', settings.layout.showClock);
+    toggleElement('time-block', settings.layout.showClock);
     toggleElement('searchWidget', settings.layout.showSearch);
     toggleElement('bookmarks-section', settings.layout.showBookmarks);
 
@@ -136,7 +138,7 @@ function initializeEventListeners() {
     // Layout Toggles
     document.getElementById('showClockToggle').addEventListener('change', async (e) => {
         await settingsManager.updateSetting('layout', 'showClock', e.target.checked);
-        toggleElement('time-display', e.target.checked);
+        toggleElement('time-block', e.target.checked);
     });
 
     document.getElementById('showSearchToggle').addEventListener('change', async (e) => {
@@ -195,6 +197,10 @@ function initializeEventListeners() {
             document.getElementById('searchInput').focus();
         }
     });
+
+    // System status updates
+    window.addEventListener('online', updateSystemStatus);
+    window.addEventListener('offline', updateSystemStatus);
 
     // Bookmarks
     document.getElementById('addBtn').addEventListener('click', openModal);
@@ -288,6 +294,91 @@ function updateTime() {
 function updateSearchEngineBadge() {
     const engine = searchManager.getCurrentEngine();
     document.getElementById('searchEngineBadge').textContent = engine.name;
+}
+
+// ============================================
+// Status Bar
+// ============================================
+
+function startStatusUpdates() {
+    updateSystemStatus();
+    updateActivityStatus();
+
+    if (statusIntervalId) clearInterval(statusIntervalId);
+    statusIntervalId = setInterval(() => {
+        updateSystemStatus();
+        updateActivityStatus();
+    }, 8000);
+}
+
+function updateSystemStatus() {
+    // CPU info
+    const cpuInfo = document.getElementById('cpuInfo');
+    const cores = navigator.hardwareConcurrency || 0;
+    cpuInfo.textContent = cores ? `CPU: ${cores} 线程` : 'CPU: 未知';
+
+    // Memory info (approximate, deviceMemory is in GB)
+    const memoryInfo = document.getElementById('memoryInfo');
+    const deviceMemory = navigator.deviceMemory;
+    memoryInfo.textContent = deviceMemory ? `内存: ≈${deviceMemory} GB` : '内存: 未知';
+
+    // Battery info
+    const batteryInfo = document.getElementById('batteryInfo');
+    if (navigator.getBattery) {
+        navigator.getBattery().then(battery => {
+            const level = Math.round(battery.level * 100);
+            const charging = battery.charging ? '⚡️' : '';
+            batteryInfo.textContent = `电池: ${level}% ${charging}`;
+            batteryInfo.onclick = () => alert(`电池电量 ${level}% ${battery.charging ? '（充电中）' : ''}`);
+        }).catch(() => {
+            batteryInfo.textContent = '电池: 不支持';
+            batteryInfo.onclick = null;
+        });
+    } else {
+        batteryInfo.textContent = '电池: 不支持';
+        batteryInfo.onclick = null;
+    }
+}
+
+function updateActivityStatus() {
+    const mediaLabel = document.getElementById('mediaActivity');
+    const downloadLabel = document.getElementById('downloadActivity');
+
+    chrome.tabs.query({ audible: true }, (tabs) => {
+        if (tabs.length === 0) {
+            mediaLabel.textContent = '无媒体播放';
+            mediaLabel.classList.remove('highlight');
+            mediaLabel.onclick = null;
+        } else {
+            const titles = tabs.slice(0, 3).map(t => truncate(t.title || t.url, 18));
+            mediaLabel.textContent = `播放中：${titles.join(' / ')}`;
+            mediaLabel.classList.add('highlight');
+            mediaLabel.onclick = () => {
+                const target = tabs[0];
+                chrome.tabs.update(target.id, { active: true });
+            };
+        }
+    });
+
+    if (chrome.downloads && chrome.downloads.search) {
+        chrome.downloads.search({ state: 'in_progress' }, (items) => {
+            if (items.length === 0) {
+                downloadLabel.textContent = '无下载';
+                downloadLabel.classList.remove('highlight');
+                downloadLabel.onclick = null;
+                return;
+            }
+            const first = items[0];
+            const fileName = first.filename ? first.filename.split(/[\\/]/).pop() : '下载中';
+            const progress = first.totalBytes > 0 ? Math.round((first.bytesReceived / first.totalBytes) * 100) : 0;
+            downloadLabel.textContent = `下载中：${truncate(fileName, 14)} (${progress}%)`;
+            downloadLabel.classList.add('highlight');
+            downloadLabel.onclick = () => chrome.downloads.show(first.id);
+        });
+    } else {
+        downloadLabel.textContent = '下载不可用';
+        downloadLabel.classList.remove('highlight');
+    }
 }
 
 // ============================================
@@ -582,4 +673,10 @@ function debounce(func, wait) {
 function getFolderAccent(index) {
     const palette = ['#ff9bd2', '#a5b4ff', '#7ad7f0', '#ffcba4', '#9bffd9'];
     return palette[index % palette.length];
+}
+
+function truncate(str, maxLength) {
+    if (!str) return '';
+    if (str.length <= maxLength) return str;
+    return str.slice(0, maxLength - 1) + '…';
 }

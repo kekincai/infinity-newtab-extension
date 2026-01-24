@@ -4,7 +4,9 @@
     "version": "1.0.0",
     "description": "一个美观的新标签页，管理你的常用网站",
     "permissions": [
-        "storage"
+        "storage",
+        "tabs",
+        "downloads"
     ],
     "host_permissions": [
         "https://api.unsplash.com/*",

@@ -22,26 +22,44 @@
     </button>
 
     <div class="container">
-        <!-- Header with Time and Search -->
-        <header class="header">
-            <div class="time-display">
+        <!-- Header with Time and Status -->
+        <header class="header compact">
+            <div class="time-block">
                 <div class="time" id="time">12:00</div>
                 <div class="date" id="date">2025年12月2日</div>
             </div>
 
-            <!-- Search Widget -->
-            <div class="search-widget" id="searchWidget">
-                <div class="search-container">
-                    <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" stroke-width="2">
-                        <circle cx="11" cy="11" r="8"></circle>
-                        <path d="m21 21-4.35-4.35"></path>
-                    </svg>
-                    <input type="text" id="searchInput" placeholder="搜索网络..." class="search-input">
-                    <div class="search-engine-badge" id="searchEngineBadge">Google</div>
+            <div class="status-strip">
+                <div class="status-card wide" id="activityStatus">
+                    <div class="status-title">活动</div>
+                    <div class="status-body activity-body">
+                        <button class="status-pill soft clickable" id="mediaActivity" type="button">无媒体播放</button>
+                        <button class="status-pill soft clickable" id="downloadActivity" type="button">无下载</button>
+                    </div>
+                </div>
+                <div class="status-card" id="systemStatus">
+                    <div class="status-title">系统</div>
+                    <div class="status-body activity-body">
+                        <div class="status-pill soft" id="cpuInfo">CPU: --</div>
+                        <div class="status-pill soft" id="memoryInfo">内存: --</div>
+                        <div class="status-pill soft clickable" id="batteryInfo">电池: --</div>
+                    </div>
                 </div>
             </div>
         </header>
+
+        <!-- Search Widget -->
+        <div class="search-widget" id="searchWidget">
+            <div class="search-container">
+                <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <input type="text" id="searchInput" placeholder="搜索网络..." class="search-input">
+                <div class="search-engine-badge" id="searchEngineBadge">Google</div>
+            </div>
+        </div>
 
         <!-- Main Content Area -->
         <main class="main-content">
