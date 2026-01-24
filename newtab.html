@@ -45,29 +45,17 @@
 
         <!-- Main Content Area -->
         <main class="main-content">
-            <!-- Widgets Row -->
-            <div class="widgets-row" id="widgetsRow">
-                <!-- Todo Widget -->
-                <div class="widget todo-widget" id="todoWidget">
-                    <div class="widget-header">
-                        <h3>📝 待办事项</h3>
-                        <button class="add-todo-btn" id="addTodoBtn">+</button>
-                    </div>
-                    <div class="todo-list" id="todoList">
-                        <!-- Todos will be added here -->
-                    </div>
-                    <div class="todo-input-container" id="todoInputContainer" style="display: none;">
-                        <input type="text" id="todoInput" placeholder="新任务..." class="todo-input">
-                        <button class="save-todo-btn" id="saveTodoBtn">保存</button>
-                    </div>
-                </div>
-            </div>
-
             <!-- Bookmarks Section -->
             <div class="bookmarks-section">
-                <!-- Folder Navigation -->
-                <div class="folder-nav" id="folderNav">
-                    <button class="folder-tab active" data-folder="全部">全部</button>
+                <div class="bookmarks-header">
+                    <div class="folder-state">
+                        <p class="eyebrow">当前文件夹</p>
+                        <h3 id="currentFolderLabel">全部</h3>
+                    </div>
+                    <div class="header-actions">
+                        <button class="ghost-btn" id="animeWallpaperBtn">换张二次元壁纸</button>
+                        <button class="ghost-btn primary" id="addFolderBtn">新建文件夹</button>
+                    </div>
                 </div>
 
                 <div class="bookmarks-grid" id="bookmarksGrid">
@@ -168,7 +156,7 @@
                                     <circle cx="8.5" cy="8.5" r="1.5"></circle>
                                     <polyline points="21 15 16 10 5 21"></polyline>
                                 </svg>
-                                随机壁纸
+                                二次元随机壁纸
                             </button>
                             <label class="wallpaper-btn upload-btn">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -222,13 +210,6 @@
                                 <span class="toggle-slider"></span>
                             </label>
                         </div>
-                        <div class="setting-item">
-                            <label class="toggle-label">
-                                <span>显示待办事项</span>
-                                <input type="checkbox" id="showTodoToggle" class="toggle-input" checked>
-                                <span class="toggle-slider"></span>
-                            </label>
-                        </div>
                     </div>
 
                     <!-- Data Tab -->
@@ -263,7 +244,7 @@
                             </button>
                         </div>
                         <div class="data-info">
-                            <p>💡 导出功能会将所有书签、设置和待办事项保存为JSON文件</p>
+                            <p>💡 导出功能会将所有书签与设置保存为JSON文件</p>
                             <p>⚠️ 导入数据会覆盖当前所有设置</p>
                         </div>
                     </div>
@@ -277,7 +258,6 @@
     <script src="modules/wallpaper.js"></script>
     <script src="modules/bookmarks.js"></script>
     <script src="modules/search.js"></script>
-    <script src="modules/todo.js"></script>
     <script src="modules/import-export.js"></script>
     <script src="script.js"></script>
 </body>

@@ -4,15 +4,12 @@
 
 // Preset wallpaper collection
 const PRESET_WALLPAPERS = [
-    'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1920&q=80',
-    'https://images.unsplash.com/photo-1511884642898-4c92249e20b6?w=1920&q=80',
-    'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1920&q=80',
-    'https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=1920&q=80',
-    'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=1920&q=80',
-    'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1920&q=80',
-    'https://images.unsplash.com/photo-1426604966848-d7adac402bff?w=1920&q=80',
-    'https://images.unsplash.com/photo-1501594907352-04cda38ebc29?w=1920&q=80'
+    'https://api.ixiaowai.cn/api/api.php',
+    'https://www.dmoe.cc/random.php',
+    'https://api.ixiaowai.cn/mcapi/mcapi.php'
 ];
+
+const ANIME_WALLPAPER_SOURCE = 'https://api.ixiaowai.cn/api/api.php';
 
 class WallpaperManager {
     constructor() {
@@ -48,7 +45,7 @@ class WallpaperManager {
     applyGradient() {
         if (!this.bgElement) return;
 
-        this.bgElement.style.backgroundImage = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+        this.bgElement.style.backgroundImage = 'linear-gradient(135deg, #fff7fb 0%, #f8fbff 40%, #fef6ff 80%)';
         this.bgElement.style.filter = 'none';
     }
 
@@ -75,7 +72,38 @@ class WallpaperManager {
      */
     async setRandomPreset() {
         const randomUrl = PRESET_WALLPAPERS[Math.floor(Math.random() * PRESET_WALLPAPERS.length)];
-        await this.setWallpaper('preset', randomUrl);
+        await this.applyRemoteWallpaper(randomUrl);
+    }
+
+    /**
+     * Fetch anime wallpaper from remote source
+     */
+    async setRandomAnime() {
+        await this.applyRemoteWallpaper(ANIME_WALLPAPER_SOURCE);
+    }
+
+    /**
+     * Preload and apply remote wallpaper with cache-busting
+     */
+    async applyRemoteWallpaper(url) {
+        const withTimestamp = `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+        try {
+            await this.preloadImage(withTimestamp);
+            await this.setWallpaper('preset', withTimestamp, 2, 35);
+        } catch (e) {
+            console.warn('Wallpaper load failed, fallback to gradient.', e);
+            await this.resetToGradient();
+        }
+    }
+
+    preloadImage(url) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => resolve(url);
+            img.onerror = reject;
+            img.src = url;
+        });
     }
 
     /**

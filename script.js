@@ -12,7 +12,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     await settingsManager.init();
     await bookmarksManager.init();
     await searchManager.init();
-    await todoManager.init();
 
     // Initialize UI
     initializeUI();
@@ -24,8 +23,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Load content
     loadBookmarks();
-    loadTodos();
-    loadFolders();
     applySettings();
 });
 
@@ -45,7 +42,6 @@ function applySettings() {
     toggleElement('time-display', settings.layout.showClock);
     toggleElement('searchWidget', settings.layout.showSearch);
     toggleElement('bookmarks-section', settings.layout.showBookmarks);
-    toggleElement('todoWidget', settings.layout.showTodo);
 
     // Update search engine badge
     updateSearchEngineBadge();
@@ -69,7 +65,6 @@ function updateSettingsUI(settings) {
     document.getElementById('showClockToggle').checked = settings.layout.showClock;
     document.getElementById('showSearchToggle').checked = settings.layout.showSearch;
     document.getElementById('showBookmarksToggle').checked = settings.layout.showBookmarks;
-    document.getElementById('showTodoToggle').checked = settings.layout.showTodo;
 }
 
 function toggleElement(id, show) {
@@ -122,6 +117,10 @@ function initializeEventListeners() {
         await wallpaperManager.resetToGradient();
     });
 
+    document.getElementById('animeWallpaperBtn').addEventListener('click', async () => {
+        await wallpaperManager.setRandomAnime();
+    });
+
     document.getElementById('blurSlider').addEventListener('input', async (e) => {
         const value = e.target.value;
         document.getElementById('blurValue').textContent = value;
@@ -148,11 +147,6 @@ function initializeEventListeners() {
     document.getElementById('showBookmarksToggle').addEventListener('change', async (e) => {
         await settingsManager.updateSetting('layout', 'showBookmarks', e.target.checked);
         toggleElement('bookmarks-section', e.target.checked);
-    });
-
-    document.getElementById('showTodoToggle').addEventListener('change', async (e) => {
-        await settingsManager.updateSetting('layout', 'showTodo', e.target.checked);
-        toggleElement('todoWidget', e.target.checked);
     });
 
     // Data Management
@@ -202,18 +196,12 @@ function initializeEventListeners() {
         }
     });
 
-    // Todo
-    document.getElementById('addTodoBtn').addEventListener('click', showTodoInput);
-    document.getElementById('saveTodoBtn').addEventListener('click', saveTodo);
-    document.getElementById('todoInput').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') saveTodo();
-    });
-
     // Bookmarks
     document.getElementById('addBtn').addEventListener('click', openModal);
     document.getElementById('closeBtn').addEventListener('click', closeModal);
     document.getElementById('cancelBtn').addEventListener('click', closeModal);
     document.getElementById('saveBtn').addEventListener('click', saveBookmark);
+    document.getElementById('addFolderBtn').addEventListener('click', promptAddFolder);
 
     // Modal click outside to close
     document.getElementById('addModal').addEventListener('click', (e) => {
@@ -303,76 +291,6 @@ function updateSearchEngineBadge() {
 }
 
 // ============================================
-// Todo Functions
-// ============================================
-
-function showTodoInput() {
-    document.getElementById('todoInputContainer').style.display = 'flex';
-    document.getElementById('todoInput').focus();
-}
-
-async function saveTodo() {
-    const input = document.getElementById('todoInput');
-    const text = input.value.trim();
-
-    if (text) {
-        await todoManager.addTodo(text);
-        input.value = '';
-        document.getElementById('todoInputContainer').style.display = 'none';
-        loadTodos();
-    }
-}
-
-async function loadTodos() {
-    const todos = todoManager.getAllTodos();
-    const todoList = document.getElementById('todoList');
-
-    todoList.innerHTML = '';
-
-    if (todos.length === 0) {
-        todoList.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 2rem;">暂无待办事项</p>';
-        return;
-    }
-
-    todos.forEach(todo => {
-        const item = createTodoItem(todo);
-        todoList.appendChild(item);
-    });
-}
-
-function createTodoItem(todo) {
-    const div = document.createElement('div');
-    div.className = 'todo-item';
-
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'todo-checkbox';
-    checkbox.checked = todo.completed;
-    checkbox.addEventListener('change', async () => {
-        await todoManager.toggleTodo(todo.id);
-        loadTodos();
-    });
-
-    const text = document.createElement('span');
-    text.className = 'todo-text' + (todo.completed ? ' completed' : '');
-    text.textContent = todo.text;
-
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'todo-delete-btn';
-    deleteBtn.textContent = '×';
-    deleteBtn.addEventListener('click', async () => {
-        await todoManager.deleteTodo(todo.id);
-        loadTodos();
-    });
-
-    div.appendChild(checkbox);
-    div.appendChild(text);
-    div.appendChild(deleteBtn);
-
-    return div;
-}
-
-// ============================================
 // Bookmark Functions
 // ============================================
 
@@ -443,13 +361,31 @@ async function deleteBookmark(id) {
 }
 
 function loadBookmarks() {
-    const bookmarks = bookmarksManager.getBookmarksByFolder(currentFolder);
     const grid = document.getElementById('bookmarksGrid');
+    const folders = bookmarksManager.getAllFolders();
+    const bookmarks = bookmarksManager.getBookmarksByFolder(currentFolder);
+
+    updateFolderSelect(folders);
+    document.getElementById('currentFolderLabel').textContent = currentFolder;
 
     grid.innerHTML = '';
 
-    if (bookmarks.length === 0) {
-        grid.innerHTML = '<p style="color: var(--text-secondary); text-align: center; grid-column: 1 / -1; padding: 3rem;">暂无书签，点击右下角添加</p>';
+    if (currentFolder !== '全部') {
+        grid.appendChild(createBackCard());
+    } else {
+        const folderNames = folders.filter(folder => folder !== '全部');
+        folderNames.forEach((folder, index) => {
+            const card = createFolderCard(folder, index);
+            grid.appendChild(card);
+        });
+        grid.appendChild(createAddFolderCard());
+    }
+
+    if (bookmarks.length === 0 && currentFolder !== '全部') {
+        const empty = document.createElement('p');
+        empty.className = 'empty-state';
+        empty.textContent = '这里空空的，添加一些书签吧';
+        grid.appendChild(empty);
         return;
     }
 
@@ -496,23 +432,87 @@ function createBookmarkCard(bookmark, index) {
     return card;
 }
 
-function loadFolders() {
-    const folders = bookmarksManager.getAllFolders();
-    const folderNav = document.getElementById('folderNav');
-    const folderSelect = document.getElementById('folderSelect');
+function switchFolder(folder) {
+    currentFolder = folder;
+    loadBookmarks();
+}
 
-    // Update folder navigation
-    folderNav.innerHTML = '';
-    folders.forEach(folder => {
-        const tab = document.createElement('button');
-        tab.className = 'folder-tab' + (folder === currentFolder ? ' active' : '');
-        tab.textContent = folder;
-        tab.dataset.folder = folder;
-        tab.addEventListener('click', () => switchFolder(folder));
-        folderNav.appendChild(tab);
+function createFolderCard(folder, index) {
+    const card = document.createElement('button');
+    const bookmarks = bookmarksManager.getBookmarksByFolder(folder);
+    card.className = 'folder-card';
+    card.dataset.folder = folder;
+    card.style.setProperty('--folder-accent', getFolderAccent(index));
+    card.onclick = () => switchFolder(folder);
+
+    const preview = document.createElement('div');
+    preview.className = 'folder-preview';
+    bookmarks.slice(0, 4).forEach(bookmark => {
+        const bubble = document.createElement('div');
+        bubble.className = 'preview-bubble';
+        const img = document.createElement('img');
+        img.src = bookmark.icon;
+        img.alt = bookmark.name;
+        img.onerror = () => {
+            img.src = getDefaultIcon();
+        };
+        bubble.appendChild(img);
+        preview.appendChild(bubble);
     });
 
-    // Update folder select in modal
+    if (bookmarks.length === 0) {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'folder-empty';
+        placeholder.textContent = '空文件夹，等你填满';
+        preview.appendChild(placeholder);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'folder-meta';
+
+    const name = document.createElement('div');
+    name.className = 'folder-name';
+    name.textContent = folder;
+
+    const count = document.createElement('div');
+    count.className = 'folder-count';
+    count.textContent = `${bookmarks.length} 个书签`;
+
+    meta.appendChild(name);
+    meta.appendChild(count);
+
+    card.appendChild(preview);
+    card.appendChild(meta);
+
+    return card;
+}
+
+function createAddFolderCard() {
+    const addCard = document.createElement('button');
+    addCard.className = 'folder-card add-folder-card';
+    addCard.innerHTML = `
+        <span class="add-folder-icon">+</span>
+        <span class="folder-name">新建文件夹</span>
+        <span class="folder-count">把相关站点收进一个合集</span>
+    `;
+    addCard.addEventListener('click', promptAddFolder);
+    return addCard;
+}
+
+function createBackCard() {
+    const backCard = document.createElement('button');
+    backCard.className = 'folder-card back-card';
+    backCard.innerHTML = `
+        <span class="back-icon">←</span>
+        <span class="folder-name">返回全部</span>
+        <span class="folder-count">回到所有文件夹</span>
+    `;
+    backCard.addEventListener('click', () => switchFolder('全部'));
+    return backCard;
+}
+
+function updateFolderSelect(folders) {
+    const folderSelect = document.getElementById('folderSelect');
     folderSelect.innerHTML = '';
     folders.forEach(folder => {
         const option = document.createElement('option');
@@ -522,9 +522,14 @@ function loadFolders() {
     });
 }
 
-function switchFolder(folder) {
-    currentFolder = folder;
-    loadFolders();
+async function promptAddFolder() {
+    const name = prompt('文件夹名称');
+    if (!name) return;
+
+    const cleanName = name.trim();
+    if (!cleanName) return;
+
+    await bookmarksManager.addFolder(cleanName);
     loadBookmarks();
 }
 
@@ -572,4 +577,9 @@ function debounce(func, wait) {
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
     };
+}
+
+function getFolderAccent(index) {
+    const palette = ['#ff9bd2', '#a5b4ff', '#7ad7f0', '#ffcba4', '#9bffd9'];
+    return palette[index % palette.length];
 }

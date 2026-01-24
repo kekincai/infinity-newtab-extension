@@ -8,7 +8,9 @@
     ],
     "host_permissions": [
         "https://api.unsplash.com/*",
-        "https://images.unsplash.com/*"
+        "https://images.unsplash.com/*",
+        "https://api.ixiaowai.cn/*",
+        "https://www.dmoe.cc/*"
     ],
     "chrome_url_overrides": {
         "newtab": "newtab.html"
