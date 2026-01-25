@@ -23,8 +23,9 @@ class BookmarksManager {
     async loadBookmarks() {
         return new Promise((resolve) => {
             chrome.storage.sync.get(['bookmarks', 'folders'], (result) => {
-                this.bookmarks = result.bookmarks || [];
-                this.folders = result.folders || ['全部'];
+                const sanitized = this.sanitizeBookmarks(result.bookmarks || []);
+                this.bookmarks = sanitized;
+                this.folders = this.normalizeFolders(result.folders || ['全部'], this.bookmarks);
                 resolve(this.bookmarks);
             });
         });
@@ -119,7 +120,7 @@ class BookmarksManager {
      * Reorder bookmarks
      */
     async reorderBookmarks(newOrder) {
-        this.bookmarks = newOrder;
+        this.bookmarks = this.sanitizeBookmarks(newOrder);
         await this.saveBookmarks();
     }
 
@@ -135,6 +136,54 @@ class BookmarksManager {
      */
     getAllFolders() {
         return this.folders;
+    }
+
+    normalizeBookmarks(bookmarks) {
+        const folderOrders = {};
+        return bookmarks.map((b, idx) => {
+            const folder = b.folder || '全部';
+            if (folderOrders[folder] === undefined) folderOrders[folder] = 0;
+            const order = b.order !== undefined ? b.order : folderOrders[folder];
+            folderOrders[folder] = order + 1;
+            return {
+                ...b,
+                folder,
+                order
+            };
+        });
+    }
+
+    normalizeFolders(folders, bookmarks) {
+        const set = new Set(folders || []);
+        set.add('全部');
+        bookmarks.forEach(b => set.add(b.folder || '全部'));
+        return Array.from(set);
+    }
+
+    sanitizeBookmarks(bookmarks) {
+        const seen = new Set();
+        const folderOrders = {};
+
+        return (bookmarks || []).reduce((acc, raw) => {
+            const folder = raw.folder || '全部';
+            const orderBase = folderOrders[folder] || 0;
+            const order = raw.order !== undefined ? raw.order : orderBase;
+            const id = raw.id || Date.now() + Math.floor(Math.random() * 1000);
+
+            if (seen.has(id)) {
+                return acc; // drop duplicate IDs
+            }
+            seen.add(id);
+            folderOrders[folder] = order + 1;
+
+            acc.push({
+                ...raw,
+                id,
+                folder,
+                order
+            });
+            return acc;
+        }, []);
     }
 }
 

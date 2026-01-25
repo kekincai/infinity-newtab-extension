@@ -6,6 +6,8 @@
 // Application State
 let currentFolder = '全部';
 let statusIntervalId = null;
+let draggedBookmark = null;
+let dragPreviewFolder = null;
 
 // Initialize application
 document.addEventListener('DOMContentLoaded', async () => {
@@ -454,7 +456,7 @@ async function deleteBookmark(id) {
 function loadBookmarks() {
     const grid = document.getElementById('bookmarksGrid');
     const folders = bookmarksManager.getAllFolders();
-    const bookmarks = bookmarksManager.getBookmarksByFolder(currentFolder);
+    const bookmarks = getSortedBookmarks(currentFolder);
 
     updateFolderSelect(folders);
     document.getElementById('currentFolderLabel').textContent = currentFolder;
@@ -472,7 +474,11 @@ function loadBookmarks() {
         grid.appendChild(createAddFolderCard());
     }
 
-    if (bookmarks.length === 0 && currentFolder !== '全部') {
+    const showBookmarks = currentFolder === '全部'
+        ? bookmarks.filter(b => (b.folder || '全部') === '全部')
+        : bookmarks;
+
+    if (showBookmarks.length === 0 && currentFolder !== '全部') {
         const empty = document.createElement('p');
         empty.className = 'empty-state';
         empty.textContent = '这里空空的，添加一些书签吧';
@@ -480,7 +486,7 @@ function loadBookmarks() {
         return;
     }
 
-    bookmarks.forEach((bookmark, index) => {
+    showBookmarks.forEach((bookmark, index) => {
         const card = createBookmarkCard(bookmark, index);
         grid.appendChild(card);
     });
@@ -492,6 +498,11 @@ function createBookmarkCard(bookmark, index) {
     card.href = bookmark.url;
     card.target = '_blank';
     card.style.animationDelay = `${index * 0.05}s`;
+    card.draggable = true;
+    card.addEventListener('dragstart', (e) => onBookmarkDragStart(e, bookmark));
+    card.addEventListener('dragover', (e) => e.preventDefault());
+    card.addEventListener('drop', (e) => handleDropOnBookmark(e, bookmark));
+    card.addEventListener('dragend', clearDragState);
 
     const icon = document.createElement('div');
     icon.className = 'bookmark-icon';
@@ -535,6 +546,9 @@ function createFolderCard(folder, index) {
     card.dataset.folder = folder;
     card.style.setProperty('--folder-accent', getFolderAccent(index));
     card.onclick = () => switchFolder(folder);
+    card.addEventListener('dragover', (e) => e.preventDefault());
+    card.addEventListener('drop', (e) => handleDropOnFolder(e, folder));
+    card.addEventListener('dragend', clearDragState);
 
     const preview = document.createElement('div');
     preview.className = 'folder-preview';
@@ -622,6 +636,105 @@ async function promptAddFolder() {
 
     await bookmarksManager.addFolder(cleanName);
     loadBookmarks();
+}
+
+// ============================================
+// Drag & Drop Helpers
+// ============================================
+
+function getSortedBookmarks(folder) {
+    const targetFolder = folder || '全部';
+    ensureFolderOrder(targetFolder);
+    const list = targetFolder === '全部'
+        ? bookmarksManager.getAllBookmarks()
+        : bookmarksManager.getBookmarksByFolder(targetFolder);
+    return list.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.id - b.id));
+}
+
+function onBookmarkDragStart(e, bookmark) {
+    draggedBookmark = { ...bookmark, sourceFolder: bookmark.folder || '全部' };
+    dragPreviewFolder = currentFolder;
+    if (e.dataTransfer) {
+        e.dataTransfer.setData('text/plain', String(bookmark.id));
+        e.dataTransfer.effectAllowed = 'move';
+    }
+}
+
+function handleDropOnBookmark(e, targetBookmark) {
+    e.preventDefault();
+    if (!draggedBookmark) return;
+    const folder = currentFolder === '全部' ? draggedBookmark.sourceFolder : currentFolder;
+    const targetFolder = targetBookmark.folder || '全部';
+    if (draggedBookmark.sourceFolder !== folder || targetFolder !== folder) {
+        clearDragState();
+        return;
+    }
+
+    const list = getSortedBookmarks(folder);
+    const dragIndex = list.findIndex(b => b.id === draggedBookmark.id);
+    const targetIndex = list.findIndex(b => b.id === targetBookmark.id);
+    if (dragIndex === -1 || targetIndex === -1 || dragIndex === targetIndex) return;
+
+    const [item] = list.splice(dragIndex, 1);
+    list.splice(targetIndex, 0, item);
+    list.forEach((b, idx) => { b.order = idx; });
+
+    persistFolderOrder(folder, list);
+    clearDragState();
+    loadBookmarks();
+}
+
+function handleDropOnFolder(e, folderName) {
+    e.preventDefault();
+    if (!draggedBookmark) return;
+    if (folderName === draggedBookmark.sourceFolder) {
+        clearDragState();
+        return;
+    }
+
+    const all = bookmarksManager.getAllBookmarks().map(b => ({ ...b }));
+    const idx = all.findIndex(b => b.id === draggedBookmark.id);
+    if (idx === -1) return;
+
+    const sourceFolder = draggedBookmark.sourceFolder || '全部';
+    all[idx].folder = folderName || '全部';
+
+    normalizeFolderOrders(all, sourceFolder);
+    normalizeFolderOrders(all, folderName || '全部');
+
+    bookmarksManager.reorderBookmarks(all);
+    clearDragState();
+    loadBookmarks();
+}
+
+function persistFolderOrder(folderName, orderedList) {
+    const all = bookmarksManager.getAllBookmarks().map(b => ({ ...b }));
+    const others = all.filter(b => b.folder !== folderName);
+    const merged = [...others, ...orderedList];
+    bookmarksManager.reorderBookmarks(merged);
+}
+
+function normalizeFolderOrders(allBookmarks, folderName) {
+    const list = allBookmarks
+        .filter(b => b.folder === folderName)
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.id - b.id));
+    list.forEach((b, idx) => { b.order = idx; });
+}
+
+function clearDragState() {
+    draggedBookmark = null;
+    dragPreviewFolder = null;
+}
+
+function ensureFolderOrder(folderName) {
+    if (folderName === '全部') return;
+    const all = bookmarksManager.getAllBookmarks().map(b => ({ ...b }));
+    const before = JSON.stringify(all.filter(b => b.folder === folderName).map(b => b.order));
+    normalizeFolderOrders(all, folderName);
+    const after = JSON.stringify(all.filter(b => b.folder === folderName).map(b => b.order));
+    if (before !== after) {
+        bookmarksManager.reorderBookmarks(all);
+    }
 }
 
 // ============================================
