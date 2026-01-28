@@ -54,6 +54,8 @@ function applySettings() {
     toggleElement('time-block', settings.layout.showClock);
     toggleElement('searchWidget', settings.layout.showSearch);
     toggleElement('bookmarks-section', settings.layout.showBookmarks);
+    toggleElement('status-strip', settings.layout.showStatus);
+    toggleElement('recent-section', settings.layout.showRecent);
 
     // Update search engine badge
     updateSearchEngineBadge();
@@ -81,6 +83,8 @@ function updateSettingsUI(settings) {
     document.getElementById('showClockToggle').checked = settings.layout.showClock;
     document.getElementById('showSearchToggle').checked = settings.layout.showSearch;
     document.getElementById('showBookmarksToggle').checked = settings.layout.showBookmarks;
+    document.getElementById('showStatusToggle').checked = settings.layout.showStatus;
+    document.getElementById('showRecentToggle').checked = settings.layout.showRecent;
 }
 
 function toggleElement(id, show) {
@@ -167,6 +171,16 @@ function initializeEventListeners() {
     document.getElementById('showBookmarksToggle').addEventListener('change', async (e) => {
         await settingsManager.updateSetting('layout', 'showBookmarks', e.target.checked);
         toggleElement('bookmarks-section', e.target.checked);
+    });
+
+    document.getElementById('showStatusToggle').addEventListener('change', async (e) => {
+        await settingsManager.updateSetting('layout', 'showStatus', e.target.checked);
+        toggleElement('status-strip', e.target.checked);
+    });
+
+    document.getElementById('showRecentToggle').addEventListener('change', async (e) => {
+        await settingsManager.updateSetting('layout', 'showRecent', e.target.checked);
+        toggleElement('recent-section', e.target.checked);
     });
 
     document.getElementById('enhancedAnimationsToggle').addEventListener('change', async (e) => {

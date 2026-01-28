@@ -8,7 +8,8 @@ const DEFAULT_SETTINGS = {
         showClock: true,
         showSearch: true,
         showBookmarks: true,
-        showWeather: false,
+        showStatus: true,
+        showRecent: true,
         searchEngine: 'google'
     },
     wallpaper: {
