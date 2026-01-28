@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&family=Baloo+2:wght@600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap');
 
 * {
     margin: 0;
@@ -20,12 +20,36 @@
     --shadow-lg: 0 25px 60px rgba(122, 215, 255, 0.25);
 }
 
+html,
 body {
-    font-family: 'M PLUS Rounded 1c', 'Baloo 2', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
     min-height: 100vh;
     color: var(--text-primary);
     overflow-x: hidden;
     position: relative;
+    -webkit-tap-highlight-color: transparent;
+}
+
+button,
+input,
+select,
+textarea {
+    font-family: inherit;
+    font-size: 1rem;
+    touch-action: manipulation;
+}
+
+label,
+.data-btn,
+.data-info,
+.data-info p {
+    font-family: inherit;
+    font-weight: 500;
+    letter-spacing: 0;
+}
+
+.data-btn {
+    line-height: 1.2;
 }
 
 /* Background Layer */
@@ -516,6 +540,104 @@ body {
     flex-wrap: wrap;
 }
 
+.recent-section {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(255, 122, 195, 0.2);
+    box-shadow: var(--shadow);
+}
+
+.recent-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.recent-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.recent-scroller {
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 122, 195, 0.5) transparent;
+}
+
+.recent-scroller::-webkit-scrollbar {
+    height: 8px;
+}
+
+.recent-scroller::-webkit-scrollbar-thumb {
+    background: rgba(255, 122, 195, 0.5);
+    border-radius: 999px;
+}
+
+.recent-track {
+    display: flex;
+    gap: 0.9rem;
+    padding-bottom: 0.5rem;
+}
+
+.recent-card {
+    min-width: 180px;
+    max-width: 200px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(255, 122, 195, 0.2);
+    border-radius: 16px;
+    padding: 0.9rem 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--text-primary);
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.recent-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 24px rgba(255, 122, 195, 0.22);
+}
+
+.recent-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(255, 122, 195, 0.2) 0%, rgba(122, 215, 255, 0.18) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.recent-icon img {
+    width: 26px;
+    height: 26px;
+}
+
+.recent-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.recent-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.recent-meta {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
 /* Folder Navigation */
 .folder-nav {
     display: flex;
@@ -853,6 +975,16 @@ body {
     z-index: 2000;
     transition: right 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     overflow-y: auto;
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+.settings-panel,
+.settings-panel * {
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
 }
 
 .settings-panel.active {
@@ -1075,6 +1207,9 @@ body {
     cursor: pointer;
     transition: all 0.3s ease;
     background: rgba(255, 255, 255, 0.78);
+    font-size: 0.98rem;
+    font-weight: 600;
+    letter-spacing: 0;
 }
 
 .data-btn:hover {

@@ -6,7 +6,8 @@
     "permissions": [
         "storage",
         "tabs",
-        "downloads"
+        "downloads",
+        "history"
     ],
     "host_permissions": [
         "https://api.unsplash.com/*",

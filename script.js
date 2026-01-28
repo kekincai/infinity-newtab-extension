@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Load content
     loadBookmarks();
     applySettings();
+    loadRecentSites();
 });
 
 // ============================================
@@ -175,9 +176,14 @@ function initializeEventListeners() {
 
     document.getElementById('resetBtn').addEventListener('click', async () => {
         if (confirm('确定要重置所有设置吗？此操作不可撤销！')) {
-            await settingsManager.resetToDefaults();
-            alert('设置已重置！页面将刷新。');
-            location.reload();
+            chrome.storage.sync.clear(() => {
+                if (chrome.runtime.lastError) {
+                    alert('重置失败：' + chrome.runtime.lastError.message);
+                    return;
+                }
+                alert('设置与数据已重置！页面将刷新。');
+                location.reload();
+            });
         }
     });
 
@@ -191,6 +197,11 @@ function initializeEventListeners() {
             }
         }
     });
+
+    const refreshRecentBtn = document.getElementById('refreshRecentBtn');
+    if (refreshRecentBtn) {
+        refreshRecentBtn.addEventListener('click', loadRecentSites);
+    }
 
     // Quick search focus with '/'
     document.addEventListener('keydown', (e) => {
@@ -792,4 +803,121 @@ function truncate(str, maxLength) {
     if (!str) return '';
     if (str.length <= maxLength) return str;
     return str.slice(0, maxLength - 1) + '…';
+}
+
+// ============================================
+// Recent Sites
+// ============================================
+
+function loadRecentSites() {
+    if (!chrome.history) {
+        renderRecentMessage('无法访问历史记录（未授权）');
+        return;
+    }
+
+    const daysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    chrome.history.search({ text: '', startTime: daysAgo, maxResults: 5000 }, (items) => {
+        if (chrome.runtime.lastError) {
+            renderRecentMessage('读取历史记录失败');
+            return;
+        }
+        const hostMap = new Map();
+
+        items.forEach(item => {
+            try {
+                const url = new URL(item.url);
+                if (!['http:', 'https:'].includes(url.protocol)) return;
+                if (url.hostname === 'newtab' || url.hostname.endsWith('google.com')) {
+                    // ignore internal/newtab noise
+                }
+                const host = url.hostname.replace(/^www\./, '');
+                const prev = hostMap.get(host);
+                const count = (prev?.count || 0) + (item.visitCount || 1);
+                const lastVisit = Math.max(prev?.lastVisit || 0, item.lastVisitTime || 0);
+                hostMap.set(host, {
+                    host,
+                    url: `https://${host}`,
+                    title: getDisplayName(host),
+                    count,
+                    lastVisit
+                });
+            } catch {
+                // ignore invalid URL
+            }
+        });
+
+        const ranked = Array.from(hostMap.values())
+            .sort((a, b) => (b.count - a.count) || (b.lastVisit - a.lastVisit))
+            .slice(0, 20);
+
+        if (!ranked.length) {
+            renderRecentMessage('暂无历史数据或被浏览器隐私设置限制');
+            return;
+        }
+        renderRecentSites(ranked);
+    });
+}
+
+function renderRecentSites(list) {
+    const track = document.getElementById('recentTrack');
+    if (!track) return;
+    track.innerHTML = '';
+
+    if (!list.length) {
+        renderRecentMessage('暂无数据');
+        return;
+    }
+
+    list.forEach(item => {
+        const card = document.createElement('a');
+        card.className = 'recent-card';
+        card.href = item.url;
+        card.target = '_blank';
+
+        const icon = document.createElement('div');
+        icon.className = 'recent-icon';
+        const img = document.createElement('img');
+        img.src = getFaviconUrl(item.url);
+        img.alt = item.title;
+        img.onerror = () => {
+            img.src = getDefaultIcon();
+        };
+        icon.appendChild(img);
+
+        const info = document.createElement('div');
+        info.className = 'recent-info';
+
+        const title = document.createElement('div');
+        title.className = 'recent-title';
+        title.textContent = truncate(item.title, 18);
+
+        const meta = document.createElement('div');
+        meta.className = 'recent-meta';
+        meta.textContent = item.host;
+
+        info.appendChild(title);
+        info.appendChild(meta);
+
+        card.appendChild(icon);
+        card.appendChild(info);
+        track.appendChild(card);
+    });
+}
+
+function getDisplayName(host) {
+    if (!host) return '';
+    const clean = host.replace(/^www\./, '');
+    const parts = clean.split('.');
+    if (parts.length <= 1) return clean;
+    return parts[0];
+}
+
+function renderRecentMessage(text) {
+    const track = document.getElementById('recentTrack');
+    if (!track) return;
+    track.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'recent-meta';
+    empty.textContent = text;
+    track.appendChild(empty);
 }
