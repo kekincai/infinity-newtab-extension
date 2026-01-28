@@ -442,7 +442,7 @@ async function saveBookmark() {
 
     try {
         const urlObj = new URL(url);
-        const name = nameInput.value.trim() || urlObj.hostname;
+        const name = nameInput.value.trim() || cleanDisplayName(urlObj.hostname);
         const folder = folderSelect.value;
         const faviconUrl = getFaviconUrl(url);
 
@@ -527,7 +527,7 @@ function createBookmarkCard(bookmark, index) {
 
     const name = document.createElement('div');
     name.className = 'bookmark-name';
-    name.textContent = bookmark.name;
+    name.textContent = cleanDisplayName(bookmark.name);
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'delete-btn';
@@ -803,6 +803,13 @@ function truncate(str, maxLength) {
     if (!str) return '';
     if (str.length <= maxLength) return str;
     return str.slice(0, maxLength - 1) + '…';
+}
+
+function cleanDisplayName(text) {
+    if (!text) return '';
+    let name = text.replace(/^https?:\/\//, '').replace(/^www\./, '');
+    name = name.replace(/\/.*$/, '');
+    return name;
 }
 
 // ============================================
