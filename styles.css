@@ -746,6 +746,7 @@ label,
     text-overflow: ellipsis;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
 }
 
@@ -1101,6 +1102,7 @@ label,
     border-radius: 5px;
     outline: none;
     -webkit-appearance: none;
+    appearance: none;
 }
 
 .setting-slider::-webkit-slider-thumb {
