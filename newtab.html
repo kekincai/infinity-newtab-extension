@@ -59,9 +59,10 @@
                     <circle cx="11" cy="11" r="8"></circle>
                     <path d="m21 21-4.35-4.35"></path>
                 </svg>
-                <input type="text" id="searchInput" placeholder="搜索网络..." class="search-input">
+                <input type="text" id="searchInput" placeholder="搜索网络..." class="search-input" list="searchSuggestions">
                 <div class="search-engine-badge" id="searchEngineBadge">Google</div>
             </div>
+            <datalist id="searchSuggestions"></datalist>
         </div>
 
         <!-- Main Content Area -->
@@ -134,6 +135,10 @@
                         <option value="全部">全部</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label for="iconInput">图标地址（可选）</label>
+                    <input type="url" id="iconInput" placeholder="https://example.com/favicon.ico">
+                </div>
                 <div class="preview" id="preview" style="display: none;">
                     <img id="previewIcon" src="" alt="图标预览">
                     <span id="previewName"></span>
@@ -182,6 +187,13 @@
                                 <option value="baidu">百度</option>
                                 <option value="duckduckgo">DuckDuckGo</option>
                             </select>
+                        </div>
+                        <div class="setting-item">
+                            <label class="toggle-label">
+                                <span>增强动画</span>
+                                <input type="checkbox" id="enhancedAnimationsToggle" class="toggle-input" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
                         </div>
                     </div>
 

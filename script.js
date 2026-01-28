@@ -8,6 +8,11 @@ let currentFolder = '全部';
 let statusIntervalId = null;
 let draggedBookmark = null;
 let dragPreviewFolder = null;
+let longPressTimer = null;
+let isDragging = false;
+let workspaces = [];
+let activeWorkspaceId = null;
+let editingBookmarkId = null;
 
 // Initialize application
 document.addEventListener('DOMContentLoaded', async () => {
@@ -29,6 +34,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadBookmarks();
     applySettings();
     loadRecentSites();
+    loadSearchSuggestions();
+    scheduleBackupReminder();
 });
 
 // ============================================
@@ -53,12 +60,16 @@ function applySettings() {
 
     // Update settings UI
     updateSettingsUI(settings);
+
+    // Enhanced animations
+    applyEnhancedAnimations(settings.appearance.enhancedAnimations);
 }
 
 function updateSettingsUI(settings) {
     // Appearance
     document.getElementById('clockFormatSelect').value = settings.appearance.clockFormat;
     document.getElementById('searchEngineSelect').value = settings.layout.searchEngine;
+    document.getElementById('enhancedAnimationsToggle').checked = settings.appearance.enhancedAnimations;
 
     // Wallpaper
     document.getElementById('blurSlider').value = settings.wallpaper.blur;
@@ -77,6 +88,10 @@ function toggleElement(id, show) {
     if (element) {
         element.style.display = show ? '' : 'none';
     }
+}
+
+function applyEnhancedAnimations(enabled) {
+    document.body.classList.toggle('enhanced-animations', !!enabled);
 }
 
 // ============================================
@@ -154,6 +169,11 @@ function initializeEventListeners() {
         toggleElement('bookmarks-section', e.target.checked);
     });
 
+    document.getElementById('enhancedAnimationsToggle').addEventListener('change', async (e) => {
+        await settingsManager.updateSetting('appearance', 'enhancedAnimations', e.target.checked);
+        applyEnhancedAnimations(e.target.checked);
+    });
+
     // Data Management
     document.getElementById('exportBtn').addEventListener('click', async () => {
         await importExportManager.createBackup();
@@ -193,6 +213,7 @@ function initializeEventListeners() {
             const query = e.target.value.trim();
             if (query) {
                 searchManager.search(query);
+                saveRecentSearch(query);
                 e.target.value = '';
             }
         }
@@ -237,6 +258,13 @@ function initializeEventListeners() {
             }
         }
     }, 500));
+
+    document.getElementById('iconInput').addEventListener('input', debounce(() => {
+        let url = document.getElementById('urlInput').value.trim();
+        if (url && isValidUrl(normalizeUrl(url))) {
+            previewBookmark(normalizeUrl(url));
+        }
+    }, 300));
 
     // Enter to save bookmark
     document.getElementById('urlInput').addEventListener('keypress', (e) => {
@@ -399,21 +427,36 @@ function updateActivityStatus() {
 // ============================================
 
 function openModal() {
+    editingBookmarkId = null;
+    document.querySelector('#addModal .modal-header h2').textContent = '添加书签';
     document.getElementById('addModal').classList.add('active');
     document.getElementById('urlInput').focus();
+}
+
+function openEditModal(bookmark) {
+    editingBookmarkId = bookmark.id;
+    document.querySelector('#addModal .modal-header h2').textContent = '编辑书签';
+    document.getElementById('addModal').classList.add('active');
+    document.getElementById('urlInput').value = bookmark.url;
+    document.getElementById('nameInput').value = bookmark.name || '';
+    document.getElementById('folderSelect').value = bookmark.folder || '全部';
+    document.getElementById('iconInput').value = bookmark.icon || '';
+    previewBookmark(bookmark.url);
 }
 
 function closeModal() {
     document.getElementById('addModal').classList.remove('active');
     document.getElementById('urlInput').value = '';
     document.getElementById('nameInput').value = '';
+    document.getElementById('iconInput').value = '';
     document.getElementById('preview').style.display = 'none';
 }
 
 function previewBookmark(url) {
     try {
         const urlObj = new URL(url);
-        const faviconUrl = getFaviconUrl(url);
+        const iconInput = document.getElementById('iconInput').value.trim();
+        const faviconUrl = iconInput || getFaviconUrl(url);
         const name = document.getElementById('nameInput').value || urlObj.hostname;
 
         document.getElementById('previewIcon').src = faviconUrl;
@@ -428,6 +471,7 @@ async function saveBookmark() {
     const urlInput = document.getElementById('urlInput');
     const nameInput = document.getElementById('nameInput');
     const folderSelect = document.getElementById('folderSelect');
+    const iconInput = document.getElementById('iconInput');
 
     let url = urlInput.value.trim();
 
@@ -444,9 +488,19 @@ async function saveBookmark() {
         const urlObj = new URL(url);
         const name = nameInput.value.trim() || cleanDisplayName(urlObj.hostname);
         const folder = folderSelect.value;
-        const faviconUrl = getFaviconUrl(url);
+        const customIcon = iconInput.value.trim();
+        const faviconUrl = customIcon || getFaviconUrl(url);
 
-        await bookmarksManager.addBookmark(url, name, faviconUrl, folder);
+        if (editingBookmarkId) {
+            await bookmarksManager.updateBookmark(editingBookmarkId, {
+                url,
+                name,
+                icon: faviconUrl,
+                folder
+            });
+        } else {
+            await bookmarksManager.addBookmark(url, name, faviconUrl, folder);
+        }
         loadBookmarks();
         closeModal();
     } catch (e) {
@@ -509,11 +563,18 @@ function createBookmarkCard(bookmark, index) {
     card.href = bookmark.url;
     card.target = '_blank';
     card.style.animationDelay = `${index * 0.05}s`;
-    card.draggable = true;
-    card.addEventListener('dragstart', (e) => onBookmarkDragStart(e, bookmark));
+    card.draggable = false;
+    card.addEventListener('dragstart', (e) => onBookmarkDragStart(e, bookmark, card));
     card.addEventListener('dragover', (e) => e.preventDefault());
     card.addEventListener('drop', (e) => handleDropOnBookmark(e, bookmark));
     card.addEventListener('dragend', clearDragState);
+    attachLongPressDrag(card);
+    card.addEventListener('click', (e) => {
+        if (isDragging) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+    });
 
     const icon = document.createElement('div');
     icon.className = 'bookmark-icon';
@@ -538,7 +599,17 @@ function createBookmarkCard(bookmark, index) {
         deleteBookmark(bookmark.id);
     };
 
+    const editBtn = document.createElement('button');
+    editBtn.className = 'edit-btn';
+    editBtn.innerHTML = '✎';
+    editBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openEditModal(bookmark);
+    };
+
     card.appendChild(deleteBtn);
+    card.appendChild(editBtn);
     card.appendChild(icon);
     card.appendChild(name);
 
@@ -663,6 +734,8 @@ function getSortedBookmarks(folder) {
 }
 
 function onBookmarkDragStart(e, bookmark) {
+    if (!e) return;
+    isDragging = true;
     draggedBookmark = { ...bookmark, sourceFolder: bookmark.folder || '全部' };
     dragPreviewFolder = currentFolder;
     if (e.dataTransfer) {
@@ -735,6 +808,32 @@ function normalizeFolderOrders(allBookmarks, folderName) {
 function clearDragState() {
     draggedBookmark = null;
     dragPreviewFolder = null;
+    isDragging = false;
+}
+
+function attachLongPressDrag(card) {
+    const start = () => {
+        longPressTimer = setTimeout(() => {
+            card.draggable = true;
+            card.classList.add('drag-ready');
+        }, 300);
+    };
+
+    const cancel = () => {
+        if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+        if (!isDragging) {
+            card.draggable = false;
+            card.classList.remove('drag-ready');
+        }
+    };
+
+    card.addEventListener('pointerdown', start);
+    card.addEventListener('pointerup', cancel);
+    card.addEventListener('pointerleave', cancel);
+    card.addEventListener('pointercancel', cancel);
 }
 
 function ensureFolderOrder(folderName) {
@@ -813,19 +912,93 @@ function cleanDisplayName(text) {
 }
 
 // ============================================
+// Search Suggestions
+// ============================================
+
+function loadSearchSuggestions() {
+    chrome.storage.sync.get(['recentSearches'], (result) => {
+        const list = Array.isArray(result.recentSearches) ? result.recentSearches : [];
+        renderSearchSuggestions(list);
+    });
+}
+
+function saveRecentSearch(query) {
+    chrome.storage.sync.get(['recentSearches'], (result) => {
+        const list = Array.isArray(result.recentSearches) ? result.recentSearches : [];
+        const normalized = query.trim();
+        const next = [normalized, ...list.filter(q => q !== normalized)].slice(0, 6);
+        chrome.storage.sync.set({ recentSearches: next }, () => {
+            renderSearchSuggestions(next);
+        });
+    });
+}
+
+function renderSearchSuggestions(list) {
+    const datalist = document.getElementById('searchSuggestions');
+    if (!datalist) return;
+    datalist.innerHTML = '';
+    list.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item;
+        datalist.appendChild(option);
+    });
+}
+
+// ============================================
+// Backup Reminder
+// ============================================
+
+function scheduleBackupReminder() {
+    chrome.storage.sync.get(['lastBackupPrompt'], (result) => {
+        const last = result.lastBackupPrompt || 0;
+        const now = Date.now();
+        const sevenDays = 7 * 24 * 60 * 60 * 1000;
+        if (now - last < sevenDays) return;
+        showBackupToast();
+    });
+}
+
+function showBackupToast() {
+    if (document.getElementById('backupToast')) return;
+    const toast = document.createElement('div');
+    toast.id = 'backupToast';
+    toast.className = 'backup-toast';
+    toast.innerHTML = `
+        <div class="backup-text">💾 建议导出备份，避免数据丢失</div>
+        <div class="backup-actions">
+            <button class="ghost-btn primary" id="backupNowBtn">立即导出</button>
+            <button class="ghost-btn" id="backupLaterBtn">稍后</button>
+        </div>
+    `;
+    document.body.appendChild(toast);
+
+    document.getElementById('backupNowBtn').onclick = async () => {
+        await importExportManager.createBackup();
+        closeBackupToast();
+    };
+    document.getElementById('backupLaterBtn').onclick = closeBackupToast;
+}
+
+function closeBackupToast() {
+    chrome.storage.sync.set({ lastBackupPrompt: Date.now() });
+    const toast = document.getElementById('backupToast');
+    if (toast) toast.remove();
+}
+
+// ============================================
 // Recent Sites
 // ============================================
 
 function loadRecentSites() {
     if (!chrome.history) {
-        renderRecentMessage('无法访问历史记录（未授权）');
+        renderRecentMessage('无法访问历史记录（未授权）', true);
         return;
     }
 
     const daysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     chrome.history.search({ text: '', startTime: daysAgo, maxResults: 5000 }, (items) => {
         if (chrome.runtime.lastError) {
-            renderRecentMessage('读取历史记录失败');
+            renderRecentMessage('读取历史记录失败', true);
             return;
         }
         const hostMap = new Map();
@@ -919,7 +1092,7 @@ function getDisplayName(host) {
     return parts[0];
 }
 
-function renderRecentMessage(text) {
+function renderRecentMessage(text, showAction = false) {
     const track = document.getElementById('recentTrack');
     if (!track) return;
     track.innerHTML = '';
@@ -927,4 +1100,15 @@ function renderRecentMessage(text) {
     empty.className = 'recent-meta';
     empty.textContent = text;
     track.appendChild(empty);
+
+    if (showAction) {
+        const btn = document.createElement('button');
+        btn.className = 'ghost-btn';
+        btn.textContent = '打开权限设置';
+        btn.onclick = () => {
+            const id = chrome.runtime.id;
+            window.open(`chrome://extensions/?id=${id}`, '_blank');
+        };
+        track.appendChild(btn);
+    }
 }
