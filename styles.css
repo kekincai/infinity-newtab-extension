@@ -1211,14 +1211,32 @@ label,
 
 /* Toggle Switch */
 .toggle-label {
-    display: flex;
+    display: flex !important;
     justify-content: space-between;
-    align-items: center;
+    align-items: center !important;
     cursor: pointer;
     font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
     font-weight: 500;
     font-size: 1rem;
     line-height: 1.4;
+    width: 100%;
+    gap: 0.75rem;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+}
+
+.toggle-label > span:first-of-type {
+    display: flex;
+    align-items: center;
+    line-height: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.toggle-label .toggle-slider {
+    flex: 0 0 auto;
 }
 
 .toggle-input {
@@ -1229,7 +1247,10 @@ label,
     position: relative;
     width: 50px;
     height: 26px;
-    background: rgba(148, 163, 184, 0.2);
+    display: inline-flex;
+    align-items: center;
+    background: rgba(255, 122, 195, 0.35);
+    border: 1px solid rgba(255, 122, 195, 0.6);
     border-radius: 34px;
     transition: background 0.3s ease;
 }
@@ -1241,13 +1262,15 @@ label,
     width: 20px;
     left: 3px;
     bottom: 3px;
-    background: white;
+    background: #fff;
     border-radius: 50%;
     transition: transform 0.3s ease;
+    box-shadow: 0 2px 6px rgba(31, 42, 68, 0.2);
 }
 
 .toggle-input:checked+.toggle-slider {
-    background: var(--primary);
+    background: linear-gradient(135deg, #ff7ac3 0%, #7ad7ff 100%);
+    border-color: rgba(255, 122, 195, 0.7);
 }
 
 .toggle-input:checked+.toggle-slider::before {
