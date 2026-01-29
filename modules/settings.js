@@ -21,7 +21,8 @@ const DEFAULT_SETTINGS = {
     appearance: {
         clockFormat: '24h', // '12h' or '24h'
         dateFormat: 'long', // 'long' or 'short'
-        enhancedAnimations: true
+        enhancedAnimations: true,
+        theme: 'dark'
     }
 };
 

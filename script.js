@@ -65,6 +65,9 @@ function applySettings() {
 
     // Enhanced animations
     applyEnhancedAnimations(settings.appearance.enhancedAnimations);
+
+    // Theme
+    applyTheme(settings.appearance.theme);
 }
 
 function updateSettingsUI(settings) {
@@ -72,6 +75,8 @@ function updateSettingsUI(settings) {
     document.getElementById('clockFormatSelect').value = settings.appearance.clockFormat;
     document.getElementById('searchEngineSelect').value = settings.layout.searchEngine;
     document.getElementById('enhancedAnimationsToggle').checked = settings.appearance.enhancedAnimations;
+    document.getElementById('themeToggle').checked = settings.appearance.theme === 'light';
+    updateThemeButton(settings.appearance.theme);
 
     // Wallpaper
     document.getElementById('blurSlider').value = settings.wallpaper.blur;
@@ -86,6 +91,13 @@ function updateSettingsUI(settings) {
     document.getElementById('showStatusToggle').checked = settings.layout.showStatus;
     document.getElementById('showRecentToggle').checked = settings.layout.showRecent;
 }
+
+function applyTheme(theme) {
+    const isLight = theme === 'light';
+    document.body.classList.toggle('theme-light', isLight);
+}
+
+function updateThemeButton() {}
 
 function toggleElement(id, show) {
     const element = document.getElementById(id) || document.querySelector(`.${id}`);
@@ -186,6 +198,12 @@ function initializeEventListeners() {
     document.getElementById('enhancedAnimationsToggle').addEventListener('change', async (e) => {
         await settingsManager.updateSetting('appearance', 'enhancedAnimations', e.target.checked);
         applyEnhancedAnimations(e.target.checked);
+    });
+
+    document.getElementById('themeToggle').addEventListener('change', async (e) => {
+        const next = e.target.checked ? 'light' : 'dark';
+        await settingsManager.updateSetting('appearance', 'theme', next);
+        applyTheme(next);
     });
 
     // Data Management
