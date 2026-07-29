@@ -4,12 +4,10 @@
 
 // Preset wallpaper collection
 const PRESET_WALLPAPERS = [
-    'https://api.ixiaowai.cn/api/api.php',
-    'https://www.dmoe.cc/random.php',
-    'https://api.ixiaowai.cn/mcapi/mcapi.php'
+    'https://www.dmoe.cc/random.php'
 ];
 
-const ANIME_WALLPAPER_SOURCE = 'https://api.ixiaowai.cn/api/api.php';
+const ANIME_WALLPAPER_SOURCE = 'https://www.dmoe.cc/random.php';
 
 class WallpaperManager {
     constructor() {
@@ -19,6 +17,7 @@ class WallpaperManager {
         this.overlayElement = null;
         this.videoData = null;
         this.videoUrl = null;
+        this.imageUrl = null;
     }
 
     /**
@@ -47,7 +46,20 @@ class WallpaperManager {
             } else {
                 this.applyGradient();
             }
-        } else if (wallpaperConfig.type === 'preset' || wallpaperConfig.type === 'local') {
+        } else if (wallpaperConfig.type === 'local') {
+            if (wallpaperConfig.value && wallpaperConfig.value !== 'local') {
+                // Version 1 backups stored local images directly in sync storage.
+                this.applyWallpaper(wallpaperConfig.value, wallpaperConfig.blur, wallpaperConfig.overlay);
+                return;
+            }
+            const imageData = await this.loadLocalImage();
+            if (imageData) {
+                this.imageUrl = imageData instanceof Blob ? URL.createObjectURL(imageData) : imageData;
+                this.applyWallpaper(this.imageUrl, wallpaperConfig.blur, wallpaperConfig.overlay);
+            } else {
+                this.applyGradient();
+            }
+        } else if (wallpaperConfig.type === 'preset') {
             this.applyWallpaper(wallpaperConfig.value, wallpaperConfig.blur, wallpaperConfig.overlay);
         }
     }
@@ -59,6 +71,7 @@ class WallpaperManager {
         if (!this.bgElement) return;
 
         this.removeVideoElements();
+        this.revokeLocalImageUrl();
         this.bgElement.style.backgroundImage = 'linear-gradient(135deg, #fff7fb 0%, #f8fbff 40%, #fef6ff 80%)';
         this.bgElement.style.filter = 'none';
     }
@@ -70,6 +83,9 @@ class WallpaperManager {
         if (!this.bgElement) return;
 
         this.removeVideoElements();
+        if (this.imageUrl && this.imageUrl !== url) {
+            this.revokeLocalImageUrl();
+        }
         this.bgElement.style.backgroundImage = `
             linear-gradient(rgba(0, 0, 0, ${overlay / 100}), rgba(0, 0, 0, ${overlay / 100})),
             url(${url})
@@ -123,6 +139,13 @@ class WallpaperManager {
         this.videoData = null;
     }
 
+    revokeLocalImageUrl() {
+        if (this.imageUrl && this.imageUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(this.imageUrl);
+        }
+        this.imageUrl = null;
+    }
+
     applyVideo(dataUrl, blur = 0, overlay = 30) {
         if (!this.bgElement) return;
 
@@ -161,60 +184,101 @@ class WallpaperManager {
         });
     }
 
-    async loadLocalVideo() {
+    getFallbackStorageKey(kind) {
+        return kind === 'image' ? 'localImageWallpaper' : 'localVideoWallpaper';
+    }
+
+    async loadLocalMedia(kind) {
         try {
             const db = await this.openVideoDB();
             return await new Promise((resolve) => {
                 const tx = db.transaction('wallpapers', 'readonly');
                 const store = tx.objectStore('wallpapers');
-                const req = store.get('video');
+                const req = store.get(kind);
                 req.onsuccess = () => resolve(req.result || null);
                 req.onerror = () => resolve(null);
             });
         } catch (e) {
             return new Promise((resolve) => {
-                chrome.storage.local.get(['localVideoWallpaper'], (result) => {
-                    resolve(result.localVideoWallpaper || null);
+                const key = this.getFallbackStorageKey(kind);
+                chrome.storage.local.get([key], (result) => {
+                    resolve(result[key] || null);
                 });
             });
         }
     }
 
-    async saveLocalVideo(data) {
+    async saveLocalMedia(kind, data) {
         try {
             const db = await this.openVideoDB();
             await new Promise((resolve, reject) => {
                 const tx = db.transaction('wallpapers', 'readwrite');
                 const store = tx.objectStore('wallpapers');
-                const req = store.put(data, 'video');
+                const req = store.put(data, kind);
                 req.onsuccess = () => resolve();
                 req.onerror = () => reject(req.error);
             });
             return true;
         } catch (e) {
-            return new Promise((resolve) => {
-                chrome.storage.local.set({ localVideoWallpaper: data }, () => {
-                    resolve(!chrome.runtime.lastError);
+            return new Promise((resolve, reject) => {
+                const key = this.getFallbackStorageKey(kind);
+                chrome.storage.local.set({ [key]: data }, () => {
+                    if (chrome.runtime.lastError) {
+                        reject(new Error(chrome.runtime.lastError.message));
+                        return;
+                    }
+                    resolve(true);
                 });
             });
         }
     }
 
-    async clearLocalVideo() {
+    async clearLocalMedia(kind) {
         try {
             const db = await this.openVideoDB();
             await new Promise((resolve) => {
                 const tx = db.transaction('wallpapers', 'readwrite');
                 const store = tx.objectStore('wallpapers');
-                const req = store.delete('video');
+                const req = store.delete(kind);
                 req.onsuccess = () => resolve();
                 req.onerror = () => resolve();
             });
         } catch (e) {
-            await new Promise((resolve) => {
-                chrome.storage.local.remove(['localVideoWallpaper'], () => resolve());
-            });
+            console.warn(`Failed to clear ${kind} from IndexedDB.`, e);
         }
+        await new Promise((resolve) => {
+            chrome.storage.local.remove([this.getFallbackStorageKey(kind)], () => resolve());
+        });
+    }
+
+    loadLocalVideo() {
+        return this.loadLocalMedia('video');
+    }
+
+    loadLocalImage() {
+        return this.loadLocalMedia('image');
+    }
+
+    saveLocalVideo(data) {
+        return this.saveLocalMedia('video', data);
+    }
+
+    saveLocalImage(data) {
+        return this.saveLocalMedia('image', data);
+    }
+
+    clearLocalVideo() {
+        return this.clearLocalMedia('video');
+    }
+
+    clearLocalImage() {
+        return this.clearLocalMedia('image');
+    }
+
+    async clearAllLocalMedia() {
+        await Promise.all([this.clearLocalImage(), this.clearLocalVideo()]);
+        this.revokeLocalImageUrl();
+        this.removeVideoElements();
     }
 
     /**
@@ -222,14 +286,14 @@ class WallpaperManager {
      */
     async setRandomPreset() {
         const randomUrl = PRESET_WALLPAPERS[Math.floor(Math.random() * PRESET_WALLPAPERS.length)];
-        await this.applyRemoteWallpaper(randomUrl);
+        return this.applyRemoteWallpaper(randomUrl);
     }
 
     /**
      * Fetch anime wallpaper from remote source
      */
     async setRandomAnime() {
-        await this.applyRemoteWallpaper(ANIME_WALLPAPER_SOURCE);
+        return this.applyRemoteWallpaper(ANIME_WALLPAPER_SOURCE);
     }
 
     /**
@@ -241,15 +305,15 @@ class WallpaperManager {
             await this.preloadImage(withTimestamp);
             await this.setWallpaper('preset', withTimestamp, 2, 35);
         } catch (e) {
-            console.warn('Wallpaper load failed, fallback to gradient.', e);
-            await this.resetToGradient();
+            console.warn('Wallpaper load failed; keeping the current background.', e);
+            return false;
         }
+        return true;
     }
 
     preloadImage(url) {
         return new Promise((resolve, reject) => {
             const img = new Image();
-            img.crossOrigin = 'anonymous';
             img.onload = () => resolve(url);
             img.onerror = reject;
             img.src = url;
@@ -264,35 +328,22 @@ class WallpaperManager {
             const reader = new FileReader();
 
             reader.onload = async (e) => {
-                const base64 = e.target.result;
+                const fileData = e.target.result;
                 const isVideo = (file.type && file.type.startsWith('video/')) || /\.(mp4|webm|ogg)$/i.test(file.name || '');
+                const blob = new Blob([fileData], { type: file.type || (isVideo ? 'video/mp4' : 'image/jpeg') });
+                const settings = await settingsManager.getAllSettings();
+                const blur = settings?.wallpaper?.blur ?? 0;
+                const overlay = settings?.wallpaper?.overlay ?? 30;
 
-                if (isVideo) {
-                    const settings = await settingsManager.getAllSettings();
-                    const blur = settings?.wallpaper?.blur ?? 0;
-                    const overlay = settings?.wallpaper?.overlay ?? 30;
+                if (isVideo) await this.saveLocalVideo(blob);
+                else await this.saveLocalImage(blob);
 
-                    const arrayBuffer = base64;
-                    const blob = new Blob([arrayBuffer], { type: file.type || 'video/mp4' });
-                    const url = URL.createObjectURL(blob);
-                    this.videoUrl = url;
-
-                    // Apply immediately even if storage fails due to size limits.
-                    this.applyVideo(url, blur, overlay);
-                    await this.setWallpaper('video', 'local', blur, overlay);
-                    await this.saveLocalVideo(blob);
-                } else {
-                    await this.setWallpaper('local', base64);
-                }
-                resolve(base64);
+                await this.setWallpaper(isVideo ? 'video' : 'local', 'local', blur, overlay);
+                resolve(true);
             };
 
             reader.onerror = reject;
-            if ((file.type && file.type.startsWith('video/')) || /\.(mp4|webm|ogg)$/i.test(file.name || '')) {
-                reader.readAsArrayBuffer(file);
-            } else {
-                reader.readAsDataURL(file);
-            }
+            reader.readAsArrayBuffer(file);
         });
     }
 
@@ -300,10 +351,7 @@ class WallpaperManager {
      * Set wallpaper and save to settings
      */
     async setWallpaper(type, value, blur = 0, overlay = 30) {
-        await settingsManager.updateSetting('wallpaper', 'type', type);
-        await settingsManager.updateSetting('wallpaper', 'value', value);
-        await settingsManager.updateSetting('wallpaper', 'blur', blur);
-        await settingsManager.updateSetting('wallpaper', 'overlay', overlay);
+        await settingsManager.updateCategory('wallpaper', { type, value, blur, overlay });
 
         if (type === 'video') {
             const data = this.videoData || (await this.loadLocalVideo());
@@ -311,6 +359,14 @@ class WallpaperManager {
                 const url = data instanceof Blob ? URL.createObjectURL(data) : data;
                 this.videoUrl = url;
                 this.applyVideo(url, blur, overlay);
+            } else {
+                this.applyGradient();
+            }
+        } else if (type === 'local' && value === 'local') {
+            const data = await this.loadLocalImage();
+            if (data) {
+                this.imageUrl = data instanceof Blob ? URL.createObjectURL(data) : data;
+                this.applyWallpaper(this.imageUrl, blur, overlay);
             } else {
                 this.applyGradient();
             }
@@ -363,10 +419,49 @@ class WallpaperManager {
      * Reset to gradient
      */
     async resetToGradient() {
-        await settingsManager.updateSetting('wallpaper', 'type', 'gradient');
-        await settingsManager.updateSetting('wallpaper', 'value', '');
-        await this.clearLocalVideo();
+        await settingsManager.updateCategory('wallpaper', { type: 'gradient', value: '' });
+        await this.clearAllLocalMedia();
         this.applyGradient();
+    }
+
+    blobToDataUrl(blob) {
+        if (!blob) return Promise.resolve(null);
+        if (typeof blob === 'string') return Promise.resolve(blob);
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error || new Error('Failed to read wallpaper data'));
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    async exportLocalMedia() {
+        const [image, video] = await Promise.all([this.loadLocalImage(), this.loadLocalVideo()]);
+        return {
+            image: await this.blobToDataUrl(image),
+            video: await this.blobToDataUrl(video)
+        };
+    }
+
+    dataUrlToBlob(dataUrl) {
+        if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) return null;
+        const [header, payload] = dataUrl.split(',', 2);
+        if (!payload) return null;
+        const mime = header.match(/^data:([^;,]+)/)?.[1] || 'application/octet-stream';
+        const bytes = header.includes(';base64') ? atob(payload) : decodeURIComponent(payload);
+        const array = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i += 1) array[i] = bytes.charCodeAt(i);
+        return new Blob([array], { type: mime });
+    }
+
+    async importLocalMedia(media, replace = false) {
+        if (!media || typeof media !== 'object') return;
+        const image = this.dataUrlToBlob(media.image);
+        const video = this.dataUrlToBlob(media.video);
+        if (image) await this.saveLocalImage(image);
+        else if (replace) await this.clearLocalImage();
+        if (video) await this.saveLocalVideo(video);
+        else if (replace) await this.clearLocalVideo();
     }
 }
 

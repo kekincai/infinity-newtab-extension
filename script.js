@@ -7,11 +7,8 @@
 let currentFolder = '全部';
 let statusIntervalId = null;
 let draggedBookmark = null;
-let dragPreviewFolder = null;
 let longPressTimer = null;
 let isDragging = false;
-let workspaces = [];
-let activeWorkspaceId = null;
 let editingBookmarkId = null;
 
 // Initialize application
@@ -76,7 +73,6 @@ function updateSettingsUI(settings) {
     document.getElementById('searchEngineSelect').value = settings.layout.searchEngine;
     document.getElementById('enhancedAnimationsToggle').checked = settings.appearance.enhancedAnimations;
     document.getElementById('themeToggle').checked = settings.appearance.theme === 'light';
-    updateThemeButton(settings.appearance.theme);
 
     // Wallpaper
     document.getElementById('blurSlider').value = settings.wallpaper.blur;
@@ -96,8 +92,6 @@ function applyTheme(theme) {
     const isLight = theme === 'light';
     document.body.classList.toggle('theme-light', isLight);
 }
-
-function updateThemeButton() {}
 
 function toggleElement(id, show) {
     const element = document.getElementById(id) || document.querySelector(`.${id}`);
@@ -138,35 +132,52 @@ function initializeEventListeners() {
 
     // Wallpaper Controls
     document.getElementById('randomWallpaperBtn').addEventListener('click', async () => {
-        await wallpaperManager.setRandomPreset();
+        const changed = await wallpaperManager.setRandomPreset();
+        if (!changed) alert('壁纸加载失败，已保留当前背景。');
     });
 
     document.getElementById('wallpaperUpload').addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (file) {
-            await wallpaperManager.uploadLocal(file);
+            try {
+                await wallpaperManager.uploadLocal(file);
+            } catch (error) {
+                alert('本地壁纸保存失败：' + error.message);
+            }
             e.target.value = ''; // Reset input
         }
     });
 
     document.getElementById('resetWallpaperBtn').addEventListener('click', async () => {
-        await wallpaperManager.resetToGradient();
+        try {
+            await wallpaperManager.resetToGradient();
+        } catch (error) {
+            alert('壁纸重置失败：' + error.message);
+        }
     });
 
     document.getElementById('animeWallpaperBtn').addEventListener('click', async () => {
-        await wallpaperManager.setRandomAnime();
+        const changed = await wallpaperManager.setRandomAnime();
+        if (!changed) alert('二次元壁纸加载失败，已保留当前背景。');
     });
 
-    document.getElementById('blurSlider').addEventListener('input', async (e) => {
+    const saveBlur = debounce((value) => {
+        wallpaperManager.updateBlur(value).catch((error) => console.error('Failed to save blur:', error));
+    }, 200);
+    const saveOverlay = debounce((value) => {
+        wallpaperManager.updateOverlay(value).catch((error) => console.error('Failed to save overlay:', error));
+    }, 200);
+
+    document.getElementById('blurSlider').addEventListener('input', (e) => {
         const value = e.target.value;
         document.getElementById('blurValue').textContent = value;
-        await wallpaperManager.updateBlur(parseInt(value));
+        saveBlur(parseInt(value, 10));
     });
 
-    document.getElementById('overlaySlider').addEventListener('input', async (e) => {
+    document.getElementById('overlaySlider').addEventListener('input', (e) => {
         const value = e.target.value;
         document.getElementById('overlayValue').textContent = value;
-        await wallpaperManager.updateOverlay(parseInt(value));
+        saveOverlay(parseInt(value, 10));
     });
 
     // Layout Toggles
@@ -208,7 +219,11 @@ function initializeEventListeners() {
 
     // Data Management
     document.getElementById('exportBtn').addEventListener('click', async () => {
-        await importExportManager.createBackup();
+        try {
+            await importExportManager.createBackup();
+        } catch (error) {
+            alert('导出失败：' + error.message);
+        }
     });
 
     document.getElementById('importInput').addEventListener('change', async (e) => {
@@ -228,14 +243,13 @@ function initializeEventListeners() {
 
     document.getElementById('resetBtn').addEventListener('click', async () => {
         if (confirm('确定要重置所有设置吗？此操作不可撤销！')) {
-            chrome.storage.sync.clear(() => {
-                if (chrome.runtime.lastError) {
-                    alert('重置失败：' + chrome.runtime.lastError.message);
-                    return;
-                }
+            try {
+                await importExportManager.resetAllData();
                 alert('设置与数据已重置！页面将刷新。');
                 location.reload();
-            });
+            } catch (error) {
+                alert('重置失败：' + error.message);
+            }
         }
     });
 
@@ -357,7 +371,10 @@ function updateTime() {
     const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
     const weekday = weekdays[now.getDay()];
 
-    document.getElementById('date').textContent = `${year}年${month}月${day}日 ${weekday}`;
+    const dateFormat = settings?.appearance?.dateFormat || 'long';
+    document.getElementById('date').textContent = dateFormat === 'short'
+        ? `${month}月${day}日 ${weekday}`
+        : `${year}年${month}月${day}日 ${weekday}`;
 }
 
 // ============================================
@@ -472,7 +489,7 @@ function openEditModal(bookmark) {
     document.getElementById('urlInput').value = bookmark.url;
     document.getElementById('nameInput').value = bookmark.name || '';
     document.getElementById('folderSelect').value = bookmark.folder || '全部';
-    document.getElementById('iconInput').value = bookmark.icon || '';
+    document.getElementById('iconInput').value = isManagedFavicon(bookmark.icon) ? '' : (bookmark.icon || '');
     previewBookmark(bookmark.url);
 }
 
@@ -521,17 +538,16 @@ async function saveBookmark() {
         const name = nameInput.value.trim() || cleanDisplayName(urlObj.hostname);
         const folder = folderSelect.value;
         const customIcon = iconInput.value.trim();
-        const faviconUrl = customIcon || getFaviconUrl(url);
 
         if (editingBookmarkId) {
             await bookmarksManager.updateBookmark(editingBookmarkId, {
                 url,
                 name,
-                icon: faviconUrl,
+                icon: customIcon,
                 folder
             });
         } else {
-            await bookmarksManager.addBookmark(url, name, faviconUrl, folder);
+            await bookmarksManager.addBookmark(url, name, customIcon, folder);
         }
         loadBookmarks();
         closeModal();
@@ -546,8 +562,12 @@ async function deleteBookmark(id) {
         return;
     }
 
-    await bookmarksManager.deleteBookmark(id);
-    loadBookmarks();
+    try {
+        await bookmarksManager.deleteBookmark(id);
+        loadBookmarks();
+    } catch (error) {
+        alert('删除失败：' + error.message);
+    }
 }
 
 function loadBookmarks() {
@@ -594,6 +614,7 @@ function createBookmarkCard(bookmark, index) {
     card.className = 'bookmark-card';
     card.href = bookmark.url;
     card.target = '_blank';
+    card.rel = 'noopener noreferrer';
     card.style.animationDelay = `${index * 0.05}s`;
     card.draggable = false;
     card.addEventListener('dragstart', (e) => onBookmarkDragStart(e, bookmark, card));
@@ -611,7 +632,7 @@ function createBookmarkCard(bookmark, index) {
     const icon = document.createElement('div');
     icon.className = 'bookmark-icon';
     const img = document.createElement('img');
-    img.src = bookmark.icon;
+    img.src = getBookmarkIconUrl(bookmark);
     img.alt = bookmark.name;
     img.onerror = () => {
         img.src = getDefaultIcon();
@@ -654,12 +675,20 @@ function switchFolder(folder) {
 }
 
 function createFolderCard(folder, index) {
-    const card = document.createElement('button');
+    const card = document.createElement('div');
     const bookmarks = bookmarksManager.getBookmarksByFolder(folder);
     card.className = 'folder-card';
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
     card.dataset.folder = folder;
     card.style.setProperty('--folder-accent', getFolderAccent(index));
     card.onclick = () => switchFolder(folder);
+    card.onkeydown = (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            switchFolder(folder);
+        }
+    };
     card.addEventListener('dragover', (e) => e.preventDefault());
     card.addEventListener('drop', (e) => handleDropOnFolder(e, folder));
     card.addEventListener('dragend', clearDragState);
@@ -670,7 +699,7 @@ function createFolderCard(folder, index) {
         const bubble = document.createElement('div');
         bubble.className = 'preview-bubble';
         const img = document.createElement('img');
-        img.src = bookmark.icon;
+        img.src = getBookmarkIconUrl(bookmark);
         img.alt = bookmark.name;
         img.onerror = () => {
             img.src = getDefaultIcon();
@@ -702,6 +731,35 @@ function createFolderCard(folder, index) {
 
     card.appendChild(preview);
     card.appendChild(meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'folder-actions';
+    actions.setAttribute('aria-label', '文件夹操作');
+    actions.onkeydown = (event) => event.stopPropagation();
+
+    const rename = document.createElement('button');
+    rename.type = 'button';
+    rename.className = 'folder-action';
+    rename.title = '重命名文件夹';
+    rename.textContent = '✎';
+    rename.onclick = (event) => {
+        event.stopPropagation();
+        renameFolder(folder);
+    };
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'folder-action danger';
+    remove.title = '删除文件夹';
+    remove.textContent = '×';
+    remove.onclick = (event) => {
+        event.stopPropagation();
+        deleteFolder(folder);
+    };
+
+    actions.appendChild(rename);
+    actions.appendChild(remove);
+    card.appendChild(actions);
 
     return card;
 }
@@ -748,8 +806,37 @@ async function promptAddFolder() {
     const cleanName = name.trim();
     if (!cleanName) return;
 
-    await bookmarksManager.addFolder(cleanName);
-    loadBookmarks();
+    try {
+        await bookmarksManager.addFolder(cleanName);
+        loadBookmarks();
+    } catch (error) {
+        alert('创建文件夹失败：' + error.message);
+    }
+}
+
+async function renameFolder(folder) {
+    const nextName = prompt('新的文件夹名称', folder);
+    if (!nextName || nextName.trim() === folder) return;
+    try {
+        const renamed = await bookmarksManager.renameFolder(folder, nextName);
+        if (!renamed) {
+            alert('文件夹名称不能为空，也不能与现有文件夹重复。');
+            return;
+        }
+        loadBookmarks();
+    } catch (error) {
+        alert('重命名失败：' + error.message);
+    }
+}
+
+async function deleteFolder(folder) {
+    if (!confirm(`删除文件夹“${folder}”？其中的书签会移回“全部”。`)) return;
+    try {
+        await bookmarksManager.deleteFolder(folder);
+        loadBookmarks();
+    } catch (error) {
+        alert('删除失败：' + error.message);
+    }
 }
 
 // ============================================
@@ -758,25 +845,24 @@ async function promptAddFolder() {
 
 function getSortedBookmarks(folder) {
     const targetFolder = folder || '全部';
-    ensureFolderOrder(targetFolder);
     const list = targetFolder === '全部'
         ? bookmarksManager.getAllBookmarks()
         : bookmarksManager.getBookmarksByFolder(targetFolder);
-    return list.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.id - b.id));
+    return list.map((bookmark) => ({ ...bookmark }))
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.id - b.id));
 }
 
 function onBookmarkDragStart(e, bookmark) {
     if (!e) return;
     isDragging = true;
     draggedBookmark = { ...bookmark, sourceFolder: bookmark.folder || '全部' };
-    dragPreviewFolder = currentFolder;
     if (e.dataTransfer) {
         e.dataTransfer.setData('text/plain', String(bookmark.id));
         e.dataTransfer.effectAllowed = 'move';
     }
 }
 
-function handleDropOnBookmark(e, targetBookmark) {
+async function handleDropOnBookmark(e, targetBookmark) {
     e.preventDefault();
     if (!draggedBookmark) return;
     const folder = currentFolder === '全部' ? draggedBookmark.sourceFolder : currentFolder;
@@ -795,12 +881,17 @@ function handleDropOnBookmark(e, targetBookmark) {
     list.splice(targetIndex, 0, item);
     list.forEach((b, idx) => { b.order = idx; });
 
-    persistFolderOrder(folder, list);
-    clearDragState();
-    loadBookmarks();
+    try {
+        await persistFolderOrder(folder, list);
+        loadBookmarks();
+    } catch (error) {
+        alert('排序保存失败：' + error.message);
+    } finally {
+        clearDragState();
+    }
 }
 
-function handleDropOnFolder(e, folderName) {
+async function handleDropOnFolder(e, folderName) {
     e.preventDefault();
     if (!draggedBookmark) return;
     if (folderName === draggedBookmark.sourceFolder) {
@@ -818,16 +909,21 @@ function handleDropOnFolder(e, folderName) {
     normalizeFolderOrders(all, sourceFolder);
     normalizeFolderOrders(all, folderName || '全部');
 
-    bookmarksManager.reorderBookmarks(all);
-    clearDragState();
-    loadBookmarks();
+    try {
+        await bookmarksManager.reorderBookmarks(all);
+        loadBookmarks();
+    } catch (error) {
+        alert('移动书签失败：' + error.message);
+    } finally {
+        clearDragState();
+    }
 }
 
-function persistFolderOrder(folderName, orderedList) {
+async function persistFolderOrder(folderName, orderedList) {
     const all = bookmarksManager.getAllBookmarks().map(b => ({ ...b }));
     const others = all.filter(b => b.folder !== folderName);
     const merged = [...others, ...orderedList];
-    bookmarksManager.reorderBookmarks(merged);
+    await bookmarksManager.reorderBookmarks(merged);
 }
 
 function normalizeFolderOrders(allBookmarks, folderName) {
@@ -839,7 +935,6 @@ function normalizeFolderOrders(allBookmarks, folderName) {
 
 function clearDragState() {
     draggedBookmark = null;
-    dragPreviewFolder = null;
     isDragging = false;
 }
 
@@ -868,28 +963,30 @@ function attachLongPressDrag(card) {
     card.addEventListener('pointercancel', cancel);
 }
 
-function ensureFolderOrder(folderName) {
-    if (folderName === '全部') return;
-    const all = bookmarksManager.getAllBookmarks().map(b => ({ ...b }));
-    const before = JSON.stringify(all.filter(b => b.folder === folderName).map(b => b.order));
-    normalizeFolderOrders(all, folderName);
-    const after = JSON.stringify(all.filter(b => b.folder === folderName).map(b => b.order));
-    if (before !== after) {
-        bookmarksManager.reorderBookmarks(all);
-    }
-}
-
 // ============================================
 // Utility Functions
 // ============================================
 
 function getFaviconUrl(url) {
     try {
-        const urlObj = new URL(url);
-        return `https://www.google.com/s2/favicons?domain=${urlObj.hostname}&sz=64`;
+        const pageUrl = new URL(url).href;
+        const faviconUrl = new URL(chrome.runtime.getURL('/_favicon/'));
+        faviconUrl.searchParams.set('pageUrl', pageUrl);
+        faviconUrl.searchParams.set('size', '64');
+        return faviconUrl.toString();
     } catch (e) {
         return getDefaultIcon();
     }
+}
+
+function getBookmarkIconUrl(bookmark) {
+    const icon = bookmark?.icon || '';
+    return !icon || isManagedFavicon(icon) ? getFaviconUrl(bookmark?.url) : icon;
+}
+
+function isManagedFavicon(icon) {
+    return /^https:\/\/www\.google\.com\/s2\/favicons/i.test(icon || '')
+        || /^chrome-extension:\/\/[^/]+\/_favicon\//i.test(icon || '');
 }
 
 function getDefaultIcon() {
@@ -1041,6 +1138,7 @@ function loadRecentSites() {
                 if (!['http:', 'https:'].includes(url.protocol)) return;
                 if (url.hostname === 'newtab' || url.hostname.endsWith('google.com')) {
                     // ignore internal/newtab noise
+                    return;
                 }
                 const host = url.hostname.replace(/^www\./, '');
                 const prev = hostMap.get(host);
@@ -1085,6 +1183,7 @@ function renderRecentSites(list) {
         card.className = 'recent-card';
         card.href = item.url;
         card.target = '_blank';
+        card.rel = 'noopener noreferrer';
 
         const icon = document.createElement('div');
         icon.className = 'recent-icon';

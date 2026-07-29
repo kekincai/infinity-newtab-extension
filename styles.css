@@ -443,6 +443,43 @@ label,
     overflow: hidden;
 }
 
+.folder-actions {
+    position: absolute;
+    top: 0.55rem;
+    right: 0.55rem;
+    z-index: 2;
+    display: flex;
+    gap: 0.35rem;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.folder-card:hover .folder-actions,
+.folder-card:focus-within .folder-actions {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.folder-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.82);
+    color: var(--text-primary);
+    box-shadow: 0 5px 12px rgba(31, 42, 68, 0.14);
+    cursor: pointer;
+}
+
+.folder-action.danger {
+    color: #d83f67;
+}
+
 .folder-card::before {
     content: '';
     position: absolute;
@@ -1460,6 +1497,13 @@ label,
 
     .widget {
         min-width: unset;
+    }
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .folder-actions {
+        opacity: 1;
+        transform: none;
     }
 }
 

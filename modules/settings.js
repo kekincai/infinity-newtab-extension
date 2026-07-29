@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS = {
         searchEngine: 'google'
     },
     wallpaper: {
-        type: 'gradient', // 'gradient', 'preset', 'local', 'unsplash'
+        type: 'gradient', // 'gradient', 'preset', 'local', 'video'
         value: '',
         blur: 0,
         overlay: 30
@@ -46,6 +46,11 @@ class SettingsManager {
     async loadSettings() {
         return new Promise((resolve) => {
             chrome.storage.sync.get(['settings'], (result) => {
+                if (chrome.runtime.lastError) {
+                    console.error('Failed to load settings:', chrome.runtime.lastError.message);
+                    resolve(this.mergeWithDefaults({}));
+                    return;
+                }
                 const settings = result.settings || DEFAULT_SETTINGS;
                 // Merge with defaults to ensure all properties exist
                 resolve(this.mergeWithDefaults(settings));
@@ -68,11 +73,16 @@ class SettingsManager {
      * Save settings to chrome.storage.sync
      */
     async saveSettings(settings) {
-        this.settings = settings;
-        return new Promise((resolve) => {
-            chrome.storage.sync.set({ settings }, () => {
-                this.notifyListeners(settings);
-                resolve();
+        const nextSettings = this.mergeWithDefaults(settings);
+        return new Promise((resolve, reject) => {
+            chrome.storage.sync.set({ settings: nextSettings }, () => {
+                if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                    return;
+                }
+                this.settings = nextSettings;
+                this.notifyListeners(nextSettings);
+                resolve(nextSettings);
             });
         });
     }
@@ -86,9 +96,21 @@ class SettingsManager {
         }
 
         if (this.settings[category]) {
-            this.settings[category][key] = value;
-            await this.saveSettings(this.settings);
+            await this.updateCategory(category, { [key]: value });
         }
+    }
+
+    async updateCategory(category, updates) {
+        if (!this.settings) {
+            await this.init();
+        }
+        if (!this.settings[category]) return;
+
+        const nextSettings = {
+            ...this.settings,
+            [category]: { ...this.settings[category], ...updates }
+        };
+        await this.saveSettings(nextSettings);
     }
 
     /**
@@ -110,8 +132,9 @@ class SettingsManager {
      * Reset to default settings
      */
     async resetToDefaults() {
-        await this.saveSettings(DEFAULT_SETTINGS);
-        return DEFAULT_SETTINGS;
+        const defaults = this.mergeWithDefaults({});
+        await this.saveSettings(defaults);
+        return defaults;
     }
 
     /**

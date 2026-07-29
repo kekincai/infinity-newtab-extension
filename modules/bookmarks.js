@@ -23,6 +23,11 @@ class BookmarksManager {
     async loadBookmarks() {
         return new Promise((resolve) => {
             chrome.storage.sync.get(['bookmarks', 'folders'], (result) => {
+                if (chrome.runtime.lastError) {
+                    console.error('Failed to load bookmarks:', chrome.runtime.lastError.message);
+                    resolve(this.bookmarks);
+                    return;
+                }
                 const sanitized = this.sanitizeBookmarks(result.bookmarks || []);
                 this.bookmarks = sanitized;
                 this.folders = this.normalizeFolders(result.folders || ['全部'], this.bookmarks);
@@ -34,13 +39,25 @@ class BookmarksManager {
     /**
      * Save bookmarks to storage
      */
-    async saveBookmarks() {
-        return new Promise((resolve) => {
+    async persistState(bookmarks, folders) {
+        return new Promise((resolve, reject) => {
             chrome.storage.sync.set({
-                bookmarks: this.bookmarks,
-                folders: this.folders
-            }, resolve);
+                bookmarks,
+                folders
+            }, () => {
+                if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                    return;
+                }
+                this.bookmarks = bookmarks;
+                this.folders = folders;
+                resolve();
+            });
         });
+    }
+
+    async saveBookmarks() {
+        await this.persistState(this.bookmarks, this.folders);
     }
 
     /**
@@ -56,8 +73,7 @@ class BookmarksManager {
             order: this.bookmarks.length
         };
 
-        this.bookmarks.push(bookmark);
-        await this.saveBookmarks();
+        await this.persistState([...this.bookmarks, bookmark], this.folders.slice());
         return bookmark;
     }
 
@@ -65,8 +81,8 @@ class BookmarksManager {
      * Delete a bookmark
      */
     async deleteBookmark(id) {
-        this.bookmarks = this.bookmarks.filter(b => b.id !== id);
-        await this.saveBookmarks();
+        const bookmarks = this.bookmarks.filter(b => b.id !== id);
+        await this.persistState(bookmarks, this.folders.slice());
     }
 
     /**
@@ -75,8 +91,10 @@ class BookmarksManager {
     async updateBookmark(id, updates) {
         const index = this.bookmarks.findIndex(b => b.id === id);
         if (index !== -1) {
-            this.bookmarks[index] = { ...this.bookmarks[index], ...updates };
-            await this.saveBookmarks();
+            const bookmarks = this.bookmarks.map((bookmark, bookmarkIndex) => (
+                bookmarkIndex === index ? { ...bookmark, ...updates } : bookmark
+            ));
+            await this.persistState(bookmarks, this.folders.slice());
         }
     }
 
@@ -95,8 +113,7 @@ class BookmarksManager {
      */
     async addFolder(name) {
         if (!this.folders.includes(name)) {
-            this.folders.push(name);
-            await this.saveBookmarks();
+            await this.persistState(this.bookmarks.slice(), [...this.folders, name]);
         }
     }
 
@@ -106,22 +123,34 @@ class BookmarksManager {
     async deleteFolder(name) {
         if (name === '全部') return; // Cannot delete default folder
 
-        this.folders = this.folders.filter(f => f !== name);
-        // Move bookmarks from deleted folder to default
-        this.bookmarks.forEach(b => {
-            if (b.folder === name) {
-                b.folder = '全部';
-            }
-        });
-        await this.saveBookmarks();
+        const folders = this.folders.filter(f => f !== name);
+        const bookmarks = this.bookmarks.map((bookmark) => (
+            bookmark.folder === name ? { ...bookmark, folder: '全部' } : bookmark
+        ));
+        await this.persistState(bookmarks, folders);
+    }
+
+    async renameFolder(oldName, newName) {
+        const cleanName = String(newName || '').trim();
+        if (oldName === '全部' || !cleanName || this.folders.includes(cleanName)) return false;
+
+        const index = this.folders.indexOf(oldName);
+        if (index === -1) return false;
+        const folders = this.folders.slice();
+        folders[index] = cleanName;
+        const bookmarks = this.bookmarks.map((bookmark) => (
+            bookmark.folder === oldName ? { ...bookmark, folder: cleanName } : bookmark
+        ));
+        await this.persistState(bookmarks, folders);
+        return true;
     }
 
     /**
      * Reorder bookmarks
      */
     async reorderBookmarks(newOrder) {
-        this.bookmarks = this.sanitizeBookmarks(newOrder);
-        await this.saveBookmarks();
+        const bookmarks = this.sanitizeBookmarks(newOrder);
+        await this.persistState(bookmarks, this.folders.slice());
     }
 
     /**

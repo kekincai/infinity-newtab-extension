@@ -44,7 +44,7 @@ class SearchManager {
     search(query) {
         const engine = SEARCH_ENGINES[this.currentEngine];
         const searchUrl = engine.url + encodeURIComponent(query);
-        window.open(searchUrl, '_blank');
+        window.open(searchUrl, '_blank', 'noopener');
     }
 
     /**
