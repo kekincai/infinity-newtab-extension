@@ -1352,18 +1352,21 @@
     }
     return Number.parseFloat(firstValue) || Math.min(width, height) / 2;
   }
-  function svgElement(name) {
-    return document.createElementNS(SVG_NAMESPACE, name);
+  async function decodeOpticalMaps(maps) {
+    await Promise.all([maps.displacement, maps.specular].map(async (source) => {
+      const image = new Image();
+      image.src = source;
+      try {
+        await image.decode();
+      } catch {
+      }
+    }));
   }
-  function attributes(element, values) {
-    Object.entries(values).forEach(([name, value]) => element.setAttribute(name, value));
-  }
-  var SVG_NAMESPACE, REFRACTION_LEVEL, SOURCE_BLUR, SPECULAR_OPACITY, SPECULAR_SATURATION, SPRING_STIFFNESS, SPRING_DAMPING, MAP_CACHE, nextFilterId, LiquidGlassSystem, LiquidGlassBinding;
+  var REFRACTION_LEVEL, SOURCE_BLUR, SPECULAR_OPACITY, SPECULAR_SATURATION, SPRING_STIFFNESS, SPRING_DAMPING, MAP_CACHE, MAP_READY_CACHE, nextFilterId, LiquidGlassSystem, LiquidGlassBinding;
   var init_liquid_glass = __esm({
     "src/components/liquid-glass.ts"() {
       "use strict";
       init_liquid_optics();
-      SVG_NAMESPACE = "http://www.w3.org/2000/svg";
       REFRACTION_LEVEL = 0.7;
       SOURCE_BLUR = 1;
       SPECULAR_OPACITY = 0.2;
@@ -1371,6 +1374,7 @@
       SPRING_STIFFNESS = 250;
       SPRING_DAMPING = 24;
       MAP_CACHE = /* @__PURE__ */ new Map();
+      MAP_READY_CACHE = /* @__PURE__ */ new Map();
       nextFilterId = 0;
       LiquidGlassSystem = class extends HTMLElement {
         bindings = /* @__PURE__ */ new Map();
@@ -1425,10 +1429,17 @@
       LiquidGlassBinding = class {
         constructor(item) {
           this.item = item;
+          this.content = document.createElement(
+            this.item.matches("button, a, label") ? "span" : "div"
+          );
           this.item.classList.add("liquid-glass-host");
+          this.base.className = "liquid-glass-base";
+          this.base.setAttribute("aria-hidden", "true");
           this.layer.className = "liquid-glass-layer";
           this.layer.setAttribute("aria-hidden", "true");
-          this.item.prepend(this.layer);
+          this.content.className = "liquid-glass-content";
+          this.content.append(...Array.from(this.item.childNodes));
+          this.item.append(this.content);
           this.item.addEventListener("pointerenter", this.onPointerEnter);
           this.item.addEventListener("pointerleave", this.onPointerLeave);
           this.item.addEventListener("pointerdown", this.onPointerDown);
@@ -1438,14 +1449,13 @@
           window.addEventListener("pointercancel", this.onPointerUp);
         }
         item;
+        base = document.createElement("span");
         layer = document.createElement("span");
+        content;
         svg = null;
-        displacement = null;
-        blur = null;
-        saturation = null;
-        specularAlpha = null;
-        maximumDisplacement = 0;
         shapeKey = "";
+        pendingShapeKey = "";
+        configurationVersion = 0;
         target = 0;
         presence = 0;
         velocity = 0;
@@ -1463,17 +1473,29 @@
             radius: resolveRadius(getComputedStyle(this.item).borderTopLeftRadius, width, height)
           });
           const key = opticalShapeKey(shape);
-          if (key === this.shapeKey && this.svg?.isConnected) return;
+          if (key === this.shapeKey && (this.svg?.isConnected || this.pendingShapeKey === key)) return;
           this.shapeKey = key;
+          this.pendingShapeKey = key;
+          const version = ++this.configurationVersion;
           const maps = MAP_CACHE.get(key) ?? createOpticalMaps(shape);
           MAP_CACHE.set(key, maps);
-          this.maximumDisplacement = maps.maximumDisplacement;
+          const ready = MAP_READY_CACHE.get(key) ?? decodeOpticalMaps(maps);
+          MAP_READY_CACHE.set(key, ready);
+          void ready.then(() => this.installFilter(shape, maps, version));
+        }
+        installFilter(shape, maps, version) {
+          if (version !== this.configurationVersion || !this.item.isConnected) return;
+          this.pendingShapeKey = "";
           this.svg?.remove();
           this.svg = this.createFilter(shape, maps);
-          this.item.prepend(this.svg);
+          if (this.layer.isConnected) this.item.prepend(this.svg);
+          else this.item.prepend(this.svg, this.base, this.layer);
+          const filterId = this.item.dataset.liquidFilterId;
+          if (filterId) this.item.style.setProperty("--liquid-filter", `url("#${filterId}")`);
           this.updateFilter();
         }
         destroy() {
+          this.configurationVersion += 1;
           cancelAnimationFrame(this.frame);
           this.item.removeEventListener("pointerenter", this.onPointerEnter);
           this.item.removeEventListener("pointerleave", this.onPointerLeave);
@@ -1489,94 +1511,38 @@
           delete this.item.dataset.liquidShape;
           delete this.item.dataset.liquidState;
           this.svg?.remove();
+          this.base.remove();
           this.layer.remove();
+          this.content.replaceWith(...Array.from(this.content.childNodes));
         }
         createFilter(shape, maps) {
           const id = `infinity-liquid-${++nextFilterId}`;
-          const svg = svgElement("svg");
-          svg.classList.add("liquid-filter-defs");
-          svg.setAttribute("color-interpolation-filters", "sRGB");
-          svg.setAttribute("aria-hidden", "true");
-          const definitions = svgElement("defs");
-          const filter = svgElement("filter");
-          filter.id = id;
+          const template = document.createElement("template");
+          template.innerHTML = `
+            <svg class="liquid-filter-defs" color-interpolation-filters="sRGB" aria-hidden="true">
+                <defs>
+                    <filter id="${id}">
+                        <feGaussianBlur in="SourceGraphic" stdDeviation="${SOURCE_BLUR}" result="blurred_source"></feGaussianBlur>
+                        <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" result="displacement_map" data-optical-map="displacement"></feImage>
+                        <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${maps.maximumDisplacement * REFRACTION_LEVEL}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
+                        <feColorMatrix in="displaced" type="saturate" values="${SPECULAR_SATURATION}" result="displaced_saturated"></feColorMatrix>
+                        <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" result="specular_layer" data-optical-map="specular"></feImage>
+                        <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
+                        <feComponentTransfer in="specular_layer" result="specular_faded">
+                            <feFuncA type="linear" slope="${SPECULAR_OPACITY}"></feFuncA>
+                        </feComponentTransfer>
+                        <feBlend in="specular_saturated" in2="displaced" mode="normal" result="withSaturation"></feBlend>
+                        <feBlend in="specular_faded" in2="withSaturation" mode="normal"></feBlend>
+                    </filter>
+                </defs>
+            </svg>
+        `;
+          const svg = template.content.firstElementChild;
+          const filter = svg.querySelector("filter");
           filter.dataset.maximumDisplacement = String(maps.maximumDisplacement);
           filter.dataset.liquidShape = opticalShapeKey(shape);
-          this.blur = svgElement("feGaussianBlur");
-          attributes(this.blur, { in: "SourceGraphic", stdDeviation: "0", result: "blurred_source" });
-          const displacementImage = svgElement("feImage");
-          attributes(displacementImage, {
-            href: maps.displacement,
-            x: "0",
-            y: "0",
-            width: String(shape.width),
-            height: String(shape.height),
-            result: "displacement_map",
-            "data-optical-map": "displacement"
-          });
-          this.displacement = svgElement("feDisplacementMap");
-          attributes(this.displacement, {
-            in: "blurred_source",
-            in2: "displacement_map",
-            scale: "0",
-            xChannelSelector: "R",
-            yChannelSelector: "G",
-            result: "displaced"
-          });
-          this.saturation = svgElement("feColorMatrix");
-          attributes(this.saturation, {
-            in: "displaced",
-            type: "saturate",
-            values: "1",
-            result: "displaced_saturated"
-          });
-          const specularImage = svgElement("feImage");
-          attributes(specularImage, {
-            href: maps.specular,
-            x: "0",
-            y: "0",
-            width: String(shape.width),
-            height: String(shape.height),
-            result: "specular_layer",
-            "data-optical-map": "specular"
-          });
-          const composite = svgElement("feComposite");
-          attributes(composite, {
-            in: "displaced_saturated",
-            in2: "specular_layer",
-            operator: "in",
-            result: "specular_saturated"
-          });
-          const transfer = svgElement("feComponentTransfer");
-          attributes(transfer, { in: "specular_layer", result: "specular_faded" });
-          this.specularAlpha = svgElement("feFuncA");
-          attributes(this.specularAlpha, { type: "linear", slope: "0" });
-          transfer.append(this.specularAlpha);
-          const saturationBlend = svgElement("feBlend");
-          attributes(saturationBlend, {
-            in: "specular_saturated",
-            in2: "displaced",
-            mode: "normal",
-            result: "withSaturation"
-          });
-          const finalBlend = svgElement("feBlend");
-          attributes(finalBlend, { in: "specular_faded", in2: "withSaturation", mode: "normal" });
-          filter.append(
-            this.blur,
-            displacementImage,
-            this.displacement,
-            this.saturation,
-            specularImage,
-            composite,
-            transfer,
-            saturationBlend,
-            finalBlend
-          );
-          definitions.append(filter);
-          svg.append(definitions);
           this.item.dataset.liquidFilterId = id;
           this.item.dataset.liquidShape = opticalShapeKey(shape);
-          this.item.style.setProperty("--liquid-filter", `url("#${id}")`);
           return svg;
         }
         setTarget(value) {
@@ -1605,10 +1571,6 @@
         };
         updateFilter() {
           const presence = Math.min(1, Math.max(0, this.presence));
-          this.displacement?.setAttribute("scale", String(this.maximumDisplacement * REFRACTION_LEVEL * presence));
-          this.blur?.setAttribute("stdDeviation", String(SOURCE_BLUR * presence));
-          this.saturation?.setAttribute("values", String(1 + (SPECULAR_SATURATION - 1) * presence));
-          this.specularAlpha?.setAttribute("slope", String(SPECULAR_OPACITY * presence));
           this.item.style.setProperty("--liquid-presence", presence.toFixed(4));
           this.item.dataset.liquidState = presence > 0.01 ? "active" : "idle";
         }

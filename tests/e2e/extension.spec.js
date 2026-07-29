@@ -89,6 +89,8 @@ async function inspectArticleFilter(page, locator) {
         return {
             backdrop: getComputedStyle(element.querySelector('.liquid-glass-layer')).backdropFilter,
             scale: Number(filter?.querySelector('feDisplacementMap')?.getAttribute('scale') || 0),
+            baseOpacity: Number(getComputedStyle(element.querySelector('.liquid-glass-base')).opacity),
+            layerOpacity: Number(getComputedStyle(element.querySelector('.liquid-glass-layer')).opacity),
             state: element.dataset.liquidState
         };
     });
@@ -130,7 +132,9 @@ async function inspectArticleFilter(page, locator) {
     });
     expect(info.id).toBeTruthy();
     expect(before.backdrop).toContain(info.id);
-    expect(before.scale).toBe(0);
+    expect(before.scale).toBeGreaterThan(30);
+    expect(before.baseOpacity).toBeCloseTo(1, 2);
+    expect(before.layerOpacity).toBeCloseTo(0, 2);
     expect(before.state).toBe('idle');
     expect(info.backdrop).toContain(info.id);
     expect(info.coLocated).toBe(true);
@@ -161,7 +165,25 @@ async function inspectArticleFilter(page, locator) {
     expect(Number(info.specularOpacity)).toBeCloseTo(0.2, 2);
     expect(info.maximum).toBeGreaterThan(30);
     expect(info.scale / info.maximum).toBeCloseTo(0.7, 2);
+    await expect(locator.locator('.liquid-glass-base')).toHaveCSS('opacity', '0');
+    await expect(locator.locator('.liquid-glass-layer')).toHaveCSS('opacity', '1');
     return info;
+}
+
+async function expectRenderedRefraction(page, locator) {
+    await locator.hover();
+    await expect.poll(() => locator.evaluate((element) => Number(
+        getComputedStyle(element).getPropertyValue('--liquid-presence') || 0
+    ))).toBeGreaterThan(0.999);
+    const displacement = locator.locator('feDisplacementMap');
+    const activeScale = await displacement.getAttribute('scale');
+    expect(Number(activeScale)).toBeGreaterThan(30);
+    const active = await locator.screenshot({ animations: 'disabled' });
+    await displacement.evaluate((node) => node.setAttribute('scale', '0'));
+    await page.waitForTimeout(150);
+    const neutral = await locator.screenshot({ animations: 'disabled' });
+    expect(active.equals(neutral), 'SVG displacement must change rendered pixels').toBe(false);
+    await displacement.evaluate((node, scale) => node.setAttribute('scale', scale), activeScale);
 }
 
 async function openSettings(page, tab = 'appearance') {
@@ -214,8 +236,45 @@ test('co-locates the article optical pipeline inside every real component', asyn
 
     await page.mouse.move(10, 10);
     await expect.poll(() => page.locator('.anime-wallpaper').evaluate((element) => Number(
-        element.querySelector('feDisplacementMap')?.getAttribute('scale') || 0
-    ))).toBeLessThan(0.2);
+        getComputedStyle(element).getPropertyValue('--liquid-presence') || 0
+    ))).toBeLessThan(0.01);
+    expect(errors).toEqual([]);
+});
+
+test('renders real refraction pixels on hover', async ({ page }) => {
+    const seed = structuredClone(initialData);
+    seed.settings.appearance.enhancedAnimations = false;
+    const errors = await openExtension(page, seed);
+    await page.addStyleTag({ content: `
+        body { background: repeating-linear-gradient(90deg, #101828 0 8px, #ff3f9f 8px 16px, #61d8ff 16px 24px) !important; }
+        wallpaper-surface { display: none !important; }
+        .search-shell, .folder-tile { transform: none !important; transition: none !important; }
+    ` });
+    await expectRenderedRefraction(page, page.locator('.search-shell'));
+    await expectRenderedRefraction(page, page.locator('.folder-tile[data-folder="POM"]'));
+    expect(errors).toEqual([]);
+});
+
+test('crossfades the real glass layers while moving between controls', async ({ page }) => {
+    const errors = await openExtension(page);
+    const first = page.locator('.anime-wallpaper');
+    const second = page.locator('.create-folder');
+    await first.hover();
+    await expect.poll(() => first.evaluate((element) => Number(
+        getComputedStyle(element).getPropertyValue('--liquid-presence') || 0
+    ))).toBeGreaterThan(0.999);
+    await second.hover();
+    await page.waitForTimeout(80);
+    const transition = await page.evaluate(() => ({
+        outgoing: Number(getComputedStyle(document.querySelector('.anime-wallpaper')).getPropertyValue('--liquid-presence')),
+        incoming: Number(getComputedStyle(document.querySelector('.create-folder')).getPropertyValue('--liquid-presence')),
+        fakeLayers: document.querySelectorAll('liquid-surface, liquid-filter-bank, [data-liquid-cursor]').length
+    }));
+    expect(transition.outgoing).toBeGreaterThan(0.05);
+    expect(transition.outgoing).toBeLessThan(0.95);
+    expect(transition.incoming).toBeGreaterThan(0.05);
+    expect(transition.incoming).toBeLessThan(0.95);
+    expect(transition.fakeLayers).toBe(0);
     expect(errors).toEqual([]);
 });
 

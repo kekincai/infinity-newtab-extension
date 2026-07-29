@@ -152,6 +152,9 @@ body.theme-light .wallpaper-tint {
     border: 1px solid var(--glass-line);
     background: linear-gradient(145deg, var(--glass-fill-strong), var(--glass-fill));
     box-shadow: var(--panel-shadow);
+}
+
+.glass-panel:not(.liquid-glass-host) {
     backdrop-filter: blur(18px) saturate(1.28);
     -webkit-backdrop-filter: blur(18px) saturate(1.28);
 }
@@ -390,8 +393,6 @@ search-command {
     cursor: pointer;
     text-align: center;
     text-decoration: none;
-    backdrop-filter: blur(14px) saturate(1.22);
-    -webkit-backdrop-filter: blur(14px) saturate(1.22);
     transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 220ms ease, border-color 220ms ease;
 }
 
@@ -612,7 +613,6 @@ search-command {
     border-radius: 20px;
     background: var(--glass-fill-strong);
     color: var(--ink);
-    backdrop-filter: blur(18px) saturate(1.25);
 }
 
 .settings-trigger svg {
@@ -665,7 +665,6 @@ search-command {
     color: inherit;
     text-decoration: none;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
-    backdrop-filter: blur(12px) saturate(1.22);
     transition: transform 180ms ease, box-shadow 180ms ease;
 }
 
@@ -1033,24 +1032,48 @@ liquid-glass-system {
 }
 
 .liquid-glass-host {
-    isolation: isolate;
     background: transparent !important;
     box-shadow: none !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
 }
 
+.liquid-glass-base,
 .liquid-glass-layer {
     position: absolute;
-    z-index: -2;
+    z-index: 0;
     inset: 0;
     border-radius: inherit;
     background: var(--liquid-glass-background, rgba(255, 255, 255, 0.12));
     box-shadow: var(--liquid-glass-shadow, none);
     pointer-events: none;
     transform: translateZ(0);
+    will-change: opacity;
+}
+
+.liquid-glass-base {
+    opacity: calc(1 - var(--liquid-presence, 0));
+}
+
+.liquid-glass-layer {
+    opacity: var(--liquid-presence, 0);
     backdrop-filter: var(--liquid-filter);
     -webkit-backdrop-filter: var(--liquid-filter);
+}
+
+.liquid-glass-content {
+    position: relative;
+    z-index: 1;
+    display: inherit;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    align-content: inherit;
+    align-items: inherit;
+    justify-content: inherit;
+    justify-items: inherit;
+    flex-direction: inherit;
+    gap: inherit;
+    text-align: inherit;
 }
 
 @media (hover: hover) and (pointer: fine) {

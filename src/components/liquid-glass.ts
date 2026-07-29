@@ -5,7 +5,6 @@ import {
     opticalShapeKey
 } from './liquid-optics';
 
-const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const REFRACTION_LEVEL = 0.7;
 const SOURCE_BLUR = 1;
 const SPECULAR_OPACITY = 0.2;
@@ -13,6 +12,7 @@ const SPECULAR_SATURATION = 4;
 const SPRING_STIFFNESS = 250;
 const SPRING_DAMPING = 24;
 const MAP_CACHE = new Map<string, OpticalMaps>();
+const MAP_READY_CACHE = new Map<string, Promise<void>>();
 let nextFilterId = 0;
 
 /**
@@ -78,14 +78,13 @@ export class LiquidGlassSystem extends HTMLElement {
 }
 
 class LiquidGlassBinding {
+    private readonly base = document.createElement('span');
     private readonly layer = document.createElement('span');
+    private readonly content: HTMLSpanElement | HTMLDivElement;
     private svg: SVGSVGElement | null = null;
-    private displacement: SVGFEDisplacementMapElement | null = null;
-    private blur: SVGFEGaussianBlurElement | null = null;
-    private saturation: SVGFEColorMatrixElement | null = null;
-    private specularAlpha: SVGFEFuncAElement | null = null;
-    private maximumDisplacement = 0;
     private shapeKey = '';
+    private pendingShapeKey = '';
+    private configurationVersion = 0;
     private target = 0;
     private presence = 0;
     private velocity = 0;
@@ -95,10 +94,17 @@ class LiquidGlassBinding {
     private focusInside = false;
 
     constructor(private readonly item: HTMLElement) {
+        this.content = document.createElement(
+            this.item.matches('button, a, label') ? 'span' : 'div'
+        );
         this.item.classList.add('liquid-glass-host');
+        this.base.className = 'liquid-glass-base';
+        this.base.setAttribute('aria-hidden', 'true');
         this.layer.className = 'liquid-glass-layer';
         this.layer.setAttribute('aria-hidden', 'true');
-        this.item.prepend(this.layer);
+        this.content.className = 'liquid-glass-content';
+        this.content.append(...Array.from(this.item.childNodes));
+        this.item.append(this.content);
         this.item.addEventListener('pointerenter', this.onPointerEnter);
         this.item.addEventListener('pointerleave', this.onPointerLeave);
         this.item.addEventListener('pointerdown', this.onPointerDown);
@@ -118,19 +124,36 @@ class LiquidGlassBinding {
             radius: resolveRadius(getComputedStyle(this.item).borderTopLeftRadius, width, height)
         });
         const key = opticalShapeKey(shape);
-        if (key === this.shapeKey && this.svg?.isConnected) return;
+        if (key === this.shapeKey && (this.svg?.isConnected || this.pendingShapeKey === key)) return;
         this.shapeKey = key;
+        this.pendingShapeKey = key;
+        const version = ++this.configurationVersion;
 
         const maps = MAP_CACHE.get(key) ?? createOpticalMaps(shape);
         MAP_CACHE.set(key, maps);
-        this.maximumDisplacement = maps.maximumDisplacement;
+        const ready = MAP_READY_CACHE.get(key) ?? decodeOpticalMaps(maps);
+        MAP_READY_CACHE.set(key, ready);
+        void ready.then(() => this.installFilter(shape, maps, version));
+    }
+
+    private installFilter(
+        shape: OpticalShape,
+        maps: OpticalMaps,
+        version: number
+    ): void {
+        if (version !== this.configurationVersion || !this.item.isConnected) return;
+        this.pendingShapeKey = '';
         this.svg?.remove();
         this.svg = this.createFilter(shape, maps);
-        this.item.prepend(this.svg);
+        if (this.layer.isConnected) this.item.prepend(this.svg);
+        else this.item.prepend(this.svg, this.base, this.layer);
+        const filterId = this.item.dataset.liquidFilterId;
+        if (filterId) this.item.style.setProperty('--liquid-filter', `url("#${filterId}")`);
         this.updateFilter();
     }
 
     destroy(): void {
+        this.configurationVersion += 1;
         cancelAnimationFrame(this.frame);
         this.item.removeEventListener('pointerenter', this.onPointerEnter);
         this.item.removeEventListener('pointerleave', this.onPointerLeave);
@@ -146,104 +169,39 @@ class LiquidGlassBinding {
         delete this.item.dataset.liquidShape;
         delete this.item.dataset.liquidState;
         this.svg?.remove();
+        this.base.remove();
         this.layer.remove();
+        this.content.replaceWith(...Array.from(this.content.childNodes));
     }
 
     private createFilter(shape: OpticalShape, maps: OpticalMaps): SVGSVGElement {
         const id = `infinity-liquid-${++nextFilterId}`;
-        const svg = svgElement('svg');
-        svg.classList.add('liquid-filter-defs');
-        svg.setAttribute('color-interpolation-filters', 'sRGB');
-        svg.setAttribute('aria-hidden', 'true');
-        const definitions = svgElement('defs');
-        const filter = svgElement('filter');
-        filter.id = id;
+        const template = document.createElement('template');
+        template.innerHTML = `
+            <svg class="liquid-filter-defs" color-interpolation-filters="sRGB" aria-hidden="true">
+                <defs>
+                    <filter id="${id}">
+                        <feGaussianBlur in="SourceGraphic" stdDeviation="${SOURCE_BLUR}" result="blurred_source"></feGaussianBlur>
+                        <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" result="displacement_map" data-optical-map="displacement"></feImage>
+                        <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${maps.maximumDisplacement * REFRACTION_LEVEL}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
+                        <feColorMatrix in="displaced" type="saturate" values="${SPECULAR_SATURATION}" result="displaced_saturated"></feColorMatrix>
+                        <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" result="specular_layer" data-optical-map="specular"></feImage>
+                        <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
+                        <feComponentTransfer in="specular_layer" result="specular_faded">
+                            <feFuncA type="linear" slope="${SPECULAR_OPACITY}"></feFuncA>
+                        </feComponentTransfer>
+                        <feBlend in="specular_saturated" in2="displaced" mode="normal" result="withSaturation"></feBlend>
+                        <feBlend in="specular_faded" in2="withSaturation" mode="normal"></feBlend>
+                    </filter>
+                </defs>
+            </svg>
+        `;
+        const svg = template.content.firstElementChild as SVGSVGElement;
+        const filter = svg.querySelector('filter') as SVGFilterElement;
         filter.dataset.maximumDisplacement = String(maps.maximumDisplacement);
         filter.dataset.liquidShape = opticalShapeKey(shape);
-
-        this.blur = svgElement('feGaussianBlur');
-        attributes(this.blur, { in: 'SourceGraphic', stdDeviation: '0', result: 'blurred_source' });
-
-        const displacementImage = svgElement('feImage');
-        attributes(displacementImage, {
-            href: maps.displacement,
-            x: '0',
-            y: '0',
-            width: String(shape.width),
-            height: String(shape.height),
-            result: 'displacement_map',
-            'data-optical-map': 'displacement'
-        });
-
-        this.displacement = svgElement('feDisplacementMap');
-        attributes(this.displacement, {
-            in: 'blurred_source',
-            in2: 'displacement_map',
-            scale: '0',
-            xChannelSelector: 'R',
-            yChannelSelector: 'G',
-            result: 'displaced'
-        });
-
-        this.saturation = svgElement('feColorMatrix');
-        attributes(this.saturation, {
-            in: 'displaced',
-            type: 'saturate',
-            values: '1',
-            result: 'displaced_saturated'
-        });
-
-        const specularImage = svgElement('feImage');
-        attributes(specularImage, {
-            href: maps.specular,
-            x: '0',
-            y: '0',
-            width: String(shape.width),
-            height: String(shape.height),
-            result: 'specular_layer',
-            'data-optical-map': 'specular'
-        });
-
-        const composite = svgElement('feComposite');
-        attributes(composite, {
-            in: 'displaced_saturated',
-            in2: 'specular_layer',
-            operator: 'in',
-            result: 'specular_saturated'
-        });
-
-        const transfer = svgElement('feComponentTransfer');
-        attributes(transfer, { in: 'specular_layer', result: 'specular_faded' });
-        this.specularAlpha = svgElement('feFuncA');
-        attributes(this.specularAlpha, { type: 'linear', slope: '0' });
-        transfer.append(this.specularAlpha);
-
-        const saturationBlend = svgElement('feBlend');
-        attributes(saturationBlend, {
-            in: 'specular_saturated',
-            in2: 'displaced',
-            mode: 'normal',
-            result: 'withSaturation'
-        });
-        const finalBlend = svgElement('feBlend');
-        attributes(finalBlend, { in: 'specular_faded', in2: 'withSaturation', mode: 'normal' });
-
-        filter.append(
-            this.blur,
-            displacementImage,
-            this.displacement,
-            this.saturation,
-            specularImage,
-            composite,
-            transfer,
-            saturationBlend,
-            finalBlend
-        );
-        definitions.append(filter);
-        svg.append(definitions);
         this.item.dataset.liquidFilterId = id;
         this.item.dataset.liquidShape = opticalShapeKey(shape);
-        this.item.style.setProperty('--liquid-filter', `url("#${id}")`);
         return svg;
     }
 
@@ -275,10 +233,6 @@ class LiquidGlassBinding {
 
     private updateFilter(): void {
         const presence = Math.min(1, Math.max(0, this.presence));
-        this.displacement?.setAttribute('scale', String(this.maximumDisplacement * REFRACTION_LEVEL * presence));
-        this.blur?.setAttribute('stdDeviation', String(SOURCE_BLUR * presence));
-        this.saturation?.setAttribute('values', String(1 + (SPECULAR_SATURATION - 1) * presence));
-        this.specularAlpha?.setAttribute('slope', String(SPECULAR_OPACITY * presence));
         this.item.style.setProperty('--liquid-presence', presence.toFixed(4));
         this.item.dataset.liquidState = presence > 0.01 ? 'active' : 'idle';
     }
@@ -337,10 +291,14 @@ function resolveRadius(value: string, width: number, height: number): number {
     return Number.parseFloat(firstValue) || Math.min(width, height) / 2;
 }
 
-function svgElement<K extends keyof SVGElementTagNameMap>(name: K): SVGElementTagNameMap[K] {
-    return document.createElementNS(SVG_NAMESPACE, name);
-}
-
-function attributes(element: Element, values: Record<string, string>): void {
-    Object.entries(values).forEach(([name, value]) => element.setAttribute(name, value));
+async function decodeOpticalMaps(maps: OpticalMaps): Promise<void> {
+    await Promise.all([maps.displacement, maps.specular].map(async (source) => {
+        const image = new Image();
+        image.src = source;
+        try {
+            await image.decode();
+        } catch {
+            // The SVG filter can still attempt to load the data URL directly.
+        }
+    }));
 }
