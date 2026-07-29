@@ -3,10 +3,7 @@ const { defineConfig } = require('@playwright/test');
 module.exports = defineConfig({
     testDir: './tests/e2e',
     timeout: 30000,
-    expect: {
-        timeout: 5000,
-        toHaveScreenshot: { animations: 'disabled', maxDiffPixelRatio: 0.005 }
-    },
+    expect: { timeout: 5000 },
     fullyParallel: false,
     workers: 1,
     reporter: [['list']],
@@ -16,7 +13,7 @@ module.exports = defineConfig({
         channel: 'chrome',
         headless: true,
         locale: 'zh-CN',
-        screenshot: 'only-on-failure',
+        screenshot: 'off',
         trace: 'retain-on-failure'
     },
     webServer: {
