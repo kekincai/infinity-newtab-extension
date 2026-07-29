@@ -43,6 +43,7 @@ function initializeUI() {
     const bgLayer = document.getElementById('backgroundLayer');
     wallpaperManager.init(bgLayer);
     initializeLiquidGlass();
+    initializePrecisionLens();
 }
 
 function initializeLiquidGlass() {
@@ -87,6 +88,146 @@ function initializeLiquidGlass() {
         surface.style.removeProperty('--glow-x');
         surface.style.removeProperty('--glow-y');
     }, { passive: true });
+}
+
+function initializePrecisionLens() {
+    const hasFinePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    const allowsMotion = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const supportsSvgBackdrop = CSS.supports('backdrop-filter', 'url("#liquidPrecisionLens")')
+        || CSS.supports('-webkit-backdrop-filter', 'url("#liquidPrecisionLens")');
+    if (!hasFinePointer || !allowsMotion || !supportsSvgBackdrop) return;
+
+    const interactiveSelector = [
+        '.ghost-btn',
+        '.tab-btn',
+        '.status-pill.clickable',
+        '.wallpaper-btn',
+        '.data-btn',
+        '.btn',
+        '.settings-btn',
+        '.add-bookmark-btn'
+    ].join(',');
+    const lens = document.createElement('div');
+    lens.id = 'liquidPointerLens';
+    lens.className = 'liquid-pointer-lens';
+    document.body.appendChild(lens);
+
+    const magnification = document.getElementById('liquidLensMagnification');
+    const refraction = document.getElementById('liquidLensRefraction');
+    const specular = document.getElementById('liquidLensSpecular');
+    const position = { x: 0, y: 0, vx: 0, vy: 0 };
+    const press = { value: 1, velocity: 0 };
+    const zoom = { value: 24, velocity: 0 };
+    const bend = { value: 76, velocity: 0 };
+    const shine = { value: 0.48, velocity: 0 };
+    let targetX = 0;
+    let targetY = 0;
+    let active = false;
+    let pressed = false;
+    let initialized = false;
+    let frameId = 0;
+    let lastInteractiveTime = 0;
+    let hideTimer = 0;
+
+    const stepSpring = (state, target, stiffness, damping) => {
+        state.velocity += (target - state.value) * stiffness;
+        state.velocity *= damping;
+        state.value += state.velocity;
+    };
+
+    const renderFrame = () => {
+        position.vx = (position.vx + (targetX - position.x) * 0.13) * 0.68;
+        position.vy = (position.vy + (targetY - position.y) * 0.13) * 0.68;
+        position.x += position.vx;
+        position.y += position.vy;
+
+        stepSpring(press, pressed ? 0.9 : 1, 0.22, 0.64);
+        stepSpring(zoom, pressed ? 46 : 24, 0.18, 0.7);
+        stepSpring(bend, pressed ? 92 : 76, 0.16, 0.72);
+        stepSpring(shine, pressed ? 0.62 : 0.48, 0.16, 0.72);
+
+        const speed = Math.hypot(position.vx, position.vy);
+        const stretch = Math.min(0.16, speed * 0.009);
+        const tilt = Math.max(-6, Math.min(6, position.vx * 0.16));
+        const scaleX = (1 + stretch) * press.value;
+        const scaleY = (1 - stretch * 0.42) * press.value;
+        lens.style.transform = `translate3d(${position.x - 85}px, ${position.y - 52}px, 0) rotate(${tilt}deg) scale(${scaleX}, ${scaleY})`;
+
+        magnification.setAttribute('scale', zoom.value.toFixed(2));
+        refraction.setAttribute('scale', bend.value.toFixed(2));
+        specular.setAttribute('slope', shine.value.toFixed(3));
+
+        const stillMoving = speed > 0.08
+            || Math.abs(press.velocity) > 0.001
+            || Math.abs(zoom.velocity) > 0.01
+            || Math.abs(bend.velocity) > 0.01;
+        if (active || pressed || stillMoving) {
+            frameId = requestAnimationFrame(renderFrame);
+        } else {
+            frameId = 0;
+        }
+    };
+
+    const startAnimation = () => {
+        if (!frameId) frameId = requestAnimationFrame(renderFrame);
+    };
+
+    const showLens = (x, y) => {
+        targetX = x;
+        targetY = y;
+        if (!initialized) {
+            position.x = x;
+            position.y = y;
+            initialized = true;
+        }
+        active = true;
+        lens.classList.add('active');
+        startAnimation();
+    };
+
+    const hideLens = () => {
+        active = false;
+        pressed = false;
+        lens.classList.remove('active', 'pressed');
+        startAnimation();
+    };
+
+    document.addEventListener('pointermove', (event) => {
+        const target = event.target instanceof Element ? event.target.closest(interactiveSelector) : null;
+        const now = performance.now();
+        if (target && document.body.classList.contains('enhanced-animations')) {
+            window.clearTimeout(hideTimer);
+            lastInteractiveTime = now;
+            showLens(event.clientX, event.clientY);
+            return;
+        }
+
+        // Keep the lens alive while crossing the small gap between adjacent buttons.
+        if (active && now - lastInteractiveTime < 220) {
+            showLens(event.clientX, event.clientY);
+            window.clearTimeout(hideTimer);
+            hideTimer = window.setTimeout(hideLens, 220);
+        } else if (active) {
+            hideLens();
+        }
+    }, { passive: true });
+
+    document.addEventListener('pointerdown', (event) => {
+        const target = event.target instanceof Element ? event.target.closest(interactiveSelector) : null;
+        if (!target || !active) return;
+        pressed = true;
+        lens.classList.add('pressed');
+        startAnimation();
+    }, { passive: true });
+
+    const releaseLens = () => {
+        pressed = false;
+        lens.classList.remove('pressed');
+        startAnimation();
+    };
+    window.addEventListener('pointerup', releaseLens, { passive: true });
+    window.addEventListener('blur', hideLens);
+    document.documentElement.addEventListener('mouseleave', hideLens);
 }
 
 function applySettings() {
