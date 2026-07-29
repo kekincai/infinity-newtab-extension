@@ -105,9 +105,6 @@ select:focus-visible {
 }
 
 .liquid-button-indicator {
-    --liquid-angle: 0deg;
-    --liquid-stretch: 1;
-    --liquid-squash: 1;
     position: absolute;
     top: 0;
     left: 0;
@@ -118,12 +115,7 @@ select:focus-visible {
     transform: translate3d(0, 0, 0);
     transform-origin: center;
     will-change: transform, width, height;
-    transition:
-        transform 0.5s var(--ease-liquid),
-        width 0.42s var(--ease-liquid),
-        height 0.42s var(--ease-liquid),
-        opacity 0.18s ease,
-        border-radius 0.42s var(--ease-liquid);
+    transition: opacity 0.18s ease;
 }
 
 .liquid-button-indicator::before,
@@ -146,9 +138,7 @@ select:focus-visible {
         inset 0 -1px 0 rgba(115, 216, 255, 0.16);
     -webkit-backdrop-filter: url("#liquidGlassCompact") blur(10px) saturate(165%);
     backdrop-filter: url("#liquidGlassCompact") blur(10px) saturate(165%);
-    transform: rotate(var(--liquid-angle)) scale(var(--liquid-stretch), var(--liquid-squash));
     transition:
-        transform 0.46s var(--ease-liquid),
         background 0.28s ease,
         box-shadow 0.28s ease;
 }
@@ -159,11 +149,6 @@ select:focus-visible {
     border: 1px solid rgba(255, 255, 255, 0.22);
 }
 
-.liquid-button-indicator.instant,
-.liquid-button-indicator.instant::before {
-    transition: none;
-}
-
 .liquid-button-indicator.primary::before {
     background:
         radial-gradient(circle at 28% 5%, rgba(255, 255, 255, 0.68), transparent 32%),
@@ -172,6 +157,33 @@ select:focus-visible {
         0 13px 28px rgba(255, 63, 145, 0.25),
         inset 0 1px 0 rgba(255, 255, 255, 0.72),
         inset 0 -1px 0 rgba(115, 216, 255, 0.22);
+}
+
+.liquid-button-indicator.traveling::before {
+    box-shadow:
+        0 16px 34px rgba(71, 178, 232, 0.26),
+        0 5px 18px rgba(255, 63, 145, 0.2),
+        inset 0 2px 0 rgba(255, 255, 255, 0.86),
+        inset 0 -2px 0 rgba(115, 216, 255, 0.26);
+    animation: liquid-travel-shimmer 0.64s ease-in-out;
+}
+
+.liquid-button-indicator.traveling {
+    z-index: 2;
+}
+
+.liquid-button-indicator.traveling::after {
+    animation: liquid-travel-glint 0.64s ease-in-out;
+}
+
+@keyframes liquid-travel-shimmer {
+    0%, 100% { filter: saturate(1); }
+    48% { filter: saturate(1.45) brightness(1.08); }
+}
+
+@keyframes liquid-travel-glint {
+    0%, 100% { opacity: 0.62; }
+    50% { opacity: 1; }
 }
 
 body.enhanced-animations .liquid-button-indicator.visible {

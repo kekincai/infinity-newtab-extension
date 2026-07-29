@@ -129,8 +129,8 @@ function initializeLiquidButtonGroups() {
         const targets = getTargets(group);
         const existingState = state.get(group);
         if (targets.length < 2) {
+            existingState?.animation?.cancel();
             existingState?.indicator.remove();
-            window.clearTimeout(existingState?.settleTimer);
             state.delete(group);
             group.classList.remove('liquid-button-group');
             return null;
@@ -138,7 +138,7 @@ function initializeLiquidButtonGroups() {
         if (existingState?.indicator.isConnected && existingState.indicator.parentElement === group) {
             return existingState;
         }
-        window.clearTimeout(existingState?.settleTimer);
+        existingState?.animation?.cancel();
         state.delete(group);
 
         group.classList.add('liquid-button-group');
@@ -148,10 +148,8 @@ function initializeLiquidButtonGroups() {
         group.appendChild(indicator);
         const groupState = {
             indicator,
-            centerX: 0,
-            centerY: 0,
             target: null,
-            settleTimer: 0
+            animation: null
         };
         state.set(group, groupState);
         if (!boundGroups.has(group)) {
@@ -169,58 +167,116 @@ function initializeLiquidButtonGroups() {
         if (!groupState || !target) return;
 
         const groupRect = group.getBoundingClientRect();
+        const currentRect = groupState.indicator.getBoundingClientRect();
         const targetRect = target.getBoundingClientRect();
         const x = targetRect.left - groupRect.left;
         const y = targetRect.top - groupRect.top;
-        const centerX = x + targetRect.width / 2;
-        const centerY = y + targetRect.height / 2;
-        const deltaX = centerX - groupState.centerX;
-        const deltaY = centerY - groupState.centerY;
-        const distance = Math.hypot(deltaX, deltaY);
-        const hasPreviousTarget = Boolean(groupState.target);
+        const hasPreviousTarget = Boolean(groupState.target && currentRect.width && currentRect.height);
         const shouldAnimate = animate && hasPreviousTarget;
-        let angle = shouldAnimate
-            ? Math.atan2(deltaY, deltaX) * 180 / Math.PI
-            : 0;
-        // An ellipse has the same axis at 0 and 180 degrees. Normalizing avoids
-        // a full half-turn when the glass travels from right to left.
-        if (angle > 90) angle -= 180;
-        if (angle < -90) angle += 180;
-        const stretch = shouldAnimate
-            ? 1 + Math.min(0.34, distance / 480)
-            : 1;
-        const squash = 1 - (stretch - 1) * 0.28;
+        const from = {
+            x: currentRect.left - groupRect.left,
+            y: currentRect.top - groupRect.top,
+            width: currentRect.width,
+            height: currentRect.height,
+            radius: getComputedStyle(groupState.indicator).borderRadius
+        };
+        const to = {
+            x,
+            y,
+            width: targetRect.width,
+            height: targetRect.height,
+            radius: getComputedStyle(target).borderRadius
+        };
         const isPrimary = group.classList.contains('settings-tabs')
             || group.classList.contains('header-actions')
             || target.classList.contains('primary')
             || target.classList.contains('btn-primary');
 
+        groupState.animation?.cancel();
+        groupState.animation = null;
         group.querySelectorAll('.liquid-target').forEach((item) => item.classList.remove('liquid-target'));
         target.classList.add('liquid-target');
         groupState.indicator.classList.toggle('primary', isPrimary);
-        groupState.indicator.classList.toggle('instant', !shouldAnimate);
         groupState.indicator.classList.add('visible');
-        groupState.indicator.style.width = `${targetRect.width}px`;
-        groupState.indicator.style.height = `${targetRect.height}px`;
-        groupState.indicator.style.borderRadius = getComputedStyle(target).borderRadius;
-        groupState.indicator.style.setProperty('--liquid-angle', `${angle.toFixed(2)}deg`);
-        groupState.indicator.style.setProperty('--liquid-stretch', stretch.toFixed(3));
-        groupState.indicator.style.setProperty('--liquid-squash', squash.toFixed(3));
-        groupState.indicator.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-        groupState.centerX = centerX;
-        groupState.centerY = centerY;
+        groupState.indicator.style.width = `${to.width}px`;
+        groupState.indicator.style.height = `${to.height}px`;
+        groupState.indicator.style.borderRadius = to.radius;
+        groupState.indicator.style.transform = `translate3d(${to.x}px, ${to.y}px, 0)`;
         groupState.target = target;
 
-        if (!shouldAnimate) {
-            requestAnimationFrame(() => groupState.indicator.classList.remove('instant'));
-        }
+        if (!shouldAnimate) return;
 
-        window.clearTimeout(groupState.settleTimer);
-        groupState.settleTimer = window.setTimeout(() => {
-            groupState.indicator.style.setProperty('--liquid-angle', '0deg');
-            groupState.indicator.style.setProperty('--liquid-stretch', '1');
-            groupState.indicator.style.setProperty('--liquid-squash', '1');
-        }, shouldAnimate ? 170 : 0);
+        const fromCenter = {
+            x: from.x + from.width / 2,
+            y: from.y + from.height / 2
+        };
+        const toCenter = {
+            x: to.x + to.width / 2,
+            y: to.y + to.height / 2
+        };
+        const deltaX = toCenter.x - fromCenter.x;
+        const deltaY = toCenter.y - fromCenter.y;
+        const distance = Math.hypot(deltaX, deltaY);
+        const dropletSize = Math.max(34, Math.min(58, Math.min(
+            from.width,
+            from.height,
+            to.width,
+            to.height
+        ) * 0.5));
+        const middleWidth = dropletSize * (1 + Math.min(1.25, Math.abs(deltaX) / 150));
+        const middleHeight = dropletSize * (1 + Math.min(1.25, Math.abs(deltaY) / 150));
+        const centerFrame = (progress, width, height) => ({
+            transform: `translate3d(${fromCenter.x + deltaX * progress - width / 2}px, ${fromCenter.y + deltaY * progress - height / 2}px, 0)`,
+            width: `${width}px`,
+            height: `${height}px`,
+            borderRadius: '999px'
+        });
+        const duration = Math.max(440, Math.min(680, 390 + distance * 0.55));
+
+        groupState.indicator.classList.add('traveling');
+        groupState.animation = groupState.indicator.animate([
+            {
+                transform: `translate3d(${from.x}px, ${from.y}px, 0)`,
+                width: `${from.width}px`,
+                height: `${from.height}px`,
+                borderRadius: from.radius,
+                easing: 'cubic-bezier(0.4, 0, 0.7, 1)',
+                offset: 0
+            },
+            {
+                ...centerFrame(0.18, Math.max(dropletSize, from.width * 0.7), Math.max(dropletSize, from.height * 0.7)),
+                easing: 'cubic-bezier(0.22, 0.72, 0.3, 1)',
+                offset: 0.2
+            },
+            {
+                ...centerFrame(0.52, middleWidth, middleHeight),
+                easing: 'cubic-bezier(0.22, 0.78, 0.2, 1)',
+                offset: 0.52
+            },
+            {
+                ...centerFrame(0.86, to.width * 1.04, to.height * 0.96),
+                easing: 'cubic-bezier(0.22, 0.78, 0.2, 1)',
+                offset: 0.84
+            },
+            {
+                transform: `translate3d(${to.x}px, ${to.y}px, 0)`,
+                width: `${to.width}px`,
+                height: `${to.height}px`,
+                borderRadius: to.radius,
+                offset: 1
+            }
+        ], {
+            duration,
+            easing: 'linear',
+            fill: 'none'
+        });
+
+        const activeAnimation = groupState.animation;
+        activeAnimation.addEventListener('finish', () => {
+            if (groupState.animation !== activeAnimation) return;
+            groupState.animation = null;
+            groupState.indicator.classList.remove('traveling');
+        }, { once: true });
     };
 
     const restoreGroup = (group) => {
@@ -230,6 +286,9 @@ function initializeLiquidButtonGroups() {
         if (restingTarget) {
             moveIndicator(group, restingTarget);
         } else {
+            groupState.animation?.cancel();
+            groupState.animation = null;
+            groupState.indicator.classList.remove('traveling');
             groupState.indicator.classList.remove('visible');
             group.querySelectorAll('.liquid-target').forEach((item) => item.classList.remove('liquid-target'));
             groupState.target = null;

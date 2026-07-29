@@ -190,22 +190,34 @@ test('morphs one shared glass layer between buttons', async ({ page }, testInfo)
     const restingTransform = await indicator.evaluate((element) => element.style.transform);
     await page.locator('#animeWallpaperBtn').dispatchEvent('pointerover');
     await expect(page.locator('#animeWallpaperBtn')).toHaveClass(/liquid-target/);
-    const reverseAngle = await indicator.evaluate((element) => Number.parseFloat(
-        getComputedStyle(element).getPropertyValue('--liquid-angle')
-    ));
-    expect(Math.abs(reverseAngle)).toBeLessThan(15);
-    await expect.poll(async () => Number(
-        await indicator.evaluate((element) => getComputedStyle(element).getPropertyValue('--liquid-stretch'))
-    )).toBeGreaterThan(1);
+    await expect(indicator).toHaveClass(/traveling/);
+    const reverseFrames = await indicator.evaluate((element) => {
+        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5);
+        return animation?.effect.getKeyframes() || [];
+    });
+    expect(reverseFrames).toHaveLength(5);
+    expect(reverseFrames.every((frame) => !String(frame.transform).includes('rotate'))).toBe(true);
+    expect(Number.parseFloat(reverseFrames[2].width)).toBeLessThan(
+        Number.parseFloat(reverseFrames[4].width) * 0.8
+    );
+    await indicator.evaluate((element) => {
+        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5);
+        animation.pause();
+        animation.currentTime = animation.effect.getTiming().duration * 0.52;
+    });
+    const buttonTravelBox = await indicator.boundingBox();
+    const buttonTargetBox = await page.locator('#animeWallpaperBtn').boundingBox();
+    expect(buttonTravelBox.width).toBeLessThan(buttonTargetBox.width * 0.8);
+    await indicator.evaluate((element) => {
+        element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5)?.play();
+    });
     const movingTransform = await indicator.evaluate((element) => element.style.transform);
     expect(movingTransform).not.toBe(restingTransform);
 
-    await page.waitForTimeout(550);
+    await page.waitForTimeout(750);
     await expect(page.locator('#animeWallpaperBtn')).toHaveClass(/liquid-target/);
     await expect(indicator).toHaveClass(/primary/);
-    await expect.poll(async () => (
-        await indicator.evaluate((element) => getComputedStyle(element).getPropertyValue('--liquid-angle').trim())
-    )).toBe('0deg');
+    await expect(indicator).not.toHaveClass(/traveling/);
     await expect(page).toHaveScreenshot('button-morph.png', {
         mask: [page.locator('#time'), page.locator('#date')]
     });
@@ -220,12 +232,29 @@ test('morphs one shared glass layer between buttons', async ({ page }, testInfo)
     const folderTransform = await cardIndicator.evaluate((element) => element.style.transform);
     await bookmarkCard.dispatchEvent('pointerover');
     await expect(bookmarkCard).toHaveClass(/liquid-target/);
-    await expect.poll(async () => Number(
-        await cardIndicator.evaluate((element) => getComputedStyle(element).getPropertyValue('--liquid-stretch'))
-    )).toBeGreaterThan(1);
+    await expect(cardIndicator).toHaveClass(/traveling/);
+    const cardFrames = await cardIndicator.evaluate((element) => {
+        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5);
+        return animation?.effect.getKeyframes() || [];
+    });
+    expect(cardFrames).toHaveLength(5);
+    expect(Number.parseFloat(cardFrames[2].height)).toBeLessThan(
+        Number.parseFloat(cardFrames[4].height) * 0.8
+    );
+    await cardIndicator.evaluate((element) => {
+        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5);
+        animation.pause();
+        animation.currentTime = animation.effect.getTiming().duration * 0.52;
+    });
+    const cardTravelBox = await cardIndicator.boundingBox();
+    const cardTargetBox = await bookmarkCard.boundingBox();
+    expect(cardTravelBox.height).toBeLessThan(cardTargetBox.height * 0.8);
+    await cardIndicator.evaluate((element) => {
+        element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5)?.play();
+    });
     const bookmarkTransform = await cardIndicator.evaluate((element) => element.style.transform);
     expect(bookmarkTransform).not.toBe(folderTransform);
-    await page.waitForTimeout(550);
+    await page.waitForTimeout(750);
     await expect(page).toHaveScreenshot('card-morph.png', {
         mask: [page.locator('#time'), page.locator('#date')]
     });
