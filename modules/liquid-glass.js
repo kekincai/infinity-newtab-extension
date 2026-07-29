@@ -91,11 +91,13 @@
     observer = null;
     filter = null;
     filterImages = [];
+    hideTimer = null;
     connectedCallback() {
       this.classList.add("liquid-glass-group");
       this.ensureFilter();
       this.ensureLens();
       this.addEventListener("pointerover", this.onPointerOver);
+      this.addEventListener("pointermove", this.onPointerMove);
       this.addEventListener("pointerout", this.onPointerOut);
       this.addEventListener("pointerleave", this.onPointerLeave);
       this.addEventListener("focusin", this.onFocusIn);
@@ -104,11 +106,13 @@
       this.observer.observe(this, { childList: true });
     }
     disconnectedCallback() {
+      this.cancelScheduledHide();
       this.motion.movement?.cancel();
       this.motion.exit?.cancel();
       this.observer?.disconnect();
       this.filter?.remove();
       this.removeEventListener("pointerover", this.onPointerOver);
+      this.removeEventListener("pointermove", this.onPointerMove);
       this.removeEventListener("pointerout", this.onPointerOut);
       this.removeEventListener("pointerleave", this.onPointerLeave);
       this.removeEventListener("focusin", this.onFocusIn);
@@ -291,6 +295,7 @@
     }
     show(item) {
       if (!document.body.classList.contains("enhanced-animations")) return;
+      this.cancelScheduledHide();
       const lens = this.ensureLens();
       if (!lens || this.target === item && lens.classList.contains("is-visible")) return;
       const wasVisible = lens.classList.contains("is-visible");
@@ -340,6 +345,7 @@
       }, { once: true });
     }
     hide() {
+      this.cancelScheduledHide();
       const lens = this.lens;
       if (!lens?.classList.contains("is-visible")) return;
       this.motion.movement?.cancel();
@@ -360,7 +366,23 @@
         animation.cancel();
       }, { once: true });
     }
+    scheduleHide() {
+      this.cancelScheduledHide();
+      this.hideTimer = window.setTimeout(() => {
+        this.hideTimer = null;
+        this.hide();
+      }, 320);
+    }
+    cancelScheduledHide() {
+      if (this.hideTimer === null) return;
+      window.clearTimeout(this.hideTimer);
+      this.hideTimer = null;
+    }
     onPointerOver = (event) => {
+      const item = this.findItem(event.target);
+      if (item) this.show(item);
+    };
+    onPointerMove = (event) => {
       const item = this.findItem(event.target);
       if (item) this.show(item);
     };
@@ -369,9 +391,9 @@
       const relatedNode = event.relatedTarget instanceof Node ? event.relatedTarget : null;
       if (!item || item.contains(relatedNode)) return;
       if (this.findItem(event.relatedTarget)) return;
-      this.hide();
+      this.scheduleHide();
     };
-    onPointerLeave = () => this.hide();
+    onPointerLeave = () => this.scheduleHide();
     onFocusIn = (event) => {
       const item = this.findItem(event.target);
       if (item) this.show(item);

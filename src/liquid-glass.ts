@@ -124,12 +124,14 @@ class LiquidGlassGroup extends HTMLElement {
     private observer: MutationObserver | null = null;
     private filter: SVGFilterElement | null = null;
     private filterImages: SVGFEImageElement[] = [];
+    private hideTimer: number | null = null;
 
     connectedCallback(): void {
         this.classList.add('liquid-glass-group');
         this.ensureFilter();
         this.ensureLens();
         this.addEventListener('pointerover', this.onPointerOver);
+        this.addEventListener('pointermove', this.onPointerMove);
         this.addEventListener('pointerout', this.onPointerOut);
         this.addEventListener('pointerleave', this.onPointerLeave);
         this.addEventListener('focusin', this.onFocusIn);
@@ -139,11 +141,13 @@ class LiquidGlassGroup extends HTMLElement {
     }
 
     disconnectedCallback(): void {
+        this.cancelScheduledHide();
         this.motion.movement?.cancel();
         this.motion.exit?.cancel();
         this.observer?.disconnect();
         this.filter?.remove();
         this.removeEventListener('pointerover', this.onPointerOver);
+        this.removeEventListener('pointermove', this.onPointerMove);
         this.removeEventListener('pointerout', this.onPointerOut);
         this.removeEventListener('pointerleave', this.onPointerLeave);
         this.removeEventListener('focusin', this.onFocusIn);
@@ -339,6 +343,7 @@ class LiquidGlassGroup extends HTMLElement {
 
     private show(item: HTMLElement): void {
         if (!document.body.classList.contains('enhanced-animations')) return;
+        this.cancelScheduledHide();
         const lens = this.ensureLens();
         if (!lens || this.target === item && lens.classList.contains('is-visible')) return;
 
@@ -397,6 +402,7 @@ class LiquidGlassGroup extends HTMLElement {
     }
 
     private hide(): void {
+        this.cancelScheduledHide();
         const lens = this.lens;
         if (!lens?.classList.contains('is-visible')) return;
         this.motion.movement?.cancel();
@@ -418,7 +424,27 @@ class LiquidGlassGroup extends HTMLElement {
         }, { once: true });
     }
 
+    private scheduleHide(): void {
+        this.cancelScheduledHide();
+        // Keep the lens alive while the pointer crosses the small gap between controls.
+        this.hideTimer = window.setTimeout(() => {
+            this.hideTimer = null;
+            this.hide();
+        }, 320);
+    }
+
+    private cancelScheduledHide(): void {
+        if (this.hideTimer === null) return;
+        window.clearTimeout(this.hideTimer);
+        this.hideTimer = null;
+    }
+
     private readonly onPointerOver = (event: PointerEvent): void => {
+        const item = this.findItem(event.target);
+        if (item) this.show(item);
+    };
+
+    private readonly onPointerMove = (event: PointerEvent): void => {
         const item = this.findItem(event.target);
         if (item) this.show(item);
     };
@@ -428,10 +454,10 @@ class LiquidGlassGroup extends HTMLElement {
         const relatedNode = event.relatedTarget instanceof Node ? event.relatedTarget : null;
         if (!item || item.contains(relatedNode)) return;
         if (this.findItem(event.relatedTarget)) return;
-        this.hide();
+        this.scheduleHide();
     };
 
-    private readonly onPointerLeave = (): void => this.hide();
+    private readonly onPointerLeave = (): void => this.scheduleHide();
 
     private readonly onFocusIn = (event: FocusEvent): void => {
         const item = this.findItem(event.target);

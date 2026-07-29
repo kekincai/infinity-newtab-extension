@@ -119,6 +119,12 @@ async function openExtension(page, seed = initialData) {
     return errors;
 }
 
+async function centerOf(locator) {
+    const box = await locator.boundingBox();
+    expect(box).not.toBeNull();
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2, box };
+}
+
 test('renders the home screen without runtime errors', async ({ page }) => {
     const errors = await openExtension(page);
 
@@ -185,6 +191,7 @@ test('renders the liquid glass settings panel', async ({ page }) => {
 
 test('morphs one shared glass layer between buttons', async ({ page }) => {
     const errors = await openExtension(page);
+    await page.waitForTimeout(900);
     const group = page.locator('.header-actions');
     const lens = group.locator('.liquid-glass-lens');
     await expect(lens).toHaveCount(1);
@@ -195,10 +202,14 @@ test('morphs one shared glass layer between buttons', async ({ page }) => {
     const mapHref = await page.locator('feImage[data-liquid-map="bezel"]').first().getAttribute('href');
     expect(mapHref).toMatch(/^data:image\/png;base64,/);
 
-    await page.locator('#addFolderBtn').dispatchEvent('pointerover');
+    const addFolderButton = page.locator('#addFolderBtn');
+    const wallpaperButton = page.locator('#animeWallpaperBtn');
+    const addFolderCenter = await centerOf(addFolderButton);
+    const wallpaperCenter = await centerOf(wallpaperButton);
+    await page.mouse.move(addFolderCenter.x, addFolderCenter.y);
     await expect(lens).toHaveClass(/is-visible/);
     const initialLensBox = await lens.boundingBox();
-    const initialTargetBox = await page.locator('#addFolderBtn').boundingBox();
+    const initialTargetBox = addFolderCenter.box;
     expect(initialLensBox.width).toBeGreaterThan(initialTargetBox.width);
     expect(initialLensBox.height).toBeGreaterThan(initialTargetBox.height);
     const lensFilter = await lens.evaluate((element) => getComputedStyle(element, '::before').backdropFilter);
@@ -206,7 +217,11 @@ test('morphs one shared glass layer between buttons', async ({ page }) => {
     await page.waitForTimeout(260);
 
     const restingTransform = await lens.evaluate((element) => element.style.transform);
-    await page.locator('#animeWallpaperBtn').dispatchEvent('pointerover');
+    const gapX = (wallpaperCenter.box.x + wallpaperCenter.box.width + addFolderCenter.box.x) / 2;
+    await page.mouse.move(gapX, addFolderCenter.y);
+    await page.waitForTimeout(200);
+    await expect(lens).toHaveClass(/is-visible/);
+    await page.mouse.move(wallpaperCenter.x, wallpaperCenter.y);
     await expect(lens).toHaveClass(/is-moving/);
     const reverseFrames = await lens.evaluate((element) => {
         const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3);
@@ -223,7 +238,7 @@ test('morphs one shared glass layer between buttons', async ({ page }) => {
         animation.currentTime = animation.effect.getTiming().duration * 0.5;
     });
     const buttonTravelBox = await lens.boundingBox();
-    const buttonTargetBox = await page.locator('#animeWallpaperBtn').boundingBox();
+    const buttonTargetBox = wallpaperCenter.box;
     expect(buttonTravelBox.width).toBeGreaterThan(buttonTargetBox.width * 1.05);
     const buttonMidFrame = await page.screenshot({
         mask: [page.locator('#time'), page.locator('#date')]
@@ -241,7 +256,7 @@ test('morphs one shared glass layer between buttons', async ({ page }) => {
         mask: [page.locator('#time'), page.locator('#date')]
     });
     await group.dispatchEvent('pointerleave');
-    await page.waitForTimeout(180);
+    await page.waitForTimeout(500);
     await expect(lens).not.toHaveClass(/is-visible/);
 
     const cardGroup = page.locator('#bookmarksGrid');
@@ -297,6 +312,39 @@ test('morphs one shared glass layer between buttons', async ({ page }) => {
     await page.locator('button[data-tab="wallpaper"]').dispatchEvent('pointerover');
     await expect(page.locator('.settings-tabs .liquid-glass-lens')).toHaveClass(/is-visible/);
     await expect(page.locator('.settings-tabs .liquid-glass-lens')).toHaveText('');
+    expect(errors).toEqual([]);
+});
+
+test('keeps recent-site cards roomy during hover and animates across their gap', async ({ page }) => {
+    const errors = await openExtension(page);
+    await page.waitForTimeout(900);
+    const scroller = page.locator('#recentScroller');
+    const header = page.locator('.recent-header');
+    const cards = page.locator('#recentTrack .recent-card');
+    const firstCard = cards.nth(0);
+    const secondCard = cards.nth(1);
+    const lens = page.locator('#recentTrack .liquid-glass-lens');
+    const scrollerBox = await scroller.boundingBox();
+    const headerBox = await header.boundingBox();
+    const firstCenter = await centerOf(firstCard);
+    const secondCenter = await centerOf(secondCard);
+
+    expect(firstCenter.box.width).toBeGreaterThanOrEqual(205);
+    await page.mouse.move(firstCenter.x, firstCenter.y);
+    await expect(lens).toHaveClass(/is-visible/);
+    await page.waitForTimeout(260);
+
+    const hoveredBox = await firstCard.boundingBox();
+    expect(hoveredBox.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height + 8);
+    expect(hoveredBox.y + hoveredBox.height).toBeLessThanOrEqual(
+        scrollerBox.y + scrollerBox.height
+    );
+    const gapX = (firstCenter.box.x + firstCenter.box.width + secondCenter.box.x) / 2;
+    await page.mouse.move(gapX, firstCenter.y);
+    await page.waitForTimeout(200);
+    await expect(lens).toHaveClass(/is-visible/);
+    await page.mouse.move(secondCenter.x, secondCenter.y);
+    await expect(lens).toHaveClass(/is-moving/);
     expect(errors).toEqual([]);
 });
 

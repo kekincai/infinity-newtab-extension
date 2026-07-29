@@ -100,7 +100,8 @@ select:focus-visible {
 .liquid-glass-group > .btn,
 .liquid-glass-group > .status-pill.clickable,
 .liquid-glass-group > .bookmark-card,
-.liquid-glass-group > .folder-card {
+.liquid-glass-group > .folder-card,
+.liquid-glass-group > .recent-card {
     position: relative;
     z-index: 1;
 }
@@ -894,16 +895,19 @@ body.enhanced-animations .liquid-glass-lens.is-visible {
 .recent-section {
     --surface-radius: 30px;
     margin-top: 2rem;
-    padding: 1.45rem;
+    padding: 1.55rem 1.65rem 1.35rem;
 }
 
 .recent-header {
-    margin-bottom: 1rem;
+    margin-bottom: 0.55rem;
 }
 
 .recent-scroller {
     overflow-x: auto;
+    margin-inline: -0.4rem;
+    padding: 0 0.4rem 0.35rem;
     overscroll-behavior-inline: contain;
+    scroll-padding-inline: 0.4rem;
     scroll-snap-type: x proximity;
     scrollbar-color: rgba(255, 105, 180, 0.5) transparent;
     scrollbar-width: thin;
@@ -917,18 +921,19 @@ body.enhanced-animations .liquid-glass-lens.is-visible {
 
 .recent-track {
     display: flex;
-    gap: 0.82rem;
-    padding-bottom: 0.48rem;
+    gap: 1rem;
+    padding: 1.35rem 0 0.65rem;
 }
 
 .recent-card {
     --surface-radius: 19px;
     display: flex;
-    flex: 0 0 192px;
+    flex: 0 0 210px;
     align-items: center;
     gap: 0.72rem;
     min-width: 0;
-    padding: 0.82rem;
+    min-height: 74px;
+    padding: 0.9rem 1rem;
     color: var(--ui-text);
     text-decoration: none;
     scroll-snap-align: start;

@@ -1235,6 +1235,7 @@ function renderRecentSites(list) {
     list.forEach(item => {
         const card = document.createElement('a');
         card.className = 'recent-card';
+        card.dataset.liquidItem = '';
         card.href = item.url;
         card.target = '_blank';
         card.rel = 'noopener noreferrer';
