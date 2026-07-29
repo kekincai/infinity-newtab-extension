@@ -187,13 +187,17 @@ test('morphs one shared glass layer between buttons', async ({ page }, testInfo)
     await expect(page.locator('#liquidPointerLens')).toHaveCount(0);
     await expect(page.locator('#addFolderBtn')).toHaveClass(/liquid-target/);
 
-    const restingTransform = await indicator.evaluate((element) => getComputedStyle(element).transform);
+    const restingTransform = await indicator.evaluate((element) => element.style.transform);
     await page.locator('#animeWallpaperBtn').dispatchEvent('pointerover');
     await expect(page.locator('#animeWallpaperBtn')).toHaveClass(/liquid-target/);
+    const reverseAngle = await indicator.evaluate((element) => Number.parseFloat(
+        getComputedStyle(element).getPropertyValue('--liquid-angle')
+    ));
+    expect(Math.abs(reverseAngle)).toBeLessThan(15);
     await expect.poll(async () => Number(
         await indicator.evaluate((element) => getComputedStyle(element).getPropertyValue('--liquid-stretch'))
     )).toBeGreaterThan(1);
-    const movingTransform = await indicator.evaluate((element) => getComputedStyle(element).transform);
+    const movingTransform = await indicator.evaluate((element) => element.style.transform);
     expect(movingTransform).not.toBe(restingTransform);
 
     await page.waitForTimeout(550);
@@ -205,6 +209,30 @@ test('morphs one shared glass layer between buttons', async ({ page }, testInfo)
     await expect(page).toHaveScreenshot('button-morph.png', {
         mask: [page.locator('#time'), page.locator('#date')]
     });
+
+    const cardGroup = page.locator('#bookmarksGrid');
+    const cardIndicator = cardGroup.locator('.liquid-button-indicator');
+    const folderCard = cardGroup.locator('.folder-card[data-folder="POM"]');
+    const bookmarkCard = cardGroup.locator('.bookmark-card').first();
+    await folderCard.dispatchEvent('pointerover');
+    await expect(cardIndicator).toHaveCount(1);
+    await expect(folderCard).toHaveClass(/liquid-target/);
+    const folderTransform = await cardIndicator.evaluate((element) => element.style.transform);
+    await bookmarkCard.dispatchEvent('pointerover');
+    await expect(bookmarkCard).toHaveClass(/liquid-target/);
+    await expect.poll(async () => Number(
+        await cardIndicator.evaluate((element) => getComputedStyle(element).getPropertyValue('--liquid-stretch'))
+    )).toBeGreaterThan(1);
+    const bookmarkTransform = await cardIndicator.evaluate((element) => element.style.transform);
+    expect(bookmarkTransform).not.toBe(folderTransform);
+    await page.waitForTimeout(550);
+    await expect(page).toHaveScreenshot('card-morph.png', {
+        mask: [page.locator('#time'), page.locator('#date')]
+    });
+    await cardIndicator.evaluate((element) => element.remove());
+    await folderCard.dispatchEvent('pointerover');
+    await expect(cardGroup.locator('.liquid-button-indicator')).toHaveCount(1);
+    await expect(folderCard).toHaveClass(/liquid-target/);
 
     await page.locator('#settingsBtn').click();
     await page.locator('button[data-tab="wallpaper"]').click();

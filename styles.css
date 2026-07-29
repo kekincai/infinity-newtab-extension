@@ -97,7 +97,9 @@ select:focus-visible {
 .liquid-button-group > .wallpaper-btn,
 .liquid-button-group > .data-btn,
 .liquid-button-group > .btn,
-.liquid-button-group > .status-pill.clickable {
+.liquid-button-group > .status-pill.clickable,
+.liquid-button-group > .bookmark-card,
+.liquid-button-group > .folder-card {
     position: relative;
     z-index: 1;
 }
@@ -157,6 +159,11 @@ select:focus-visible {
     border: 1px solid rgba(255, 255, 255, 0.22);
 }
 
+.liquid-button-indicator.instant,
+.liquid-button-indicator.instant::before {
+    transition: none;
+}
+
 .liquid-button-indicator.primary::before {
     background:
         radial-gradient(circle at 28% 5%, rgba(255, 255, 255, 0.68), transparent 32%),
@@ -193,6 +200,18 @@ body.enhanced-animations .settings-tabs .tab-btn.liquid-target,
 body.enhanced-animations .header-actions .ghost-btn.liquid-target,
 body.enhanced-animations .modal-footer .btn-primary.liquid-target {
     color: #fff;
+}
+
+body.enhanced-animations .bookmarks-grid.liquid-button-group > .bookmark-card.liquid-target,
+body.enhanced-animations .bookmarks-grid.liquid-button-group > .folder-card.liquid-target {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: transparent;
+    box-shadow: none;
+}
+
+body.enhanced-animations .bookmarks-grid.liquid-button-group > .bookmark-card.liquid-target::after,
+body.enhanced-animations .bookmarks-grid.liquid-button-group > .folder-card.liquid-target::after {
+    opacity: 0.22;
 }
 
 /* Background */

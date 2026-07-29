@@ -98,7 +98,8 @@ function initializeLiquidButtonGroups() {
         '.wallpaper-controls',
         '.data-controls',
         '.backup-actions',
-        '.status-body'
+        '.status-body',
+        '.bookmarks-grid'
     ].join(',');
     const targetSelector = [
         '.ghost-btn',
@@ -106,9 +107,12 @@ function initializeLiquidButtonGroups() {
         '.wallpaper-btn',
         '.data-btn',
         '.btn',
-        '.status-pill.clickable'
+        '.status-pill.clickable',
+        '.bookmark-card',
+        '.folder-card'
     ].join(',');
     const state = new WeakMap();
+    const boundGroups = new WeakSet();
 
     const getTargets = (group) => Array.from(group.children)
         .filter((child) => child.matches?.(targetSelector));
@@ -123,17 +127,37 @@ function initializeLiquidButtonGroups() {
 
     const ensureGroup = (group) => {
         const targets = getTargets(group);
-        if (targets.length < 2) return null;
-        if (state.has(group)) return state.get(group);
+        const existingState = state.get(group);
+        if (targets.length < 2) {
+            existingState?.indicator.remove();
+            window.clearTimeout(existingState?.settleTimer);
+            state.delete(group);
+            group.classList.remove('liquid-button-group');
+            return null;
+        }
+        if (existingState?.indicator.isConnected && existingState.indicator.parentElement === group) {
+            return existingState;
+        }
+        window.clearTimeout(existingState?.settleTimer);
+        state.delete(group);
 
         group.classList.add('liquid-button-group');
         const indicator = document.createElement('span');
         indicator.className = 'liquid-button-indicator';
         indicator.setAttribute('aria-hidden', 'true');
         group.appendChild(indicator);
-        const groupState = { indicator, x: 0, y: 0, target: null, settleTimer: 0 };
+        const groupState = {
+            indicator,
+            centerX: 0,
+            centerY: 0,
+            target: null,
+            settleTimer: 0
+        };
         state.set(group, groupState);
-        group.addEventListener('pointerleave', () => restoreGroup(group));
+        if (!boundGroups.has(group)) {
+            group.addEventListener('pointerleave', () => restoreGroup(group));
+            boundGroups.add(group);
+        }
 
         const restingTarget = getRestingTarget(group);
         if (restingTarget) requestAnimationFrame(() => moveIndicator(group, restingTarget, false));
@@ -148,12 +172,21 @@ function initializeLiquidButtonGroups() {
         const targetRect = target.getBoundingClientRect();
         const x = targetRect.left - groupRect.left;
         const y = targetRect.top - groupRect.top;
-        const distance = Math.hypot(x - groupState.x, y - groupState.y);
+        const centerX = x + targetRect.width / 2;
+        const centerY = y + targetRect.height / 2;
+        const deltaX = centerX - groupState.centerX;
+        const deltaY = centerY - groupState.centerY;
+        const distance = Math.hypot(deltaX, deltaY);
         const hasPreviousTarget = Boolean(groupState.target);
-        const angle = animate && hasPreviousTarget
-            ? Math.atan2(y - groupState.y, x - groupState.x) * 180 / Math.PI
+        const shouldAnimate = animate && hasPreviousTarget;
+        let angle = shouldAnimate
+            ? Math.atan2(deltaY, deltaX) * 180 / Math.PI
             : 0;
-        const stretch = animate && hasPreviousTarget
+        // An ellipse has the same axis at 0 and 180 degrees. Normalizing avoids
+        // a full half-turn when the glass travels from right to left.
+        if (angle > 90) angle -= 180;
+        if (angle < -90) angle += 180;
+        const stretch = shouldAnimate
             ? 1 + Math.min(0.34, distance / 480)
             : 1;
         const squash = 1 - (stretch - 1) * 0.28;
@@ -165,6 +198,7 @@ function initializeLiquidButtonGroups() {
         group.querySelectorAll('.liquid-target').forEach((item) => item.classList.remove('liquid-target'));
         target.classList.add('liquid-target');
         groupState.indicator.classList.toggle('primary', isPrimary);
+        groupState.indicator.classList.toggle('instant', !shouldAnimate);
         groupState.indicator.classList.add('visible');
         groupState.indicator.style.width = `${targetRect.width}px`;
         groupState.indicator.style.height = `${targetRect.height}px`;
@@ -173,16 +207,20 @@ function initializeLiquidButtonGroups() {
         groupState.indicator.style.setProperty('--liquid-stretch', stretch.toFixed(3));
         groupState.indicator.style.setProperty('--liquid-squash', squash.toFixed(3));
         groupState.indicator.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-        groupState.x = x;
-        groupState.y = y;
+        groupState.centerX = centerX;
+        groupState.centerY = centerY;
         groupState.target = target;
+
+        if (!shouldAnimate) {
+            requestAnimationFrame(() => groupState.indicator.classList.remove('instant'));
+        }
 
         window.clearTimeout(groupState.settleTimer);
         groupState.settleTimer = window.setTimeout(() => {
             groupState.indicator.style.setProperty('--liquid-angle', '0deg');
             groupState.indicator.style.setProperty('--liquid-stretch', '1');
             groupState.indicator.style.setProperty('--liquid-squash', '1');
-        }, animate ? 170 : 0);
+        }, shouldAnimate ? 170 : 0);
     };
 
     const restoreGroup = (group) => {
