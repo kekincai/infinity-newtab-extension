@@ -119,7 +119,7 @@ async function openExtension(page, seed = initialData) {
     return errors;
 }
 
-test('renders the home screen without runtime errors', async ({ page }) => {
+test('renders the home screen without runtime errors', async ({ page }, testInfo) => {
     const errors = await openExtension(page);
 
     await expect(page).toHaveTitle('新标签页');
@@ -130,6 +130,12 @@ test('renders the home screen without runtime errors', async ({ page }) => {
     await expect(page.locator('#recentTrack')).not.toContainText('google');
     await expect(page.locator('#cpuInfo')).toHaveText('CPU: 8 线程');
     await expect(page.locator('#batteryInfo')).toContainText('82%');
+    if (testInfo.project.name === 'desktop-chrome') {
+        const backdropFilter = await page.locator('.status-card').first().evaluate(
+            (element) => getComputedStyle(element).backdropFilter
+        );
+        expect(backdropFilter).toContain('liquidGlassRefraction');
+    }
 
     await page.addStyleTag({ content: '* { animation: none !important; transition: none !important; }' });
     await expect(page).toHaveScreenshot('home.png', {
@@ -157,6 +163,18 @@ test('keeps the backup reminder clear of the add button', async ({ page }) => {
         || addBox.y + addBox.height <= toastBox.y
     );
     expect(overlaps).toBe(false);
+    expect(errors).toEqual([]);
+});
+
+test('renders the liquid glass settings panel', async ({ page }) => {
+    const errors = await openExtension(page);
+
+    await page.locator('#settingsBtn').click();
+    await expect(page.locator('#settingsPanel')).toHaveClass(/active/);
+    await page.addStyleTag({ content: '* { animation: none !important; transition: none !important; }' });
+    await expect(page).toHaveScreenshot('settings.png', {
+        mask: [page.locator('#time'), page.locator('#date')]
+    });
     expect(errors).toEqual([]);
 });
 

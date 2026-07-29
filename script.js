@@ -42,6 +42,51 @@ document.addEventListener('DOMContentLoaded', async () => {
 function initializeUI() {
     const bgLayer = document.getElementById('backgroundLayer');
     wallpaperManager.init(bgLayer);
+    initializeLiquidGlass();
+}
+
+function initializeLiquidGlass() {
+    if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+
+    const surfaces = [
+        '.settings-btn',
+        '.status-card',
+        '.search-container',
+        '.folder-card',
+        '.bookmark-card',
+        '.recent-section',
+        '.recent-card',
+        '.modal-content',
+        '.settings-panel',
+        '.backup-toast'
+    ].join(',');
+    let frameId = 0;
+    let pendingEvent = null;
+
+    document.addEventListener('pointermove', (event) => {
+        const surface = event.target.closest(surfaces);
+        if (!surface || !document.body.classList.contains('enhanced-animations')) return;
+
+        pendingEvent = { surface, clientX: event.clientX, clientY: event.clientY };
+        if (frameId) return;
+
+        frameId = requestAnimationFrame(() => {
+            const { surface: target, clientX, clientY } = pendingEvent;
+            const rect = target.getBoundingClientRect();
+            const x = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+            const y = Math.max(0, Math.min(100, ((clientY - rect.top) / rect.height) * 100));
+            target.style.setProperty('--glow-x', `${x.toFixed(1)}%`);
+            target.style.setProperty('--glow-y', `${y.toFixed(1)}%`);
+            frameId = 0;
+        });
+    }, { passive: true });
+
+    document.addEventListener('pointerout', (event) => {
+        const surface = event.target.closest(surfaces);
+        if (!surface || surface.contains(event.relatedTarget)) return;
+        surface.style.removeProperty('--glow-x');
+        surface.style.removeProperty('--glow-y');
+    }, { passive: true });
 }
 
 function applySettings() {

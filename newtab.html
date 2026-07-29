@@ -15,12 +15,37 @@
     <!-- Background Layer -->
     <div class="background-layer" id="backgroundLayer"></div>
 
+    <!-- Reusable optical filters. Chrome can apply SVG filters to the backdrop itself. -->
+    <svg class="liquid-filter-defs" width="0" height="0" aria-hidden="true" focusable="false">
+        <defs>
+            <filter id="liquidGlassRefraction" x="-12%" y="-12%" width="124%" height="124%"
+                color-interpolation-filters="sRGB">
+                <feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="8"
+                    result="liquidMap" />
+                <feGaussianBlur in="liquidMap" stdDeviation="2.2" result="softMap" />
+                <feDisplacementMap in="SourceGraphic" in2="softMap" scale="14" xChannelSelector="R"
+                    yChannelSelector="G" result="refracted" />
+                <feColorMatrix in="refracted" type="saturate" values="1.16" />
+            </filter>
+            <filter id="liquidGlassCompact" x="-10%" y="-10%" width="120%" height="120%"
+                color-interpolation-filters="sRGB">
+                <feTurbulence type="fractalNoise" baseFrequency="0.014 0.018" numOctaves="1" seed="14"
+                    result="compactMap" />
+                <feGaussianBlur in="compactMap" stdDeviation="1.4" result="compactSoftMap" />
+                <feDisplacementMap in="SourceGraphic" in2="compactSoftMap" scale="8" xChannelSelector="R"
+                    yChannelSelector="G" result="compactRefracted" />
+                <feColorMatrix in="compactRefracted" type="saturate" values="1.12" />
+            </filter>
+        </defs>
+    </svg>
+
     <!-- Settings Button -->
     <button class="settings-btn" id="settingsBtn" title="设置">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M12 1v6m0 6v6m5.2-13.8l-4.2 4.2m-6 6l-4.2 4.2m13.8-10.4l-4.2 4.2m-6 6l-4.2 4.2M23 12h-6m-6 0H1">
-            </path>
+            <path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"></path>
+            <circle cx="16" cy="6" r="2"></circle>
+            <circle cx="8" cy="12" r="2"></circle>
+            <circle cx="13" cy="18" r="2"></circle>
         </svg>
     </button>
 
