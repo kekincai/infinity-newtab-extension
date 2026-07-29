@@ -8,9 +8,10 @@ The supplied iPhone Photos screenshot is used as the visual reference for the sh
 
 - With no hover or keyboard focus, every original control remains complete and no lens is visible: passed.
 - The lens contains no copied label or icon; it only refracts the real content beneath it: passed.
-- The lens remains continuous while moving and stretches across adjacent controls: passed.
+- Lens position, dimensions, and stretch are calculated from the live pointer coordinate: passed.
+- Stopping between controls preserves the exact intermediate state without a timeline animation: passed.
 - Cyan, pink, and white edge highlights communicate optical thickness: passed.
-- Right-to-left and diagonal paths contain no rotation keyframes: passed.
+- Right-to-left and diagonal paths use the same coordinate projection and contain no rotation: passed.
 - Bookmark and folder lenses are larger than their cards and keep the card radius instead of shrinking inside them: passed.
 - Dynamic bookmark rendering recreates the component-owned lens without global selector repair code: passed.
 - The optical implementation is authored in TypeScript and packaged as a native Web Component: passed.

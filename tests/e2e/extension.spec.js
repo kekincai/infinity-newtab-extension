@@ -189,7 +189,7 @@ test('renders the liquid glass settings panel', async ({ page }) => {
     expect(errors).toEqual([]);
 });
 
-test('morphs one shared glass layer between buttons', async ({ page }) => {
+test('keeps liquid glass locked to the live pointer position between controls', async ({ page }) => {
     const errors = await openExtension(page);
     await page.waitForTimeout(900);
     const group = page.locator('.header-actions');
@@ -198,114 +198,91 @@ test('morphs one shared glass layer between buttons', async ({ page }) => {
     await expect(page.locator('#liquidPointerLens')).toHaveCount(0);
     await expect(lens).not.toHaveClass(/is-visible/);
     await expect(lens).toHaveText('');
-    await expect(page.locator('#addFolderBtn')).toHaveText('新建文件夹');
     const mapHref = await page.locator('feImage[data-liquid-map="bezel"]').first().getAttribute('href');
     expect(mapHref).toMatch(/^data:image\/png;base64,/);
 
-    const addFolderButton = page.locator('#addFolderBtn');
-    const wallpaperButton = page.locator('#animeWallpaperBtn');
-    const addFolderCenter = await centerOf(addFolderButton);
-    const wallpaperCenter = await centerOf(wallpaperButton);
-    await page.mouse.move(addFolderCenter.x, addFolderCenter.y);
+    const wallpaperCenter = await centerOf(page.locator('#animeWallpaperBtn'));
+    const addFolderCenter = await centerOf(page.locator('#addFolderBtn'));
+    await page.mouse.move(wallpaperCenter.x, wallpaperCenter.y);
     await expect(lens).toHaveClass(/is-visible/);
     const initialLensBox = await lens.boundingBox();
-    const initialTargetBox = addFolderCenter.box;
-    expect(initialLensBox.width).toBeGreaterThan(initialTargetBox.width);
-    expect(initialLensBox.height).toBeGreaterThan(initialTargetBox.height);
+    expect(initialLensBox.width).toBeGreaterThan(wallpaperCenter.box.width);
+    expect(initialLensBox.height).toBeGreaterThan(wallpaperCenter.box.height);
     const lensFilter = await lens.evaluate((element) => getComputedStyle(element, '::before').backdropFilter);
     expect(lensFilter).toContain('liquid-glass-lens-');
-    await page.waitForTimeout(260);
+    await page.waitForTimeout(180);
 
-    const restingTransform = await lens.evaluate((element) => element.style.transform);
-    const gapX = (wallpaperCenter.box.x + wallpaperCenter.box.width + addFolderCenter.box.x) / 2;
-    await page.mouse.move(gapX, addFolderCenter.y);
-    await page.waitForTimeout(200);
+    const midpoint = {
+        x: (
+            wallpaperCenter.box.x
+            + wallpaperCenter.box.width
+            + addFolderCenter.box.x
+        ) / 2,
+        y: (wallpaperCenter.y + addFolderCenter.y) / 2
+    };
+    await page.mouse.move(midpoint.x, midpoint.y);
     await expect(lens).toHaveClass(/is-visible/);
-    await page.mouse.move(wallpaperCenter.x, wallpaperCenter.y);
-    await expect(lens).toHaveClass(/is-moving/);
-    const reverseFrames = await lens.evaluate((element) => {
-        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3);
-        return animation?.effect.getKeyframes() || [];
-    });
-    expect(reverseFrames).toHaveLength(3);
-    expect(reverseFrames.every((frame) => !String(frame.transform).includes('rotate'))).toBe(true);
-    expect(Number.parseFloat(reverseFrames[1].width)).toBeGreaterThan(
-        Number.parseFloat(reverseFrames[2].width) * 1.05
+    const pausedTransform = await lens.evaluate((element) => element.style.transform);
+    const pausedBox = await lens.boundingBox();
+    expect(pausedBox.width).toBeGreaterThan(
+        Math.max(wallpaperCenter.box.width, addFolderCenter.box.width)
     );
-    await lens.evaluate((element) => {
-        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3);
-        animation.pause();
-        animation.currentTime = animation.effect.getTiming().duration * 0.5;
-    });
-    const buttonTravelBox = await lens.boundingBox();
-    const buttonTargetBox = wallpaperCenter.box;
-    expect(buttonTravelBox.width).toBeGreaterThan(buttonTargetBox.width * 1.05);
-    const buttonMidFrame = await page.screenshot({
-        mask: [page.locator('#time'), page.locator('#date')]
-    });
-    expect(buttonMidFrame).toMatchSnapshot('button-morph-mid.png', { maxDiffPixelRatio: 0.005 });
-    await lens.evaluate((element) => {
-        element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3)?.play();
-    });
-    const movingTransform = await lens.evaluate((element) => element.style.transform);
-    expect(movingTransform).not.toBe(restingTransform);
+    expect(pausedBox.x + pausedBox.width / 2).toBeGreaterThan(wallpaperCenter.x);
+    expect(pausedBox.x + pausedBox.width / 2).toBeLessThan(addFolderCenter.x);
+    expect(await lens.evaluate((element) => (
+        element.getAnimations().filter((animation) => animation.effect?.getKeyframes().length === 3).length
+    ))).toBe(0);
 
-    await page.waitForTimeout(600);
-    await expect(lens).not.toHaveClass(/is-moving/);
-    await expect(page).toHaveScreenshot('button-morph.png', {
-        mask: [page.locator('#time'), page.locator('#date')]
-    });
-    await group.dispatchEvent('pointerleave');
+    await page.waitForTimeout(450);
+    await expect(lens).toHaveClass(/is-visible/);
+    expect(await lens.evaluate((element) => element.style.transform)).toBe(pausedTransform);
+
+    const threeQuarterPoint = {
+        x: wallpaperCenter.x + (addFolderCenter.x - wallpaperCenter.x) * 0.75,
+        y: wallpaperCenter.y + (addFolderCenter.y - wallpaperCenter.y) * 0.75
+    };
+    await page.mouse.move(threeQuarterPoint.x, threeQuarterPoint.y);
+    const laterBox = await lens.boundingBox();
+    expect(laterBox.x + laterBox.width / 2).toBeGreaterThan(pausedBox.x + pausedBox.width / 2);
+    await page.mouse.move(midpoint.x, midpoint.y);
+    const reversedBox = await lens.boundingBox();
+    expect(reversedBox.x + reversedBox.width / 2).toBeLessThan(laterBox.x + laterBox.width / 2);
+    await page.mouse.move(addFolderCenter.x, addFolderCenter.y);
+    const settledBox = await lens.boundingBox();
+    expect(Math.abs(settledBox.x + settledBox.width / 2 - addFolderCenter.x)).toBeLessThan(2);
+
+    await page.mouse.move(20, 20);
     await page.waitForTimeout(500);
     await expect(lens).not.toHaveClass(/is-visible/);
 
     const cardGroup = page.locator('#bookmarksGrid');
     const cardLens = cardGroup.locator('.liquid-glass-lens');
-    const folderCard = cardGroup.locator('.folder-card[data-folder="POM"]');
-    const bookmarkCard = cardGroup.locator('.bookmark-card').first();
-    await folderCard.dispatchEvent('pointerover');
-    await expect(cardLens).toHaveCount(1);
+    const bookmarkCards = cardGroup.locator('.bookmark-card');
+    const firstBookmark = bookmarkCards.nth(0);
+    const secondBookmark = bookmarkCards.nth(1);
+    const firstBookmarkCenter = await centerOf(firstBookmark);
+    const secondBookmarkCenter = await centerOf(secondBookmark);
+    await page.mouse.move(firstBookmarkCenter.x, firstBookmarkCenter.y);
     await expect(cardLens).toHaveClass(/is-visible/);
-    const folderTransform = await cardLens.evaluate((element) => element.style.transform);
-    await page.waitForTimeout(260);
-    await bookmarkCard.dispatchEvent('pointerover');
-    await expect(cardLens).toHaveClass(/is-moving/);
-    const cardFrames = await cardLens.evaluate((element) => {
-        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3);
-        return animation?.effect.getKeyframes() || [];
-    });
-    expect(cardFrames).toHaveLength(3);
-    expect(Number.parseFloat(cardFrames[1].width)).toBeGreaterThan(
-        Number.parseFloat(cardFrames[2].width) * 1.05
+    await page.waitForTimeout(180);
+    await page.mouse.move(
+        (firstBookmarkCenter.x + secondBookmarkCenter.x) / 2,
+        (firstBookmarkCenter.y + secondBookmarkCenter.y) / 2
     );
-    await cardLens.evaluate((element) => {
-        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3);
-        animation.pause();
-        animation.currentTime = animation.effect.getTiming().duration * 0.5;
-    });
-    const cardTravelBox = await cardLens.boundingBox();
-    const cardTargetBox = await bookmarkCard.boundingBox();
-    expect(cardTravelBox.width).toBeGreaterThan(cardTargetBox.width);
-    expect(cardTravelBox.height).toBeGreaterThan(cardTargetBox.height);
-    const cardMidFrame = await page.screenshot({
-        mask: [page.locator('#time'), page.locator('#date')]
-    });
-    expect(cardMidFrame).toMatchSnapshot('card-morph-mid.png', { maxDiffPixelRatio: 0.005 });
-    await cardLens.evaluate((element) => {
-        element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3)?.play();
-    });
-    const bookmarkTransform = await cardLens.evaluate((element) => element.style.transform);
-    expect(bookmarkTransform).not.toBe(folderTransform);
-    await page.waitForTimeout(600);
-    const settledCardLensBox = await cardLens.boundingBox();
-    expect(settledCardLensBox.width).toBeGreaterThan(cardTargetBox.width);
-    expect(settledCardLensBox.height).toBeGreaterThan(cardTargetBox.height);
-    await expect(page).toHaveScreenshot('card-morph.png', {
-        mask: [page.locator('#time'), page.locator('#date')]
-    });
+    const cardPausedTransform = await cardLens.evaluate((element) => element.style.transform);
+    const cardPausedBox = await cardLens.boundingBox();
+    expect(cardPausedBox.width).toBeGreaterThan(firstBookmarkCenter.box.width);
+    await page.waitForTimeout(450);
+    expect(await cardLens.evaluate((element) => element.style.transform)).toBe(cardPausedTransform);
+    await page.mouse.move(secondBookmarkCenter.x, secondBookmarkCenter.y);
+    const cardSettledBox = await cardLens.boundingBox();
+    expect(Math.abs(
+        cardSettledBox.x + cardSettledBox.width / 2 - secondBookmarkCenter.x
+    )).toBeLessThan(2);
+
     await cardLens.evaluate((element) => element.remove());
     await expect(cardGroup.locator('.liquid-glass-lens')).toHaveCount(1);
-    await folderCard.dispatchEvent('pointerover');
+    await firstBookmark.dispatchEvent('pointerover');
     await expect(cardGroup.locator('.liquid-glass-lens')).toHaveClass(/is-visible/);
 
     await page.locator('#settingsBtn').click();
@@ -315,7 +292,7 @@ test('morphs one shared glass layer between buttons', async ({ page }) => {
     expect(errors).toEqual([]);
 });
 
-test('keeps recent-site cards roomy during hover and animates across their gap', async ({ page }) => {
+test('keeps recent-site cards roomy and pointer-driven across their gap', async ({ page }) => {
     const errors = await openExtension(page);
     await page.waitForTimeout(900);
     const scroller = page.locator('#recentScroller');
@@ -332,19 +309,26 @@ test('keeps recent-site cards roomy during hover and animates across their gap',
     expect(firstCenter.box.width).toBeGreaterThanOrEqual(205);
     await page.mouse.move(firstCenter.x, firstCenter.y);
     await expect(lens).toHaveClass(/is-visible/);
-    await page.waitForTimeout(260);
+    await page.waitForTimeout(180);
 
     const hoveredBox = await firstCard.boundingBox();
     expect(hoveredBox.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height + 8);
     expect(hoveredBox.y + hoveredBox.height).toBeLessThanOrEqual(
         scrollerBox.y + scrollerBox.height
     );
-    const gapX = (firstCenter.box.x + firstCenter.box.width + secondCenter.box.x) / 2;
-    await page.mouse.move(gapX, firstCenter.y);
-    await page.waitForTimeout(200);
+    await page.mouse.move(
+        (firstCenter.x + secondCenter.x) / 2,
+        (firstCenter.y + secondCenter.y) / 2
+    );
+    const pausedTransform = await lens.evaluate((element) => element.style.transform);
+    const pausedBox = await lens.boundingBox();
+    expect(pausedBox.x + pausedBox.width / 2).toBeGreaterThan(firstCenter.x);
+    expect(pausedBox.x + pausedBox.width / 2).toBeLessThan(secondCenter.x);
+    await page.waitForTimeout(450);
     await expect(lens).toHaveClass(/is-visible/);
+    expect(await lens.evaluate((element) => element.style.transform)).toBe(pausedTransform);
     await page.mouse.move(secondCenter.x, secondCenter.y);
-    await expect(lens).toHaveClass(/is-moving/);
+    expect(await lens.evaluate((element) => element.style.transform)).not.toBe(pausedTransform);
     expect(errors).toEqual([]);
 });
 

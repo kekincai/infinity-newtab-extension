@@ -13,8 +13,13 @@ type LensRect = {
 };
 
 type LensMotion = {
-    movement: Animation | null;
+    entrance: Animation | null;
     exit: Animation | null;
+};
+
+type Point = {
+    x: number;
+    y: number;
 };
 
 const ITEM_SELECTOR = '[data-liquid-item]';
@@ -24,6 +29,14 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 function smoothstep(start: number, end: number, value: number): number {
     const amount = Math.max(0, Math.min(1, (value - start) / (end - start)));
     return amount * amount * (3 - 2 * amount);
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+    return Math.max(minimum, Math.min(maximum, value));
+}
+
+function lerp(from: number, to: number, progress: number): number {
+    return from + (to - from) * progress;
 }
 
 function createDisplacementMap(type: 'zoom' | 'bezel', size = 256): string {
@@ -120,38 +133,45 @@ class LiquidGlassGroup extends HTMLElement {
     private static nextFilterId = 0;
     private lens: HTMLSpanElement | null = null;
     private target: HTMLElement | null = null;
-    private motion: LensMotion = { movement: null, exit: null };
+    private motion: LensMotion = { entrance: null, exit: null };
     private observer: MutationObserver | null = null;
     private filter: SVGFilterElement | null = null;
     private filterImages: SVGFEImageElement[] = [];
     private hideTimer: number | null = null;
+    private isBetween = false;
 
     connectedCallback(): void {
         this.classList.add('liquid-glass-group');
         this.ensureFilter();
         this.ensureLens();
         this.addEventListener('pointerover', this.onPointerOver);
-        this.addEventListener('pointermove', this.onPointerMove);
         this.addEventListener('pointerout', this.onPointerOut);
         this.addEventListener('pointerleave', this.onPointerLeave);
         this.addEventListener('focusin', this.onFocusIn);
         this.addEventListener('focusout', this.onFocusOut);
-        this.observer = new MutationObserver(() => this.ensureLens());
+        window.addEventListener('pointermove', this.onWindowPointerMove, { passive: true });
+        this.observer = new MutationObserver(() => {
+            if (this.target && !this.target.isConnected) {
+                this.target = null;
+                this.isBetween = false;
+            }
+            this.ensureLens();
+        });
         this.observer.observe(this, { childList: true });
     }
 
     disconnectedCallback(): void {
         this.cancelScheduledHide();
-        this.motion.movement?.cancel();
+        this.motion.entrance?.cancel();
         this.motion.exit?.cancel();
         this.observer?.disconnect();
         this.filter?.remove();
         this.removeEventListener('pointerover', this.onPointerOver);
-        this.removeEventListener('pointermove', this.onPointerMove);
         this.removeEventListener('pointerout', this.onPointerOut);
         this.removeEventListener('pointerleave', this.onPointerLeave);
         this.removeEventListener('focusin', this.onFocusIn);
         this.removeEventListener('focusout', this.onFocusOut);
+        window.removeEventListener('pointermove', this.onWindowPointerMove);
     }
 
     private ensureFilter(): SVGFilterElement | null {
@@ -277,6 +297,8 @@ class LiquidGlassGroup extends HTMLElement {
         if (this.items.length < 2) {
             this.lens?.remove();
             this.lens = null;
+            this.target = null;
+            this.isBetween = false;
             return null;
         }
         if (this.lens?.isConnected && this.lens.parentElement === this) return this.lens;
@@ -319,97 +341,121 @@ class LiquidGlassGroup extends HTMLElement {
         };
     }
 
-    private renderedLensRect(lens: HTMLSpanElement): LensRect {
-        const groupRect = this.getBoundingClientRect();
-        const lensRect = lens.getBoundingClientRect();
-        return {
-            x: lensRect.left - groupRect.left,
-            y: lensRect.top - groupRect.top,
-            width: lensRect.width,
-            height: lensRect.height,
-            radius: lens.style.borderRadius || '999px'
-        };
-    }
-
-    private frameFor(lens: HTMLSpanElement, rect: LensRect, opacity = 1): Keyframe {
-        return {
-            transform: `translate3d(${rect.x - lens.offsetLeft}px, ${rect.y - lens.offsetTop}px, 0)`,
-            width: `${rect.width}px`,
-            height: `${rect.height}px`,
-            borderRadius: rect.radius,
-            opacity
-        };
-    }
-
     private show(item: HTMLElement): void {
         if (!document.body.classList.contains('enhanced-animations')) return;
         this.cancelScheduledHide();
         const lens = this.ensureLens();
-        if (!lens || this.target === item && lens.classList.contains('is-visible')) return;
-
+        if (!lens) return;
         const wasVisible = lens.classList.contains('is-visible');
-        const from = wasVisible ? this.renderedLensRect(lens) : this.lensRectFor(item);
-        const to = this.lensRectFor(item);
-        this.sizeFilter(to);
+        if (wasVisible && this.target === item && !this.isBetween) return;
+        this.motion.entrance?.cancel();
+        this.motion.exit?.cancel();
+        this.motion.exit = null;
+        this.target = item;
+        this.isBetween = false;
+        this.render(this.lensRectFor(item));
+        lens.classList.add('is-visible');
+        if (wasVisible) return;
+
+        this.motion.entrance = lens.animate(
+            [{ opacity: 0, scale: 0.92 }, { opacity: 1, scale: 1 }],
+            { duration: 160, easing: 'cubic-bezier(0.2, 0.85, 0.25, 1)' }
+        );
+        const animation = this.motion.entrance;
+        animation.addEventListener('finish', () => {
+            if (this.motion.entrance === animation) this.motion.entrance = null;
+        }, { once: true });
+    }
+
+    private render(rect: LensRect): void {
+        const lens = this.lens;
+        if (!lens) return;
+        this.sizeFilter(rect);
+        lens.style.width = `${rect.width}px`;
+        lens.style.height = `${rect.height}px`;
+        lens.style.borderRadius = rect.radius;
+        lens.style.transform = `translate3d(${rect.x - lens.offsetLeft}px, ${rect.y - lens.offsetTop}px, 0)`;
+    }
+
+    private renderBetween(pointer: Point): void {
+        const source = this.target;
+        if (!source?.isConnected) return;
+        const destination = this.nearestOtherItem(pointer, source);
+        if (!destination) return;
+
+        const from = this.lensRectFor(source);
+        const to = this.lensRectFor(destination);
         const fromCenter = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
         const toCenter = { x: to.x + to.width / 2, y: to.y + to.height / 2 };
         const dx = toCenter.x - fromCenter.x;
         const dy = toCenter.y - fromCenter.y;
-        const distance = Math.hypot(dx, dy);
+        const distanceSquared = dx * dx + dy * dy;
+        if (!distanceSquared) return;
+
+        const progress = clamp(
+            ((pointer.x - fromCenter.x) * dx + (pointer.y - fromCenter.y) * dy) / distanceSquared,
+            0,
+            1
+        );
+        const blend = Math.sin(Math.PI * progress);
+        const distance = Math.sqrt(distanceSquared);
         const horizontal = Math.abs(dx) >= Math.abs(dy);
-        const middleWidth = ((from.width + to.width) / 2) * (horizontal ? 1.2 : 0.96);
-        const middleHeight = ((from.height + to.height) / 2) * (horizontal ? 0.94 : 1.2);
-        const middle: LensRect = {
-            x: fromCenter.x + dx * 0.52 - middleWidth / 2,
-            y: fromCenter.y + dy * 0.52 - middleHeight / 2,
-            width: middleWidth,
-            height: middleHeight,
-            radius: this.dataset.liquidVariant === 'cards' ? '34px' : '999px'
-        };
+        let width = lerp(from.width, to.width, progress);
+        let height = lerp(from.height, to.height, progress);
+        const stretch = Math.min(58, distance * 0.22) * blend;
+        if (horizontal) {
+            width += stretch;
+            height *= 1 - blend * 0.055;
+        } else {
+            height += stretch;
+            width *= 1 - blend * 0.055;
+        }
 
-        this.motion.movement?.cancel();
-        this.motion.exit?.cancel();
-        this.target = item;
-        lens.classList.add('is-visible');
-        lens.style.width = `${to.width}px`;
-        lens.style.height = `${to.height}px`;
-        lens.style.borderRadius = to.radius;
-        lens.style.transform = String(this.frameFor(lens, to).transform);
+        const centerX = lerp(fromCenter.x, toCenter.x, progress);
+        const centerY = lerp(fromCenter.y, toCenter.y, progress);
+        const fromRadius = Number.parseFloat(from.radius) || Math.min(from.width, from.height) / 2;
+        const toRadius = Number.parseFloat(to.radius) || Math.min(to.width, to.height) / 2;
+        const radius = this.dataset.liquidVariant === 'cards'
+            ? `${lerp(fromRadius, toRadius, progress) + blend * 4}px`
+            : '999px';
 
-        const settledFrame = this.frameFor(lens, to);
-        const frames: Keyframe[] = wasVisible
-            ? [this.frameFor(lens, from), this.frameFor(lens, middle), settledFrame]
-            : [
-                { ...settledFrame, opacity: 0, transform: `${settledFrame.transform} scale(0.9)` },
-                { ...settledFrame, opacity: 1, transform: `${settledFrame.transform} scale(1.035)`, offset: 0.72 },
-                settledFrame
-            ];
-        const duration = wasVisible
-            ? Math.max(340, Math.min(560, 300 + distance * 0.62))
-            : 240;
-
-        lens.classList.toggle('is-moving', wasVisible);
-        this.motion.movement = lens.animate(frames, {
-            duration,
-            easing: wasVisible ? 'cubic-bezier(0.22, 0.78, 0.2, 1)' : 'cubic-bezier(0.2, 0.85, 0.25, 1)'
+        this.isBetween = true;
+        this.render({
+            x: centerX - width / 2,
+            y: centerY - height / 2,
+            width,
+            height,
+            radius
         });
-        const animation = this.motion.movement;
-        animation.addEventListener('finish', () => {
-            if (this.motion.movement !== animation) return;
-            this.motion.movement = null;
-            lens.classList.remove('is-moving');
-        }, { once: true });
+    }
+
+    private nearestOtherItem(pointer: Point, source: HTMLElement): HTMLElement | null {
+        const groupRect = this.getBoundingClientRect();
+        let nearest: HTMLElement | null = null;
+        let nearestDistance = Number.POSITIVE_INFINITY;
+        this.items.forEach((item) => {
+            if (item === source) return;
+            const rect = item.getBoundingClientRect();
+            const centerX = rect.left - groupRect.left + rect.width / 2;
+            const centerY = rect.top - groupRect.top + rect.height / 2;
+            const distance = Math.hypot(pointer.x - centerX, pointer.y - centerY);
+            if (distance < nearestDistance) {
+                nearest = item;
+                nearestDistance = distance;
+            }
+        });
+        return nearest;
     }
 
     private hide(): void {
         this.cancelScheduledHide();
         const lens = this.lens;
         if (!lens?.classList.contains('is-visible')) return;
-        this.motion.movement?.cancel();
+        this.motion.entrance?.cancel();
         this.motion.exit?.cancel();
-        this.motion.movement = null;
+        this.motion.entrance = null;
         this.target = null;
-        lens.classList.remove('is-moving');
+        this.isBetween = false;
         this.motion.exit = lens.animate([{ opacity: 1 }, { opacity: 0 }], {
             duration: 150,
             easing: 'ease-out',
@@ -425,8 +471,7 @@ class LiquidGlassGroup extends HTMLElement {
     }
 
     private scheduleHide(): void {
-        this.cancelScheduledHide();
-        // Keep the lens alive while the pointer crosses the small gap between controls.
+        if (this.hideTimer !== null) return;
         this.hideTimer = window.setTimeout(() => {
             this.hideTimer = null;
             this.hide();
@@ -444,10 +489,37 @@ class LiquidGlassGroup extends HTMLElement {
         if (item) this.show(item);
     };
 
-    private readonly onPointerMove = (event: PointerEvent): void => {
+    private readonly onWindowPointerMove = (event: PointerEvent): void => {
         const item = this.findItem(event.target);
-        if (item) this.show(item);
+        if (item) {
+            this.show(item);
+            return;
+        }
+        this.updateFromPointer(event);
     };
+
+    private updateFromPointer(event: PointerEvent): void {
+        const lens = this.lens;
+        if (!lens?.classList.contains('is-visible') || !this.target) return;
+        const groupRect = this.getBoundingClientRect();
+        const margin = 16;
+        const inside = event.clientX >= groupRect.left - margin
+            && event.clientX <= groupRect.right + margin
+            && event.clientY >= groupRect.top - margin
+            && event.clientY <= groupRect.bottom + margin;
+        if (!inside) {
+            this.scheduleHide();
+            return;
+        }
+
+        this.cancelScheduledHide();
+        this.motion.entrance?.cancel();
+        this.motion.entrance = null;
+        this.renderBetween({
+            x: event.clientX - groupRect.left,
+            y: event.clientY - groupRect.top
+        });
+    }
 
     private readonly onPointerOut = (event: PointerEvent): void => {
         const item = this.findItem(event.target);
