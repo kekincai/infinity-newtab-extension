@@ -36,6 +36,18 @@
                     yChannelSelector="G" result="compactRefracted" />
                 <feColorMatrix in="compactRefracted" type="saturate" values="1.12" />
             </filter>
+            <filter id="liquidGlassLens" x="-28%" y="-28%" width="156%" height="156%"
+                color-interpolation-filters="sRGB">
+                <feTurbulence type="fractalNoise" baseFrequency="0.01 0.016" numOctaves="2" seed="23"
+                    result="lensMap" />
+                <feGaussianBlur in="lensMap" stdDeviation="1.8" result="lensSoftMap" />
+                <feDisplacementMap in="SourceGraphic" in2="lensSoftMap" scale="28" xChannelSelector="R"
+                    yChannelSelector="G" result="lensBent" />
+                <feGaussianBlur in="lensBent" stdDeviation="0.22" result="lensSoftened" />
+                <feDisplacementMap in="lensSoftened" in2="lensSoftMap" scale="11" xChannelSelector="G"
+                    yChannelSelector="R" result="lensRefracted" />
+                <feColorMatrix in="lensRefracted" type="saturate" values="1.35" />
+            </filter>
         </defs>
     </svg>
 

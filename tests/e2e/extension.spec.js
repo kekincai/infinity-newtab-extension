@@ -171,6 +171,14 @@ test('renders the liquid glass settings panel', async ({ page }) => {
 
     await page.locator('#settingsBtn').click();
     await expect(page.locator('#settingsPanel')).toHaveClass(/active/);
+    await page.waitForTimeout(550);
+    await expect(page.locator('.settings-tabs .liquid-button-floating-label')).toHaveText('外观');
+    await expect(page.locator('.settings-tabs .liquid-button-floating-label')).toBeVisible();
+    const activeTabBox = await page.locator('button[data-tab="appearance"]').boundingBox();
+    const activeLensLabelBox = await page.locator('.settings-tabs .liquid-button-floating-label').boundingBox();
+    expect(Math.abs(
+        activeTabBox.x + activeTabBox.width / 2 - activeLensLabelBox.x - activeLensLabelBox.width / 2
+    )).toBeLessThan(4);
     await page.addStyleTag({ content: '* { animation: none !important; transition: none !important; }' });
     await expect(page).toHaveScreenshot('settings.png', {
         mask: [page.locator('#time'), page.locator('#date')]
@@ -186,6 +194,12 @@ test('morphs one shared glass layer between buttons', async ({ page }, testInfo)
     await expect(indicator).toHaveCount(1);
     await expect(page.locator('#liquidPointerLens')).toHaveCount(0);
     await expect(page.locator('#addFolderBtn')).toHaveClass(/liquid-target/);
+    const initialLensBox = await indicator.boundingBox();
+    const initialTargetBox = await page.locator('#addFolderBtn').boundingBox();
+    expect(initialLensBox.width).toBeGreaterThan(initialTargetBox.width * 1.08);
+    expect(initialLensBox.height).toBeGreaterThan(initialTargetBox.height * 1.25);
+    const lensFilter = await indicator.evaluate((element) => getComputedStyle(element, '::before').backdropFilter);
+    expect(lensFilter).toContain('liquidGlassLens');
 
     const restingTransform = await indicator.evaluate((element) => element.style.transform);
     await page.locator('#animeWallpaperBtn').dispatchEvent('pointerover');
@@ -197,8 +211,8 @@ test('morphs one shared glass layer between buttons', async ({ page }, testInfo)
     });
     expect(reverseFrames).toHaveLength(5);
     expect(reverseFrames.every((frame) => !String(frame.transform).includes('rotate'))).toBe(true);
-    expect(Number.parseFloat(reverseFrames[2].width)).toBeLessThan(
-        Number.parseFloat(reverseFrames[4].width) * 0.8
+    expect(Number.parseFloat(reverseFrames[2].width)).toBeGreaterThan(
+        Number.parseFloat(reverseFrames[4].width) * 1.05
     );
     await indicator.evaluate((element) => {
         const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5);
@@ -207,7 +221,7 @@ test('morphs one shared glass layer between buttons', async ({ page }, testInfo)
     });
     const buttonTravelBox = await indicator.boundingBox();
     const buttonTargetBox = await page.locator('#animeWallpaperBtn').boundingBox();
-    expect(buttonTravelBox.width).toBeLessThan(buttonTargetBox.width * 0.8);
+    expect(buttonTravelBox.width).toBeGreaterThan(buttonTargetBox.width * 1.05);
     await indicator.evaluate((element) => {
         element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5)?.play();
     });
@@ -238,8 +252,8 @@ test('morphs one shared glass layer between buttons', async ({ page }, testInfo)
         return animation?.effect.getKeyframes() || [];
     });
     expect(cardFrames).toHaveLength(5);
-    expect(Number.parseFloat(cardFrames[2].height)).toBeLessThan(
-        Number.parseFloat(cardFrames[4].height) * 0.8
+    expect(Number.parseFloat(cardFrames[2].width)).toBeGreaterThan(
+        Number.parseFloat(cardFrames[4].width) * 1.05
     );
     await cardIndicator.evaluate((element) => {
         const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5);
@@ -255,6 +269,9 @@ test('morphs one shared glass layer between buttons', async ({ page }, testInfo)
     const bookmarkTransform = await cardIndicator.evaluate((element) => element.style.transform);
     expect(bookmarkTransform).not.toBe(folderTransform);
     await page.waitForTimeout(750);
+    const settledCardLensBox = await cardIndicator.boundingBox();
+    expect(settledCardLensBox.width).toBeLessThan(cardTargetBox.width * 0.9);
+    expect(settledCardLensBox.height).toBeLessThan(cardTargetBox.height * 0.8);
     await expect(page).toHaveScreenshot('card-morph.png', {
         mask: [page.locator('#time'), page.locator('#date')]
     });
