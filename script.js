@@ -43,7 +43,7 @@ function initializeUI() {
     const bgLayer = document.getElementById('backgroundLayer');
     wallpaperManager.init(bgLayer);
     initializeLiquidGlass();
-    initializePrecisionLens();
+    initializeLiquidButtonGroups();
 }
 
 function initializeLiquidGlass() {
@@ -90,144 +90,136 @@ function initializeLiquidGlass() {
     }, { passive: true });
 }
 
-function initializePrecisionLens() {
-    const hasFinePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
-    const allowsMotion = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const supportsSvgBackdrop = CSS.supports('backdrop-filter', 'url("#liquidPrecisionLens")')
-        || CSS.supports('-webkit-backdrop-filter', 'url("#liquidPrecisionLens")');
-    if (!hasFinePointer || !allowsMotion || !supportsSvgBackdrop) return;
-
-    const interactiveSelector = [
+function initializeLiquidButtonGroups() {
+    const groupSelector = [
+        '.header-actions',
+        '.settings-tabs',
+        '.modal-footer',
+        '.wallpaper-controls',
+        '.data-controls',
+        '.backup-actions',
+        '.status-body'
+    ].join(',');
+    const targetSelector = [
         '.ghost-btn',
         '.tab-btn',
-        '.status-pill.clickable',
         '.wallpaper-btn',
         '.data-btn',
         '.btn',
-        '.settings-btn',
-        '.add-bookmark-btn'
+        '.status-pill.clickable'
     ].join(',');
-    const lens = document.createElement('div');
-    lens.id = 'liquidPointerLens';
-    lens.className = 'liquid-pointer-lens';
-    document.body.appendChild(lens);
+    const state = new WeakMap();
 
-    const magnification = document.getElementById('liquidLensMagnification');
-    const refraction = document.getElementById('liquidLensRefraction');
-    const specular = document.getElementById('liquidLensSpecular');
-    const position = { x: 0, y: 0, vx: 0, vy: 0 };
-    const press = { value: 1, velocity: 0 };
-    const zoom = { value: 24, velocity: 0 };
-    const bend = { value: 76, velocity: 0 };
-    const shine = { value: 0.48, velocity: 0 };
-    let targetX = 0;
-    let targetY = 0;
-    let active = false;
-    let pressed = false;
-    let initialized = false;
-    let frameId = 0;
-    let lastInteractiveTime = 0;
-    let hideTimer = 0;
+    const getTargets = (group) => Array.from(group.children)
+        .filter((child) => child.matches?.(targetSelector));
 
-    const stepSpring = (state, target, stiffness, damping) => {
-        state.velocity += (target - state.value) * stiffness;
-        state.velocity *= damping;
-        state.value += state.velocity;
+    const getRestingTarget = (group) => {
+        const targets = getTargets(group);
+        return targets.find((target) => target.classList.contains('active'))
+            || targets.find((target) => target.classList.contains('primary')
+                || target.classList.contains('btn-primary'))
+            || null;
     };
 
-    const renderFrame = () => {
-        position.vx = (position.vx + (targetX - position.x) * 0.13) * 0.68;
-        position.vy = (position.vy + (targetY - position.y) * 0.13) * 0.68;
-        position.x += position.vx;
-        position.y += position.vy;
+    const ensureGroup = (group) => {
+        const targets = getTargets(group);
+        if (targets.length < 2) return null;
+        if (state.has(group)) return state.get(group);
 
-        stepSpring(press, pressed ? 0.9 : 1, 0.22, 0.64);
-        stepSpring(zoom, pressed ? 46 : 24, 0.18, 0.7);
-        stepSpring(bend, pressed ? 92 : 76, 0.16, 0.72);
-        stepSpring(shine, pressed ? 0.62 : 0.48, 0.16, 0.72);
+        group.classList.add('liquid-button-group');
+        const indicator = document.createElement('span');
+        indicator.className = 'liquid-button-indicator';
+        indicator.setAttribute('aria-hidden', 'true');
+        group.appendChild(indicator);
+        const groupState = { indicator, x: 0, y: 0, target: null, settleTimer: 0 };
+        state.set(group, groupState);
+        group.addEventListener('pointerleave', () => restoreGroup(group));
 
-        const speed = Math.hypot(position.vx, position.vy);
-        const stretch = Math.min(0.16, speed * 0.009);
-        const tilt = Math.max(-6, Math.min(6, position.vx * 0.16));
-        const scaleX = (1 + stretch) * press.value;
-        const scaleY = (1 - stretch * 0.42) * press.value;
-        lens.style.transform = `translate3d(${position.x - 85}px, ${position.y - 52}px, 0) rotate(${tilt}deg) scale(${scaleX}, ${scaleY})`;
+        const restingTarget = getRestingTarget(group);
+        if (restingTarget) requestAnimationFrame(() => moveIndicator(group, restingTarget, false));
+        return groupState;
+    };
 
-        magnification.setAttribute('scale', zoom.value.toFixed(2));
-        refraction.setAttribute('scale', bend.value.toFixed(2));
-        specular.setAttribute('slope', shine.value.toFixed(3));
+    const moveIndicator = (group, target, animate = true) => {
+        const groupState = ensureGroup(group);
+        if (!groupState || !target) return;
 
-        const stillMoving = speed > 0.08
-            || Math.abs(press.velocity) > 0.001
-            || Math.abs(zoom.velocity) > 0.01
-            || Math.abs(bend.velocity) > 0.01;
-        if (active || pressed || stillMoving) {
-            frameId = requestAnimationFrame(renderFrame);
+        const groupRect = group.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const x = targetRect.left - groupRect.left;
+        const y = targetRect.top - groupRect.top;
+        const distance = Math.hypot(x - groupState.x, y - groupState.y);
+        const hasPreviousTarget = Boolean(groupState.target);
+        const angle = animate && hasPreviousTarget
+            ? Math.atan2(y - groupState.y, x - groupState.x) * 180 / Math.PI
+            : 0;
+        const stretch = animate && hasPreviousTarget
+            ? 1 + Math.min(0.34, distance / 480)
+            : 1;
+        const squash = 1 - (stretch - 1) * 0.28;
+        const isPrimary = group.classList.contains('settings-tabs')
+            || group.classList.contains('header-actions')
+            || target.classList.contains('primary')
+            || target.classList.contains('btn-primary');
+
+        group.querySelectorAll('.liquid-target').forEach((item) => item.classList.remove('liquid-target'));
+        target.classList.add('liquid-target');
+        groupState.indicator.classList.toggle('primary', isPrimary);
+        groupState.indicator.classList.add('visible');
+        groupState.indicator.style.width = `${targetRect.width}px`;
+        groupState.indicator.style.height = `${targetRect.height}px`;
+        groupState.indicator.style.borderRadius = getComputedStyle(target).borderRadius;
+        groupState.indicator.style.setProperty('--liquid-angle', `${angle.toFixed(2)}deg`);
+        groupState.indicator.style.setProperty('--liquid-stretch', stretch.toFixed(3));
+        groupState.indicator.style.setProperty('--liquid-squash', squash.toFixed(3));
+        groupState.indicator.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        groupState.x = x;
+        groupState.y = y;
+        groupState.target = target;
+
+        window.clearTimeout(groupState.settleTimer);
+        groupState.settleTimer = window.setTimeout(() => {
+            groupState.indicator.style.setProperty('--liquid-angle', '0deg');
+            groupState.indicator.style.setProperty('--liquid-stretch', '1');
+            groupState.indicator.style.setProperty('--liquid-squash', '1');
+        }, animate ? 170 : 0);
+    };
+
+    const restoreGroup = (group) => {
+        const groupState = ensureGroup(group);
+        if (!groupState) return;
+        const restingTarget = getRestingTarget(group);
+        if (restingTarget) {
+            moveIndicator(group, restingTarget);
         } else {
-            frameId = 0;
+            groupState.indicator.classList.remove('visible');
+            group.querySelectorAll('.liquid-target').forEach((item) => item.classList.remove('liquid-target'));
+            groupState.target = null;
         }
     };
 
-    const startAnimation = () => {
-        if (!frameId) frameId = requestAnimationFrame(renderFrame);
-    };
+    document.querySelectorAll(groupSelector).forEach(ensureGroup);
 
-    const showLens = (x, y) => {
-        targetX = x;
-        targetY = y;
-        if (!initialized) {
-            position.x = x;
-            position.y = y;
-            initialized = true;
-        }
-        active = true;
-        lens.classList.add('active');
-        startAnimation();
-    };
+    document.addEventListener('pointerover', (event) => {
+        if (!document.body.classList.contains('enhanced-animations')) return;
+        const target = event.target instanceof Element ? event.target.closest(targetSelector) : null;
+        const group = target?.closest(groupSelector);
+        if (!group || !getTargets(group).includes(target)) return;
+        moveIndicator(group, target);
+    });
 
-    const hideLens = () => {
-        active = false;
-        pressed = false;
-        lens.classList.remove('active', 'pressed');
-        startAnimation();
-    };
+    document.addEventListener('click', (event) => {
+        const group = event.target instanceof Element ? event.target.closest(groupSelector) : null;
+        if (!group) return;
+        requestAnimationFrame(() => restoreGroup(group));
+    });
 
-    document.addEventListener('pointermove', (event) => {
-        const target = event.target instanceof Element ? event.target.closest(interactiveSelector) : null;
-        const now = performance.now();
-        if (target && document.body.classList.contains('enhanced-animations')) {
-            window.clearTimeout(hideTimer);
-            lastInteractiveTime = now;
-            showLens(event.clientX, event.clientY);
-            return;
-        }
-
-        // Keep the lens alive while crossing the small gap between adjacent buttons.
-        if (active && now - lastInteractiveTime < 220) {
-            showLens(event.clientX, event.clientY);
-            window.clearTimeout(hideTimer);
-            hideTimer = window.setTimeout(hideLens, 220);
-        } else if (active) {
-            hideLens();
-        }
-    }, { passive: true });
-
-    document.addEventListener('pointerdown', (event) => {
-        const target = event.target instanceof Element ? event.target.closest(interactiveSelector) : null;
-        if (!target || !active) return;
-        pressed = true;
-        lens.classList.add('pressed');
-        startAnimation();
-    }, { passive: true });
-
-    const releaseLens = () => {
-        pressed = false;
-        lens.classList.remove('pressed');
-        startAnimation();
-    };
-    window.addEventListener('pointerup', releaseLens, { passive: true });
-    window.addEventListener('blur', hideLens);
-    document.documentElement.addEventListener('mouseleave', hideLens);
+    window.addEventListener('resize', debounce(() => {
+        document.querySelectorAll(groupSelector).forEach((group) => {
+            const groupState = ensureGroup(group);
+            if (groupState?.target) moveIndicator(group, groupState.target, false);
+        });
+    }, 100));
 }
 
 function applySettings() {

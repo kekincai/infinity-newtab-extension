@@ -36,27 +36,6 @@
                     yChannelSelector="G" result="compactRefracted" />
                 <feColorMatrix in="compactRefracted" type="saturate" values="1.12" />
             </filter>
-            <filter id="liquidPrecisionLens" color-interpolation-filters="sRGB">
-                <feImage href="assets/liquid-magnifying-map.png" x="0" y="0" width="170" height="104"
-                    preserveAspectRatio="none" result="magnifyingMap" />
-                <feDisplacementMap id="liquidLensMagnification" in="SourceGraphic" in2="magnifyingMap" scale="24"
-                    xChannelSelector="R" yChannelSelector="G" result="magnifiedSource" />
-                <feGaussianBlur in="magnifiedSource" stdDeviation="0.2" result="softenedSource" />
-                <feImage href="assets/liquid-refraction-map.png" x="0" y="0" width="170" height="104"
-                    preserveAspectRatio="none" result="refractionMap" />
-                <feDisplacementMap id="liquidLensRefraction" in="softenedSource" in2="refractionMap" scale="76"
-                    xChannelSelector="R" yChannelSelector="G" result="refractedSource" />
-                <feColorMatrix in="refractedSource" type="saturate" values="8" result="saturatedRefraction" />
-                <feImage href="assets/liquid-specular-map.png" x="0" y="0" width="170" height="104"
-                    preserveAspectRatio="none" result="specularMap" />
-                <feComposite in="saturatedRefraction" in2="specularMap" operator="in"
-                    result="saturatedSpecular" />
-                <feComponentTransfer in="specularMap" result="fadedSpecular">
-                    <feFuncA id="liquidLensSpecular" type="linear" slope="0.48" />
-                </feComponentTransfer>
-                <feBlend in="saturatedSpecular" in2="refractedSource" mode="normal" result="refractedWithColor" />
-                <feBlend in="fadedSpecular" in2="refractedWithColor" mode="normal" />
-            </filter>
         </defs>
     </svg>
 

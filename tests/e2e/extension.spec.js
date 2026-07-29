@@ -178,39 +178,37 @@ test('renders the liquid glass settings panel', async ({ page }) => {
     expect(errors).toEqual([]);
 });
 
-test('renders the precision lens over interactive controls', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'desktop-chrome', 'The precision lens requires a fine pointer.');
+test('morphs one shared glass layer between buttons', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-chrome', 'Hover morphing requires a fine pointer.');
     const errors = await openExtension(page);
-    const button = page.locator('#animeWallpaperBtn');
-    const box = await button.boundingBox();
-    expect(box).not.toBeNull();
+    const group = page.locator('.header-actions');
+    const indicator = group.locator('.liquid-button-indicator');
+    await expect(indicator).toHaveCount(1);
+    await expect(page.locator('#liquidPointerLens')).toHaveCount(0);
+    await expect(page.locator('#addFolderBtn')).toHaveClass(/liquid-target/);
 
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    const lens = page.locator('#liquidPointerLens');
-    await expect(lens).toHaveClass(/active/);
-    await page.waitForTimeout(700);
-    const backdropFilter = await lens.evaluate((element) => getComputedStyle(element).backdropFilter);
-    expect(backdropFilter).toContain('liquidPrecisionLens');
-    const firstTransform = await lens.evaluate((element) => getComputedStyle(element).transform);
+    const restingTransform = await indicator.evaluate((element) => getComputedStyle(element).transform);
+    await page.locator('#animeWallpaperBtn').dispatchEvent('pointerover');
+    await expect(page.locator('#animeWallpaperBtn')).toHaveClass(/liquid-target/);
+    await expect.poll(async () => Number(
+        await indicator.evaluate((element) => getComputedStyle(element).getPropertyValue('--liquid-stretch'))
+    )).toBeGreaterThan(1);
+    const movingTransform = await indicator.evaluate((element) => getComputedStyle(element).transform);
+    expect(movingTransform).not.toBe(restingTransform);
 
-    const nextButton = page.locator('#addFolderBtn');
-    const nextBox = await nextButton.boundingBox();
-    expect(nextBox).not.toBeNull();
-    await page.mouse.move(nextBox.x + nextBox.width / 2, nextBox.y + nextBox.height / 2, { steps: 8 });
-    await page.waitForTimeout(180);
-    const movedTransform = await lens.evaluate((element) => getComputedStyle(element).transform);
-    expect(movedTransform).not.toBe(firstTransform);
-
-    await nextButton.dispatchEvent('pointerdown', { pointerType: 'mouse', button: 0 });
-    await expect(lens).toHaveClass(/pressed/);
-    await page.waitForTimeout(180);
-    const pressedScale = await page.locator('#liquidLensMagnification').getAttribute('scale');
-    expect(Number(pressedScale)).toBeGreaterThan(30);
-    await page.evaluate(() => window.dispatchEvent(new PointerEvent('pointerup', { pointerType: 'mouse' })));
-
-    await expect(page).toHaveScreenshot('precision-lens.png', {
+    await page.waitForTimeout(550);
+    await expect(page.locator('#animeWallpaperBtn')).toHaveClass(/liquid-target/);
+    await expect(indicator).toHaveClass(/primary/);
+    await expect.poll(async () => (
+        await indicator.evaluate((element) => getComputedStyle(element).getPropertyValue('--liquid-angle').trim())
+    )).toBe('0deg');
+    await expect(page).toHaveScreenshot('button-morph.png', {
         mask: [page.locator('#time'), page.locator('#date')]
     });
+
+    await page.locator('#settingsBtn').click();
+    await page.locator('button[data-tab="wallpaper"]').click();
+    await expect(page.locator('button[data-tab="wallpaper"]')).toHaveClass(/liquid-target/);
     expect(errors).toEqual([]);
 });
 

@@ -86,53 +86,113 @@ select:focus-visible {
     visibility: hidden;
 }
 
-.liquid-pointer-lens {
-    position: fixed;
+/* One shared glass shape morphs between controls inside each button group. */
+.liquid-button-group {
+    position: relative;
+    isolation: isolate;
+}
+
+.liquid-button-group > .ghost-btn,
+.liquid-button-group > .tab-btn,
+.liquid-button-group > .wallpaper-btn,
+.liquid-button-group > .data-btn,
+.liquid-button-group > .btn,
+.liquid-button-group > .status-pill.clickable {
+    position: relative;
+    z-index: 1;
+}
+
+.liquid-button-indicator {
+    --liquid-angle: 0deg;
+    --liquid-stretch: 1;
+    --liquid-squash: 1;
+    position: absolute;
     top: 0;
     left: 0;
-    z-index: 4500;
-    width: 170px;
-    height: 104px;
+    z-index: 0;
+    display: block;
     pointer-events: none;
     opacity: 0;
-    background: rgba(255, 255, 255, 0.07);
-    border: 1px solid rgba(255, 255, 255, 0.58);
-    border-radius: 52px;
-    box-shadow:
-        4px 16px 24px rgba(22, 34, 72, 0.16),
-        inset -2px -7px 24px rgba(255, 255, 255, 0.2),
-        inset 2px 7px 18px rgba(26, 42, 84, 0.09);
-    -webkit-backdrop-filter: url("#liquidPrecisionLens");
-    backdrop-filter: url("#liquidPrecisionLens");
+    transform: translate3d(0, 0, 0);
     transform-origin: center;
-    will-change: transform, opacity;
-    contain: strict;
-    transition: opacity 0.18s ease, box-shadow 0.24s ease;
+    will-change: transform, width, height;
+    transition:
+        transform 0.5s var(--ease-liquid),
+        width 0.42s var(--ease-liquid),
+        height 0.42s var(--ease-liquid),
+        opacity 0.18s ease,
+        border-radius 0.42s var(--ease-liquid);
 }
 
-.liquid-pointer-lens::after {
+.liquid-button-indicator::before,
+.liquid-button-indicator::after {
     content: "";
     position: absolute;
-    inset: 2px;
-    pointer-events: none;
-    border: 1px solid rgba(255, 255, 255, 0.26);
+    inset: 0;
     border-radius: inherit;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    pointer-events: none;
 }
 
-.liquid-pointer-lens.active {
+.liquid-button-indicator::before {
+    background:
+        radial-gradient(circle at 26% 8%, rgba(255, 255, 255, 0.7), transparent 34%),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.3), rgba(115, 216, 255, 0.15));
+    border: 1px solid rgba(255, 255, 255, 0.68);
+    box-shadow:
+        0 11px 24px rgba(45, 61, 105, 0.16),
+        inset 0 1px 0 rgba(255, 255, 255, 0.72),
+        inset 0 -1px 0 rgba(115, 216, 255, 0.16);
+    -webkit-backdrop-filter: url("#liquidGlassCompact") blur(10px) saturate(165%);
+    backdrop-filter: url("#liquidGlassCompact") blur(10px) saturate(165%);
+    transform: rotate(var(--liquid-angle)) scale(var(--liquid-stretch), var(--liquid-squash));
+    transition:
+        transform 0.46s var(--ease-liquid),
+        background 0.28s ease,
+        box-shadow 0.28s ease;
+}
+
+.liquid-button-indicator::after {
+    inset: 2px;
+    background: linear-gradient(125deg, rgba(255, 255, 255, 0.48), transparent 24%, transparent 72%, rgba(115, 216, 255, 0.18));
+    border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.liquid-button-indicator.primary::before {
+    background:
+        radial-gradient(circle at 28% 5%, rgba(255, 255, 255, 0.68), transparent 32%),
+        linear-gradient(135deg, rgba(255, 105, 180, 0.94), rgba(255, 63, 145, 0.9) 58%, rgba(115, 216, 255, 0.72));
+    box-shadow:
+        0 13px 28px rgba(255, 63, 145, 0.25),
+        inset 0 1px 0 rgba(255, 255, 255, 0.72),
+        inset 0 -1px 0 rgba(115, 216, 255, 0.22);
+}
+
+body.enhanced-animations .liquid-button-indicator.visible {
     opacity: 1;
 }
 
-body:not(.enhanced-animations) .liquid-pointer-lens {
-    opacity: 0;
+body.enhanced-animations .settings-tabs.liquid-button-group > .tab-btn.active {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
 }
 
-.liquid-pointer-lens.pressed {
-    box-shadow:
-        2px 8px 18px rgba(22, 34, 72, 0.2),
-        inset -3px -9px 28px rgba(255, 255, 255, 0.28),
-        inset 3px 9px 22px rgba(26, 42, 84, 0.12);
+body.enhanced-animations .header-actions.liquid-button-group > .ghost-btn,
+body.enhanced-animations .modal-footer.liquid-button-group > .btn {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: transparent;
+    box-shadow: none;
+}
+
+body.enhanced-animations .header-actions.liquid-button-group > .ghost-btn.primary,
+body.enhanced-animations .modal-footer.liquid-button-group > .btn-primary {
+    color: var(--ui-text);
+}
+
+body.enhanced-animations .settings-tabs .tab-btn.liquid-target,
+body.enhanced-animations .header-actions .ghost-btn.liquid-target,
+body.enhanced-animations .modal-footer .btn-primary.liquid-target {
+    color: #fff;
 }
 
 /* Background */
@@ -1419,8 +1479,6 @@ body:not(.enhanced-animations) .liquid-pointer-lens {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .liquid-pointer-lens { display: none; }
-
     *,
     *::before,
     *::after {
