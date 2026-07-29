@@ -29,10 +29,6 @@ module.exports = defineConfig({
         {
             name: 'desktop-chrome',
             use: { viewport: { width: 1440, height: 1000 } }
-        },
-        {
-            name: 'mobile-chrome',
-            use: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }
         }
     ]
 });

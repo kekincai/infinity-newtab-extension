@@ -43,7 +43,6 @@ function initializeUI() {
     const bgLayer = document.getElementById('backgroundLayer');
     wallpaperManager.init(bgLayer);
     initializeLiquidGlass();
-    initializeLiquidButtonGroups();
 }
 
 function initializeLiquidGlass() {
@@ -88,280 +87,6 @@ function initializeLiquidGlass() {
         surface.style.removeProperty('--glow-x');
         surface.style.removeProperty('--glow-y');
     }, { passive: true });
-}
-
-function initializeLiquidButtonGroups() {
-    const groupSelector = [
-        '.header-actions',
-        '.settings-tabs',
-        '.modal-footer',
-        '.wallpaper-controls',
-        '.data-controls',
-        '.backup-actions',
-        '.status-body',
-        '.bookmarks-grid'
-    ].join(',');
-    const targetSelector = [
-        '.ghost-btn',
-        '.tab-btn',
-        '.wallpaper-btn',
-        '.data-btn',
-        '.btn',
-        '.status-pill.clickable',
-        '.bookmark-card',
-        '.folder-card'
-    ].join(',');
-    const state = new WeakMap();
-    const boundGroups = new WeakSet();
-
-    const getTargets = (group) => Array.from(group.children)
-        .filter((child) => child.matches?.(targetSelector));
-
-    const getRestingTarget = (group) => {
-        const targets = getTargets(group);
-        return targets.find((target) => target.classList.contains('active'))
-            || targets.find((target) => target.classList.contains('primary')
-                || target.classList.contains('btn-primary'))
-            || null;
-    };
-
-    const getLensRect = (group, target, groupRect) => {
-        const targetRect = target.getBoundingClientRect();
-        const isCard = group.classList.contains('bookmarks-grid');
-        const width = isCard
-            ? Math.min(124, targetRect.width * 0.82)
-            : targetRect.width + Math.min(52, targetRect.height * 0.86);
-        const height = isCard
-            ? Math.min(108, targetRect.height * 0.74)
-            : targetRect.height + Math.min(34, targetRect.height * 0.68);
-
-        return {
-            x: targetRect.left - groupRect.left + (targetRect.width - width) / 2,
-            y: targetRect.top - groupRect.top + (targetRect.height - height) / 2,
-            width,
-            height,
-            radius: '999px'
-        };
-    };
-
-    const ensureGroup = (group) => {
-        const targets = getTargets(group);
-        const existingState = state.get(group);
-        if (targets.length < 2) {
-            existingState?.animation?.cancel();
-            existingState?.labelAnimation?.cancel();
-            existingState?.indicator.remove();
-            existingState?.label.remove();
-            state.delete(group);
-            group.classList.remove('liquid-button-group');
-            return null;
-        }
-        if (existingState?.indicator.isConnected && existingState.indicator.parentElement === group) {
-            return existingState;
-        }
-        existingState?.animation?.cancel();
-        existingState?.labelAnimation?.cancel();
-        state.delete(group);
-
-        group.classList.add('liquid-button-group');
-        const indicator = document.createElement('span');
-        indicator.className = 'liquid-button-indicator';
-        indicator.setAttribute('aria-hidden', 'true');
-        const label = document.createElement('span');
-        label.className = 'liquid-button-floating-label';
-        label.setAttribute('aria-hidden', 'true');
-        group.appendChild(indicator);
-        group.appendChild(label);
-        const groupState = {
-            indicator,
-            label,
-            target: null,
-            animation: null,
-            labelAnimation: null
-        };
-        state.set(group, groupState);
-        if (!boundGroups.has(group)) {
-            group.addEventListener('pointerleave', () => restoreGroup(group));
-            boundGroups.add(group);
-        }
-
-        const restingTarget = getRestingTarget(group);
-        if (restingTarget) requestAnimationFrame(() => moveIndicator(group, restingTarget, false));
-        return groupState;
-    };
-
-    const moveIndicator = (group, target, animate = true) => {
-        const groupState = ensureGroup(group);
-        if (!groupState || !target) return;
-
-        const groupRect = group.getBoundingClientRect();
-        const currentRect = groupState.indicator.getBoundingClientRect();
-        const to = getLensRect(group, target, groupRect);
-        const originX = groupState.indicator.offsetLeft;
-        const originY = groupState.indicator.offsetTop;
-        const translateTo = (renderX, renderY) => (
-            `translate3d(${renderX - originX}px, ${renderY - originY}px, 0)`
-        );
-        const hasPreviousTarget = Boolean(groupState.target && currentRect.width && currentRect.height);
-        const shouldAnimate = animate && hasPreviousTarget;
-        const from = {
-            x: currentRect.left - groupRect.left,
-            y: currentRect.top - groupRect.top,
-            width: currentRect.width,
-            height: currentRect.height,
-            radius: getComputedStyle(groupState.indicator).borderRadius
-        };
-        const isPrimary = group.classList.contains('settings-tabs')
-            || group.classList.contains('header-actions')
-            || target.classList.contains('primary')
-            || target.classList.contains('btn-primary');
-
-        groupState.animation?.cancel();
-        groupState.labelAnimation?.cancel();
-        groupState.animation = null;
-        groupState.labelAnimation = null;
-        group.querySelectorAll('.liquid-target').forEach((item) => item.classList.remove('liquid-target'));
-        target.classList.add('liquid-target');
-        groupState.indicator.classList.toggle('primary', isPrimary);
-        groupState.indicator.classList.add('visible');
-        groupState.label.hidden = group.classList.contains('bookmarks-grid');
-        groupState.label.textContent = groupState.label.hidden ? '' : target.textContent.trim();
-        groupState.indicator.style.width = `${to.width}px`;
-        groupState.indicator.style.height = `${to.height}px`;
-        groupState.indicator.style.borderRadius = to.radius;
-        groupState.indicator.style.transform = translateTo(to.x, to.y);
-        groupState.label.style.width = `${to.width}px`;
-        groupState.label.style.height = `${to.height}px`;
-        groupState.label.style.borderRadius = to.radius;
-        groupState.label.style.transform = translateTo(to.x, to.y);
-        groupState.target = target;
-
-        if (!shouldAnimate) return;
-
-        const fromCenter = {
-            x: from.x + from.width / 2,
-            y: from.y + from.height / 2
-        };
-        const toCenter = {
-            x: to.x + to.width / 2,
-            y: to.y + to.height / 2
-        };
-        const deltaX = toCenter.x - fromCenter.x;
-        const deltaY = toCenter.y - fromCenter.y;
-        const distance = Math.hypot(deltaX, deltaY);
-        const averageWidth = (from.width + to.width) / 2;
-        const averageHeight = (from.height + to.height) / 2;
-        const horizontalTravel = Math.abs(deltaX) >= Math.abs(deltaY);
-        const middleWidth = averageWidth * (horizontalTravel
-            ? 1 + Math.min(0.34, Math.abs(deltaX) / 620)
-            : 0.94);
-        const middleHeight = averageHeight * (horizontalTravel
-            ? 0.9
-            : 1 + Math.min(0.34, Math.abs(deltaY) / 620));
-        const centerFrame = (progress, width, height) => ({
-            transform: translateTo(
-                fromCenter.x + deltaX * progress - width / 2,
-                fromCenter.y + deltaY * progress - height / 2
-            ),
-            width: `${width}px`,
-            height: `${height}px`,
-            borderRadius: '999px'
-        });
-        const duration = Math.max(480, Math.min(720, 420 + distance * 0.48));
-
-        groupState.indicator.classList.add('traveling');
-        const motionFrames = [
-            {
-                transform: translateTo(from.x, from.y),
-                width: `${from.width}px`,
-                height: `${from.height}px`,
-                borderRadius: from.radius,
-                easing: 'cubic-bezier(0.4, 0, 0.7, 1)',
-                offset: 0
-            },
-            {
-                ...centerFrame(0.18, from.width * 0.92, from.height * 1.04),
-                easing: 'cubic-bezier(0.22, 0.72, 0.3, 1)',
-                offset: 0.2
-            },
-            {
-                ...centerFrame(0.52, middleWidth, middleHeight),
-                easing: 'cubic-bezier(0.22, 0.78, 0.2, 1)',
-                offset: 0.52
-            },
-            {
-                ...centerFrame(0.86, to.width * 1.04, to.height * 0.96),
-                easing: 'cubic-bezier(0.22, 0.78, 0.2, 1)',
-                offset: 0.84
-            },
-            {
-                transform: translateTo(to.x, to.y),
-                width: `${to.width}px`,
-                height: `${to.height}px`,
-                borderRadius: to.radius,
-                offset: 1
-            }
-        ];
-        const animationOptions = {
-            duration,
-            easing: 'linear',
-            fill: 'none'
-        };
-        groupState.animation = groupState.indicator.animate(motionFrames, animationOptions);
-        if (!groupState.label.hidden) {
-            groupState.labelAnimation = groupState.label.animate(motionFrames, animationOptions);
-        }
-
-        const activeAnimation = groupState.animation;
-        activeAnimation.addEventListener('finish', () => {
-            if (groupState.animation !== activeAnimation) return;
-            groupState.animation = null;
-            groupState.labelAnimation = null;
-            groupState.indicator.classList.remove('traveling');
-        }, { once: true });
-    };
-
-    const restoreGroup = (group) => {
-        const groupState = ensureGroup(group);
-        if (!groupState) return;
-        const restingTarget = getRestingTarget(group);
-        if (restingTarget) {
-            moveIndicator(group, restingTarget);
-        } else {
-            groupState.animation?.cancel();
-            groupState.labelAnimation?.cancel();
-            groupState.animation = null;
-            groupState.labelAnimation = null;
-            groupState.indicator.classList.remove('traveling');
-            groupState.indicator.classList.remove('visible');
-            groupState.label.hidden = true;
-            group.querySelectorAll('.liquid-target').forEach((item) => item.classList.remove('liquid-target'));
-            groupState.target = null;
-        }
-    };
-
-    document.querySelectorAll(groupSelector).forEach(ensureGroup);
-
-    document.addEventListener('pointerover', (event) => {
-        if (!document.body.classList.contains('enhanced-animations')) return;
-        const target = event.target instanceof Element ? event.target.closest(targetSelector) : null;
-        const group = target?.closest(groupSelector);
-        if (!group || !getTargets(group).includes(target)) return;
-        moveIndicator(group, target);
-    });
-
-    document.addEventListener('click', (event) => {
-        const group = event.target instanceof Element ? event.target.closest(groupSelector) : null;
-        if (!group) return;
-        requestAnimationFrame(() => restoreGroup(group));
-    });
-
-    window.addEventListener('resize', debounce(() => {
-        document.querySelectorAll(groupSelector).forEach((group) => {
-            const groupState = ensureGroup(group);
-            if (groupState?.target) moveIndicator(group, groupState.target, false);
-        });
-    }, 100));
 }
 
 function applySettings() {
@@ -422,6 +147,11 @@ function toggleElement(id, show) {
 
 function applyEnhancedAnimations(enabled) {
     document.body.classList.toggle('enhanced-animations', !!enabled);
+    if (!enabled) {
+        document.querySelectorAll('liquid-glass-group').forEach((group) => {
+            group.dispatchEvent(new PointerEvent('pointerleave'));
+        });
+    }
 }
 
 // ============================================
@@ -932,6 +662,7 @@ function loadBookmarks() {
 function createBookmarkCard(bookmark, index) {
     const card = document.createElement('a');
     card.className = 'bookmark-card';
+    card.dataset.liquidItem = '';
     card.href = bookmark.url;
     card.target = '_blank';
     card.rel = 'noopener noreferrer';
@@ -1001,6 +732,7 @@ function createFolderCard(folder, index) {
     card.setAttribute('role', 'button');
     card.setAttribute('tabindex', '0');
     card.dataset.folder = folder;
+    card.dataset.liquidItem = '';
     card.style.setProperty('--folder-accent', getFolderAccent(index));
     card.onclick = () => switchFolder(folder);
     card.onkeydown = (event) => {
@@ -1087,6 +819,7 @@ function createFolderCard(folder, index) {
 function createAddFolderCard() {
     const addCard = document.createElement('button');
     addCard.className = 'folder-card add-folder-card';
+    addCard.dataset.liquidItem = '';
     addCard.innerHTML = `
         <span class="add-folder-icon">+</span>
         <span class="folder-name">新建文件夹</span>
@@ -1099,6 +832,7 @@ function createAddFolderCard() {
 function createBackCard() {
     const backCard = document.createElement('button');
     backCard.className = 'folder-card back-card';
+    backCard.dataset.liquidItem = '';
     backCard.innerHTML = `
         <span class="back-icon">←</span>
         <span class="folder-name">返回全部</span>
@@ -1414,10 +1148,10 @@ function showBackupToast() {
     toast.className = 'backup-toast';
     toast.innerHTML = `
         <div class="backup-text">💾 建议导出备份，避免数据丢失</div>
-        <div class="backup-actions">
-            <button class="ghost-btn primary" id="backupNowBtn">立即导出</button>
-            <button class="ghost-btn" id="backupLaterBtn">稍后</button>
-        </div>
+        <liquid-glass-group class="backup-actions">
+            <button class="ghost-btn primary" id="backupNowBtn" data-liquid-item>立即导出</button>
+            <button class="ghost-btn" id="backupLaterBtn" data-liquid-item>稍后</button>
+        </liquid-glass-group>
     `;
     document.body.appendChild(toast);
 

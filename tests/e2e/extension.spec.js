@@ -119,7 +119,7 @@ async function openExtension(page, seed = initialData) {
     return errors;
 }
 
-test('renders the home screen without runtime errors', async ({ page }, testInfo) => {
+test('renders the home screen without runtime errors', async ({ page }) => {
     const errors = await openExtension(page);
 
     await expect(page).toHaveTitle('新标签页');
@@ -130,12 +130,12 @@ test('renders the home screen without runtime errors', async ({ page }, testInfo
     await expect(page.locator('#recentTrack')).not.toContainText('google');
     await expect(page.locator('#cpuInfo')).toHaveText('CPU: 8 线程');
     await expect(page.locator('#batteryInfo')).toContainText('82%');
-    if (testInfo.project.name === 'desktop-chrome') {
-        const backdropFilter = await page.locator('.status-card').first().evaluate(
-            (element) => getComputedStyle(element).backdropFilter
-        );
-        expect(backdropFilter).toContain('liquidGlassRefraction');
-    }
+    await expect(page.locator('.liquid-glass-lens.is-visible')).toHaveCount(0);
+    await expect(page.locator('.liquid-button-floating-label')).toHaveCount(0);
+    const backdropFilter = await page.locator('.status-card').first().evaluate(
+        (element) => getComputedStyle(element).backdropFilter
+    );
+    expect(backdropFilter).toContain('liquidGlassRefraction');
 
     await page.addStyleTag({ content: '* { animation: none !important; transition: none !important; }' });
     await expect(page).toHaveScreenshot('home.png', {
@@ -172,13 +172,10 @@ test('renders the liquid glass settings panel', async ({ page }) => {
     await page.locator('#settingsBtn').click();
     await expect(page.locator('#settingsPanel')).toHaveClass(/active/);
     await page.waitForTimeout(550);
-    await expect(page.locator('.settings-tabs .liquid-button-floating-label')).toHaveText('外观');
-    await expect(page.locator('.settings-tabs .liquid-button-floating-label')).toBeVisible();
-    const activeTabBox = await page.locator('button[data-tab="appearance"]').boundingBox();
-    const activeLensLabelBox = await page.locator('.settings-tabs .liquid-button-floating-label').boundingBox();
-    expect(Math.abs(
-        activeTabBox.x + activeTabBox.width / 2 - activeLensLabelBox.x - activeLensLabelBox.width / 2
-    )).toBeLessThan(4);
+    await expect(page.locator('.settings-tabs .liquid-glass-lens')).toHaveCount(1);
+    await expect(page.locator('.settings-tabs .liquid-glass-lens')).not.toHaveClass(/is-visible/);
+    await expect(page.locator('.settings-tabs .liquid-button-floating-label')).toHaveCount(0);
+    await expect(page.locator('button[data-tab="appearance"]')).toBeVisible();
     await page.addStyleTag({ content: '* { animation: none !important; transition: none !important; }' });
     await expect(page).toHaveScreenshot('settings.png', {
         mask: [page.locator('#time'), page.locator('#date')]
@@ -186,108 +183,124 @@ test('renders the liquid glass settings panel', async ({ page }) => {
     expect(errors).toEqual([]);
 });
 
-test('morphs one shared glass layer between buttons', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'desktop-chrome', 'Hover morphing requires a fine pointer.');
+test('morphs one shared glass layer between buttons', async ({ page }) => {
     const errors = await openExtension(page);
     const group = page.locator('.header-actions');
-    const indicator = group.locator('.liquid-button-indicator');
-    await expect(indicator).toHaveCount(1);
+    const lens = group.locator('.liquid-glass-lens');
+    await expect(lens).toHaveCount(1);
     await expect(page.locator('#liquidPointerLens')).toHaveCount(0);
-    await expect(page.locator('#addFolderBtn')).toHaveClass(/liquid-target/);
-    const initialLensBox = await indicator.boundingBox();
-    const initialTargetBox = await page.locator('#addFolderBtn').boundingBox();
-    expect(initialLensBox.width).toBeGreaterThan(initialTargetBox.width * 1.08);
-    expect(initialLensBox.height).toBeGreaterThan(initialTargetBox.height * 1.25);
-    const lensFilter = await indicator.evaluate((element) => getComputedStyle(element, '::before').backdropFilter);
-    expect(lensFilter).toContain('liquidGlassLens');
+    await expect(lens).not.toHaveClass(/is-visible/);
+    await expect(lens).toHaveText('');
+    await expect(page.locator('#addFolderBtn')).toHaveText('新建文件夹');
+    const mapHref = await page.locator('feImage[data-liquid-map="bezel"]').first().getAttribute('href');
+    expect(mapHref).toMatch(/^data:image\/png;base64,/);
 
-    const restingTransform = await indicator.evaluate((element) => element.style.transform);
+    await page.locator('#addFolderBtn').dispatchEvent('pointerover');
+    await expect(lens).toHaveClass(/is-visible/);
+    const initialLensBox = await lens.boundingBox();
+    const initialTargetBox = await page.locator('#addFolderBtn').boundingBox();
+    expect(initialLensBox.width).toBeGreaterThan(initialTargetBox.width);
+    expect(initialLensBox.height).toBeGreaterThan(initialTargetBox.height);
+    const lensFilter = await lens.evaluate((element) => getComputedStyle(element, '::before').backdropFilter);
+    expect(lensFilter).toContain('liquid-glass-lens-');
+    await page.waitForTimeout(260);
+
+    const restingTransform = await lens.evaluate((element) => element.style.transform);
     await page.locator('#animeWallpaperBtn').dispatchEvent('pointerover');
-    await expect(page.locator('#animeWallpaperBtn')).toHaveClass(/liquid-target/);
-    await expect(indicator).toHaveClass(/traveling/);
-    const reverseFrames = await indicator.evaluate((element) => {
-        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5);
+    await expect(lens).toHaveClass(/is-moving/);
+    const reverseFrames = await lens.evaluate((element) => {
+        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3);
         return animation?.effect.getKeyframes() || [];
     });
-    expect(reverseFrames).toHaveLength(5);
+    expect(reverseFrames).toHaveLength(3);
     expect(reverseFrames.every((frame) => !String(frame.transform).includes('rotate'))).toBe(true);
-    expect(Number.parseFloat(reverseFrames[2].width)).toBeGreaterThan(
-        Number.parseFloat(reverseFrames[4].width) * 1.05
+    expect(Number.parseFloat(reverseFrames[1].width)).toBeGreaterThan(
+        Number.parseFloat(reverseFrames[2].width) * 1.05
     );
-    await indicator.evaluate((element) => {
-        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5);
+    await lens.evaluate((element) => {
+        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3);
         animation.pause();
-        animation.currentTime = animation.effect.getTiming().duration * 0.52;
+        animation.currentTime = animation.effect.getTiming().duration * 0.5;
     });
-    const buttonTravelBox = await indicator.boundingBox();
+    const buttonTravelBox = await lens.boundingBox();
     const buttonTargetBox = await page.locator('#animeWallpaperBtn').boundingBox();
     expect(buttonTravelBox.width).toBeGreaterThan(buttonTargetBox.width * 1.05);
-    await indicator.evaluate((element) => {
-        element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5)?.play();
+    const buttonMidFrame = await page.screenshot({
+        mask: [page.locator('#time'), page.locator('#date')]
     });
-    const movingTransform = await indicator.evaluate((element) => element.style.transform);
+    expect(buttonMidFrame).toMatchSnapshot('button-morph-mid.png', { maxDiffPixelRatio: 0.005 });
+    await lens.evaluate((element) => {
+        element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3)?.play();
+    });
+    const movingTransform = await lens.evaluate((element) => element.style.transform);
     expect(movingTransform).not.toBe(restingTransform);
 
-    await page.waitForTimeout(750);
-    await expect(page.locator('#animeWallpaperBtn')).toHaveClass(/liquid-target/);
-    await expect(indicator).toHaveClass(/primary/);
-    await expect(indicator).not.toHaveClass(/traveling/);
+    await page.waitForTimeout(600);
+    await expect(lens).not.toHaveClass(/is-moving/);
     await expect(page).toHaveScreenshot('button-morph.png', {
         mask: [page.locator('#time'), page.locator('#date')]
     });
+    await group.dispatchEvent('pointerleave');
+    await page.waitForTimeout(180);
+    await expect(lens).not.toHaveClass(/is-visible/);
 
     const cardGroup = page.locator('#bookmarksGrid');
-    const cardIndicator = cardGroup.locator('.liquid-button-indicator');
+    const cardLens = cardGroup.locator('.liquid-glass-lens');
     const folderCard = cardGroup.locator('.folder-card[data-folder="POM"]');
     const bookmarkCard = cardGroup.locator('.bookmark-card').first();
     await folderCard.dispatchEvent('pointerover');
-    await expect(cardIndicator).toHaveCount(1);
-    await expect(folderCard).toHaveClass(/liquid-target/);
-    const folderTransform = await cardIndicator.evaluate((element) => element.style.transform);
+    await expect(cardLens).toHaveCount(1);
+    await expect(cardLens).toHaveClass(/is-visible/);
+    const folderTransform = await cardLens.evaluate((element) => element.style.transform);
+    await page.waitForTimeout(260);
     await bookmarkCard.dispatchEvent('pointerover');
-    await expect(bookmarkCard).toHaveClass(/liquid-target/);
-    await expect(cardIndicator).toHaveClass(/traveling/);
-    const cardFrames = await cardIndicator.evaluate((element) => {
-        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5);
+    await expect(cardLens).toHaveClass(/is-moving/);
+    const cardFrames = await cardLens.evaluate((element) => {
+        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3);
         return animation?.effect.getKeyframes() || [];
     });
-    expect(cardFrames).toHaveLength(5);
-    expect(Number.parseFloat(cardFrames[2].width)).toBeGreaterThan(
-        Number.parseFloat(cardFrames[4].width) * 1.05
+    expect(cardFrames).toHaveLength(3);
+    expect(Number.parseFloat(cardFrames[1].width)).toBeGreaterThan(
+        Number.parseFloat(cardFrames[2].width) * 1.05
     );
-    await cardIndicator.evaluate((element) => {
-        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5);
+    await cardLens.evaluate((element) => {
+        const animation = element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3);
         animation.pause();
-        animation.currentTime = animation.effect.getTiming().duration * 0.52;
+        animation.currentTime = animation.effect.getTiming().duration * 0.5;
     });
-    const cardTravelBox = await cardIndicator.boundingBox();
+    const cardTravelBox = await cardLens.boundingBox();
     const cardTargetBox = await bookmarkCard.boundingBox();
-    expect(cardTravelBox.height).toBeLessThan(cardTargetBox.height * 0.8);
-    await cardIndicator.evaluate((element) => {
-        element.getAnimations().find((item) => item.effect?.getKeyframes().length >= 5)?.play();
+    expect(cardTravelBox.width).toBeGreaterThan(cardTargetBox.width);
+    expect(cardTravelBox.height).toBeGreaterThan(cardTargetBox.height);
+    const cardMidFrame = await page.screenshot({
+        mask: [page.locator('#time'), page.locator('#date')]
     });
-    const bookmarkTransform = await cardIndicator.evaluate((element) => element.style.transform);
+    expect(cardMidFrame).toMatchSnapshot('card-morph-mid.png', { maxDiffPixelRatio: 0.005 });
+    await cardLens.evaluate((element) => {
+        element.getAnimations().find((item) => item.effect?.getKeyframes().length === 3)?.play();
+    });
+    const bookmarkTransform = await cardLens.evaluate((element) => element.style.transform);
     expect(bookmarkTransform).not.toBe(folderTransform);
-    await page.waitForTimeout(750);
-    const settledCardLensBox = await cardIndicator.boundingBox();
-    expect(settledCardLensBox.width).toBeLessThan(cardTargetBox.width * 0.9);
-    expect(settledCardLensBox.height).toBeLessThan(cardTargetBox.height * 0.8);
+    await page.waitForTimeout(600);
+    const settledCardLensBox = await cardLens.boundingBox();
+    expect(settledCardLensBox.width).toBeGreaterThan(cardTargetBox.width);
+    expect(settledCardLensBox.height).toBeGreaterThan(cardTargetBox.height);
     await expect(page).toHaveScreenshot('card-morph.png', {
         mask: [page.locator('#time'), page.locator('#date')]
     });
-    await cardIndicator.evaluate((element) => element.remove());
+    await cardLens.evaluate((element) => element.remove());
+    await expect(cardGroup.locator('.liquid-glass-lens')).toHaveCount(1);
     await folderCard.dispatchEvent('pointerover');
-    await expect(cardGroup.locator('.liquid-button-indicator')).toHaveCount(1);
-    await expect(folderCard).toHaveClass(/liquid-target/);
+    await expect(cardGroup.locator('.liquid-glass-lens')).toHaveClass(/is-visible/);
 
     await page.locator('#settingsBtn').click();
-    await page.locator('button[data-tab="wallpaper"]').click();
-    await expect(page.locator('button[data-tab="wallpaper"]')).toHaveClass(/liquid-target/);
+    await page.locator('button[data-tab="wallpaper"]').dispatchEvent('pointerover');
+    await expect(page.locator('.settings-tabs .liquid-glass-lens')).toHaveClass(/is-visible/);
+    await expect(page.locator('.settings-tabs .liquid-glass-lens')).toHaveText('');
     expect(errors).toEqual([]);
 });
 
-test('persists layout and theme controls', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'desktop-chrome', 'Interaction flow runs once on desktop.');
+test('persists layout and theme controls', async ({ page }) => {
     const errors = await openExtension(page);
 
     await page.locator('#settingsBtn').click();
@@ -310,8 +323,7 @@ test('persists layout and theme controls', async ({ page }, testInfo) => {
     expect(errors).toEqual([]);
 });
 
-test('adds a bookmark and manages a folder', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'desktop-chrome', 'Interaction flow runs once on desktop.');
+test('adds a bookmark and manages a folder', async ({ page }) => {
     const errors = await openExtension(page);
 
     await page.locator('#addBtn').click();
@@ -335,7 +347,6 @@ test('adds a bookmark and manages a folder', async ({ page }, testInfo) => {
 });
 
 test('imports a version 1 backup and exports version 2', async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'desktop-chrome', 'Data flow runs once on desktop.');
     const errors = await openExtension(page);
     const backup = {
         version: '1.0',

@@ -17,7 +17,7 @@
 
     <!-- Reusable optical filters. Chrome can apply SVG filters to the backdrop itself. -->
     <svg class="liquid-filter-defs" width="0" height="0" aria-hidden="true" focusable="false">
-        <defs>
+        <defs id="liquidFilterDefs">
             <filter id="liquidGlassRefraction" x="-12%" y="-12%" width="124%" height="124%"
                 color-interpolation-filters="sRGB">
                 <feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="8"
@@ -35,18 +35,6 @@
                 <feDisplacementMap in="SourceGraphic" in2="compactSoftMap" scale="8" xChannelSelector="R"
                     yChannelSelector="G" result="compactRefracted" />
                 <feColorMatrix in="compactRefracted" type="saturate" values="1.12" />
-            </filter>
-            <filter id="liquidGlassLens" x="-28%" y="-28%" width="156%" height="156%"
-                color-interpolation-filters="sRGB">
-                <feTurbulence type="fractalNoise" baseFrequency="0.01 0.016" numOctaves="2" seed="23"
-                    result="lensMap" />
-                <feGaussianBlur in="lensMap" stdDeviation="1.8" result="lensSoftMap" />
-                <feDisplacementMap in="SourceGraphic" in2="lensSoftMap" scale="28" xChannelSelector="R"
-                    yChannelSelector="G" result="lensBent" />
-                <feGaussianBlur in="lensBent" stdDeviation="0.22" result="lensSoftened" />
-                <feDisplacementMap in="lensSoftened" in2="lensSoftMap" scale="11" xChannelSelector="G"
-                    yChannelSelector="R" result="lensRefracted" />
-                <feColorMatrix in="lensRefracted" type="saturate" values="1.35" />
             </filter>
         </defs>
     </svg>
@@ -72,10 +60,10 @@
             <div class="status-strip">
                 <div class="status-card wide" id="activityStatus">
                     <div class="status-title">活动</div>
-                    <div class="status-body activity-body">
-                        <button class="status-pill soft clickable" id="mediaActivity" type="button">无媒体播放</button>
-                        <button class="status-pill soft clickable" id="downloadActivity" type="button">无下载</button>
-                    </div>
+                    <liquid-glass-group class="status-body activity-body">
+                        <button class="status-pill soft clickable" id="mediaActivity" type="button" data-liquid-item>无媒体播放</button>
+                        <button class="status-pill soft clickable" id="downloadActivity" type="button" data-liquid-item>无下载</button>
+                    </liquid-glass-group>
                 </div>
                 <div class="status-card" id="systemStatus">
                     <div class="status-title">系统</div>
@@ -111,15 +99,15 @@
                         <p class="eyebrow">当前文件夹</p>
                         <h3 id="currentFolderLabel">全部</h3>
                     </div>
-                    <div class="header-actions">
-                        <button class="ghost-btn" id="animeWallpaperBtn">换张二次元壁纸</button>
-                        <button class="ghost-btn primary" id="addFolderBtn">新建文件夹</button>
-                    </div>
+                    <liquid-glass-group class="header-actions">
+                        <button class="ghost-btn" id="animeWallpaperBtn" data-liquid-item>换张二次元壁纸</button>
+                        <button class="ghost-btn primary" id="addFolderBtn" data-liquid-item>新建文件夹</button>
+                    </liquid-glass-group>
                 </div>
 
-                <div class="bookmarks-grid" id="bookmarksGrid">
+                <liquid-glass-group class="bookmarks-grid" id="bookmarksGrid" data-liquid-variant="cards">
                     <!-- Bookmarks will be added here -->
-                </div>
+                </liquid-glass-group>
 
                 <!-- Add Bookmark Button -->
                 <button class="add-bookmark-btn" id="addBtn">
@@ -181,10 +169,10 @@
                     <span id="previewName"></span>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" id="cancelBtn">取消</button>
-                <button class="btn btn-primary" id="saveBtn">保存</button>
-            </div>
+            <liquid-glass-group class="modal-footer">
+                <button class="btn btn-secondary" id="cancelBtn" data-liquid-item>取消</button>
+                <button class="btn btn-primary" id="saveBtn" data-liquid-item>保存</button>
+            </liquid-glass-group>
         </div>
     </div>
 
@@ -198,12 +186,12 @@
 
             <div class="settings-body">
                 <!-- Settings Tabs -->
-                <div class="settings-tabs">
-                    <button class="tab-btn active" data-tab="appearance">外观</button>
-                    <button class="tab-btn" data-tab="wallpaper">壁纸</button>
-                    <button class="tab-btn" data-tab="layout">布局</button>
-                    <button class="tab-btn" data-tab="data">数据</button>
-                </div>
+                <liquid-glass-group class="settings-tabs">
+                    <button class="tab-btn active" data-tab="appearance" data-liquid-item>外观</button>
+                    <button class="tab-btn" data-tab="wallpaper" data-liquid-item>壁纸</button>
+                    <button class="tab-btn" data-tab="layout" data-liquid-item>布局</button>
+                    <button class="tab-btn" data-tab="data" data-liquid-item>数据</button>
+                </liquid-glass-group>
 
                 <!-- Tab Contents -->
                 <div class="settings-tab-content">
@@ -243,8 +231,8 @@
 
                     <!-- Wallpaper Tab -->
                     <div class="tab-pane" id="wallpaperTab">
-                        <div class="wallpaper-controls">
-                            <button class="wallpaper-btn" id="randomWallpaperBtn">
+                        <liquid-glass-group class="wallpaper-controls">
+                            <button class="wallpaper-btn" id="randomWallpaperBtn" data-liquid-item>
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2">
                                     <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -253,7 +241,7 @@
                                 </svg>
                                 二次元随机壁纸
                             </button>
-                            <label class="wallpaper-btn upload-btn">
+                            <label class="wallpaper-btn upload-btn" data-liquid-item>
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2">
                                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -263,7 +251,7 @@
                                 上传本地图片/视频
                                 <input type="file" id="wallpaperUpload" accept="image/*,video/*" style="display: none;">
                             </label>
-                            <button class="wallpaper-btn" id="resetWallpaperBtn">
+                            <button class="wallpaper-btn" id="resetWallpaperBtn" data-liquid-item>
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2">
                                     <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
@@ -271,7 +259,7 @@
                                 </svg>
                                 重置默认
                             </button>
-                        </div>
+                        </liquid-glass-group>
                         <div class="setting-item">
                             <label>模糊度: <span id="blurValue">0</span>px</label>
                             <input type="range" id="blurSlider" min="0" max="10" value="0" class="setting-slider">
@@ -323,8 +311,8 @@
 
                     <!-- Data Tab -->
                     <div class="tab-pane" id="dataTab">
-                        <div class="data-controls">
-                            <button class="data-btn export-btn" id="exportBtn">
+                        <liquid-glass-group class="data-controls">
+                            <button class="data-btn export-btn" id="exportBtn" data-liquid-item>
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2">
                                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -333,7 +321,7 @@
                                 </svg>
                                 导出数据
                             </button>
-                            <label class="data-btn import-btn">
+                            <label class="data-btn import-btn" data-liquid-item>
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2">
                                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -343,7 +331,7 @@
                                 导入数据
                                 <input type="file" id="importInput" accept=".json" style="display: none;">
                             </label>
-                            <button class="data-btn reset-btn" id="resetBtn">
+                            <button class="data-btn reset-btn" id="resetBtn" data-liquid-item>
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2">
                                     <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
@@ -351,7 +339,7 @@
                                 </svg>
                                 重置所有设置
                             </button>
-                        </div>
+                        </liquid-glass-group>
                         <div class="data-info">
                             <p>💡 导出会将书签、设置和本地壁纸保存为JSON文件</p>
                             <p>⚠️ 导入数据会覆盖当前所有设置</p>
@@ -369,6 +357,7 @@
     <script src="modules/bookmarks.js"></script>
     <script src="modules/search.js"></script>
     <script src="modules/import-export.js"></script>
+    <script src="modules/liquid-glass.js"></script>
     <script src="script.js"></script>
 </body>
 
