@@ -15,7 +15,7 @@ export class SearchCommand extends StoreElement {
         const engine = ENGINES[layout.searchEngine];
         this.hidden = !layout.showSearch;
         this.innerHTML = `
-            <form class="search-shell glass-panel" role="search">
+            <form class="search-shell glass-panel" role="search" data-liquid-item>
                 <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
                 <input name="query" type="search" autocomplete="off" list="search-history" placeholder="搜索网络..." aria-label="搜索网络">
                 <span class="search-engine">${engine.label}</span>

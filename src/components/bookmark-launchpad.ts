@@ -24,17 +24,17 @@ export class BookmarkLaunchpad extends StoreElement {
                         <span class="section-kicker">当前文件夹</span>
                         <h2>${escapeHtml(this.currentFolder)}</h2>
                     </div>
-                    <liquid-surface class="launchpad-actions">
+                    <div class="launchpad-actions">
                         <button class="glass-button anime-wallpaper" type="button" data-liquid-item>换张二次元壁纸</button>
                         <button class="glass-button primary create-folder" type="button" data-liquid-item>新建文件夹</button>
-                    </liquid-surface>
+                    </div>
                 </header>
-                <liquid-surface class="launchpad-grid">
+                <div class="launchpad-grid">
                     ${folderCards}
                     ${this.currentFolder === '全部' ? this.addFolderTemplate() : ''}
                     ${visible.map((bookmark) => this.bookmarkTemplate(bookmark)).join('')}
                     ${!folderCards && !visible.length ? '<div class="empty-launchpad">这里还没有书签</div>' : ''}
-                </liquid-surface>
+                </div>
                 <button class="add-bookmark-fab" type="button" data-liquid-item aria-label="添加书签">+</button>
             </section>
         `;

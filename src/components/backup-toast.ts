@@ -13,7 +13,7 @@ export class BackupToast extends StoreElement {
         this.innerHTML = `
             <div class="backup-toast glass-panel">
                 <span>备份一下，书签会更安心</span>
-                <liquid-surface class="backup-actions"><button class="glass-button primary backup-now" type="button" data-liquid-item>立即导出</button><button class="glass-button backup-later" type="button" data-liquid-item>稍后</button></liquid-surface>
+                <div class="backup-actions"><button class="glass-button primary backup-now" type="button" data-liquid-item>立即导出</button><button class="glass-button backup-later" type="button" data-liquid-item>稍后</button></div>
             </div>
         `;
         this.querySelector('.backup-now')?.addEventListener('click', () => void this.finish(true));

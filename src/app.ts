@@ -5,7 +5,7 @@ import { BackupToast } from './components/backup-toast';
 import { BookmarkDialog } from './components/bookmark-dialog';
 import { BookmarkLaunchpad } from './components/bookmark-launchpad';
 import { DashboardHeader } from './components/dashboard-header';
-import { LiquidGlassLayer, LiquidSurface } from './components/liquid-glass';
+import { LiquidGlassSystem } from './components/liquid-glass';
 import { RecentSites } from './components/recent-sites';
 import { SearchCommand } from './components/search-command';
 import { SettingsDrawer } from './components/settings-drawer';
@@ -45,7 +45,7 @@ class InfinityNewTabApp extends HTMLElement {
         this.innerHTML = `
             <wallpaper-surface></wallpaper-surface>
             <div class="ambient-orb orb-one"></div><div class="ambient-orb orb-two"></div>
-            <liquid-surface class="floating-settings-surface"><button class="settings-trigger" type="button" data-liquid-item aria-label="打开设置" title="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"></path><circle cx="16" cy="6" r="2"></circle><circle cx="8" cy="12" r="2"></circle><circle cx="13" cy="18" r="2"></circle></svg></button></liquid-surface>
+            <button class="settings-trigger" type="button" data-liquid-item aria-label="打开设置" title="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"></path><circle cx="16" cy="6" r="2"></circle><circle cx="8" cy="12" r="2"></circle><circle cx="13" cy="18" r="2"></circle></svg></button>
             <main class="app-shell">
                 <dashboard-header></dashboard-header>
                 <search-command></search-command>
@@ -55,7 +55,7 @@ class InfinityNewTabApp extends HTMLElement {
             <settings-drawer></settings-drawer>
             <bookmark-dialog></bookmark-dialog>
             <backup-toast></backup-toast>
-            <liquid-glass-layer></liquid-glass-layer>
+            <liquid-glass-system></liquid-glass-system>
         `;
         this.querySelector('.settings-trigger')?.addEventListener('click', () => {
             this.querySelector<SettingsDrawer>('settings-drawer')?.open();
@@ -80,8 +80,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 const elements: Array<[string, CustomElementConstructor]> = [
-    ['liquid-surface', LiquidSurface],
-    ['liquid-glass-layer', LiquidGlassLayer],
+    ['liquid-glass-system', LiquidGlassSystem],
     ['wallpaper-surface', WallpaperSurface],
     ['dashboard-header', DashboardHeader],
     ['search-command', SearchCommand],

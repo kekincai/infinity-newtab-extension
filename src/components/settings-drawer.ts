@@ -25,12 +25,12 @@ export class SettingsDrawer extends StoreElement {
         this.innerHTML = `
             <aside class="settings-drawer glass-panel ${this.openState ? 'is-open' : ''}" aria-hidden="${!this.openState}" ${this.openState ? '' : 'inert'}>
                 <header class="settings-header"><div><span class="section-kicker">个性化控制台</span><h2>设置</h2></div><button class="settings-close" type="button" aria-label="关闭">×</button></header>
-                <liquid-surface class="settings-tabs" role="tablist">
+                <div class="settings-tabs" role="tablist">
                     ${tabButton('appearance', '外观', this.activeTab)}
                     ${tabButton('wallpaper', '壁纸', this.activeTab)}
                     ${tabButton('layout', '布局', this.activeTab)}
                     ${tabButton('data', '数据', this.activeTab)}
-                </liquid-surface>
+                </div>
                 <div class="settings-pane">${this.paneTemplate(settings)}</div>
             </aside>
             <button class="settings-scrim ${this.openState ? 'is-open' : ''}" type="button" aria-label="关闭设置"></button>
@@ -46,11 +46,11 @@ export class SettingsDrawer extends StoreElement {
             ${toggle('darkText', '使用深色文字', settings.appearance.theme === 'light')}
         `;
         if (this.activeTab === 'wallpaper') return `
-            <liquid-surface class="settings-button-stack">
+            <div class="settings-button-stack">
                 <button class="settings-action random-wallpaper" type="button" data-liquid-item>✦ 二次元随机壁纸</button>
                 <label class="settings-action upload-wallpaper" data-liquid-item>↑ 上传本地图片或视频<input type="file" accept="image/*,video/*" hidden></label>
                 <button class="settings-action reset-wallpaper" type="button" data-liquid-item>↻ 重置默认壁纸</button>
-            </liquid-surface>
+            </div>
             ${range('blur', '模糊度', settings.wallpaper.blur, 0, 10, 'px')}
             ${range('overlay', '暗度', settings.wallpaper.overlay, 0, 80, '%')}
         `;
@@ -62,11 +62,11 @@ export class SettingsDrawer extends StoreElement {
             ${toggle('showRecent', '显示最近常访问', settings.layout.showRecent)}
         `;
         return `
-            <liquid-surface class="settings-button-stack">
+            <div class="settings-button-stack">
                 <button class="settings-action export-data" type="button" data-liquid-item>↓ 导出数据</button>
                 <label class="settings-action import-data" data-liquid-item>↑ 导入数据<input type="file" accept="application/json,.json" hidden></label>
                 <button class="settings-action danger reset-data" type="button" data-liquid-item>↻ 重置所有设置</button>
-            </liquid-surface>
+            </div>
             <div class="data-note"><p>导出文件包含书签、设置和本地图片/视频壁纸。</p><p>兼容旧版 1.0 与 2.0 备份，导入会覆盖当前数据。</p></div>
         `;
     }

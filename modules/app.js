@@ -724,7 +724,7 @@
           this.innerHTML = `
             <div class="backup-toast glass-panel">
                 <span>\u5907\u4EFD\u4E00\u4E0B\uFF0C\u4E66\u7B7E\u4F1A\u66F4\u5B89\u5FC3</span>
-                <liquid-surface class="backup-actions"><button class="glass-button primary backup-now" type="button" data-liquid-item>\u7ACB\u5373\u5BFC\u51FA</button><button class="glass-button backup-later" type="button" data-liquid-item>\u7A0D\u540E</button></liquid-surface>
+                <div class="backup-actions"><button class="glass-button primary backup-now" type="button" data-liquid-item>\u7ACB\u5373\u5BFC\u51FA</button><button class="glass-button backup-later" type="button" data-liquid-item>\u7A0D\u540E</button></div>
             </div>
         `;
           this.querySelector(".backup-now")?.addEventListener("click", () => void this.finish(true));
@@ -778,7 +778,7 @@
                     <label>\u6587\u4EF6\u5939<select name="folder">${appStore.state.folders.map((folder) => `<option value="${escapeHtml(folder)}" ${folder === selected ? "selected" : ""}>${escapeHtml(folder)}</option>`).join("")}</select></label>
                     <label>\u56FE\u6807\u5730\u5740\uFF08\u53EF\u9009\uFF09<input name="icon" type="url" placeholder="https://example.com/favicon.ico" value="${escapeHtml(bookmark?.icon ?? "")}"></label>
                     <div class="dialog-preview"><img alt=""><span>\u8F93\u5165\u7F51\u5740\u540E\u9884\u89C8\u56FE\u6807</span></div>
-                    <liquid-surface class="dialog-actions"><button class="glass-button cancel-dialog" type="button" data-liquid-item>\u53D6\u6D88</button><button class="glass-button primary" type="submit" data-liquid-item>\u4FDD\u5B58</button></liquid-surface>
+                    <div class="dialog-actions"><button class="glass-button cancel-dialog" type="button" data-liquid-item>\u53D6\u6D88</button><button class="glass-button primary" type="submit" data-liquid-item>\u4FDD\u5B58</button></div>
                 </form>
             </div>
         `;
@@ -856,17 +856,17 @@
                         <span class="section-kicker">\u5F53\u524D\u6587\u4EF6\u5939</span>
                         <h2>${escapeHtml(this.currentFolder)}</h2>
                     </div>
-                    <liquid-surface class="launchpad-actions">
+                    <div class="launchpad-actions">
                         <button class="glass-button anime-wallpaper" type="button" data-liquid-item>\u6362\u5F20\u4E8C\u6B21\u5143\u58C1\u7EB8</button>
                         <button class="glass-button primary create-folder" type="button" data-liquid-item>\u65B0\u5EFA\u6587\u4EF6\u5939</button>
-                    </liquid-surface>
+                    </div>
                 </header>
-                <liquid-surface class="launchpad-grid">
+                <div class="launchpad-grid">
                     ${folderCards}
                     ${this.currentFolder === "\u5168\u90E8" ? this.addFolderTemplate() : ""}
                     ${visible.map((bookmark) => this.bookmarkTemplate(bookmark)).join("")}
                     ${!folderCards && !visible.length ? '<div class="empty-launchpad">\u8FD9\u91CC\u8FD8\u6CA1\u6709\u4E66\u7B7E</div>' : ""}
-                </liquid-surface>
+                </div>
                 <button class="add-bookmark-fab" type="button" data-liquid-item aria-label="\u6DFB\u52A0\u4E66\u7B7E">+</button>
             </section>
         `;
@@ -1100,14 +1100,14 @@
                 <span class="hero-date" id="date">----</span>
             </div>
             <div class="status-grid" ${layout.showStatus ? "" : "hidden"}>
-                <article class="glass-panel status-panel status-panel-wide">
+                <article class="glass-panel status-panel status-panel-wide" data-liquid-item>
                     <span class="section-kicker">\u6D3B\u52A8</span>
-                    <liquid-surface class="status-pills">
+                    <div class="status-pills">
                         <button class="status-chip is-media" type="button" data-liquid-item>\u65E0\u5A92\u4F53\u64AD\u653E</button>
                         <button class="status-chip is-download" type="button" data-liquid-item>\u65E0\u4E0B\u8F7D</button>
-                    </liquid-surface>
+                    </div>
                 </article>
-                <article class="glass-panel status-panel">
+                <article class="glass-panel status-panel" data-liquid-item>
                     <span class="section-kicker">\u7CFB\u7EDF</span>
                     <div class="status-pills system-pills">
                         <span class="status-chip cpu-chip">CPU: --</span>
@@ -1175,190 +1175,471 @@
     }
   });
 
-  // src/components/liquid-glass.ts
-  function findSurfaceAtPoint(x, y) {
-    const surfaces = [...document.querySelectorAll("liquid-surface")].filter((surface) => {
-      const style = getComputedStyle(surface);
-      if (style.display === "none" || style.visibility === "hidden") return false;
-      const rect = surface.getBoundingClientRect();
-      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  // src/components/liquid-optics.ts
+  function opticalShapeKey(shape) {
+    const ratio = Math.max(1, window.devicePixelRatio || 1);
+    return `${shape.width}x${shape.height}r${shape.radius}@${ratio}`;
+  }
+  function convexSquircle(value) {
+    return Math.pow(1 - Math.pow(1 - value, 4), 1 / 4);
+  }
+  function precalculateDisplacements(distanceToBackdrop = DISTANCE_TO_BACKDROP, glassThickness = GLASS_THICKNESS, surface = convexSquircle, refractiveIndex = REFRACTIVE_INDEX, samples = RADIAL_SAMPLE_COUNT) {
+    const ratio = 1 / refractiveIndex;
+    const refract = (normalX, normalY) => {
+      const discriminant = 1 - ratio * ratio * (1 - normalY * normalY);
+      if (discriminant < 0) return null;
+      const root = Math.sqrt(discriminant);
+      return [
+        -(ratio * normalY + root) * normalX,
+        ratio - (ratio * normalY + root) * normalY
+      ];
+    };
+    return Array.from({ length: samples }, (_, index) => {
+      const distanceFromSide = index / samples;
+      const height = surface(distanceFromSide);
+      const delta = distanceFromSide < 1 ? 1e-4 : -1e-4;
+      const derivative = (surface(distanceFromSide + delta) - height) / delta;
+      const normalLength = Math.hypot(derivative, 1);
+      const refracted = refract(-derivative / normalLength, -1 / normalLength);
+      if (!refracted) return 0;
+      const depth = height * glassThickness + distanceToBackdrop;
+      return refracted[0] * (depth / refracted[1]);
     });
-    return surfaces.sort((left, right) => area2(left) - area2(right))[0] ?? null;
   }
-  function area2(element) {
-    const rect = element.getBoundingClientRect();
-    return rect.width * rect.height;
+  function createOpticalMaps(shape) {
+    const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+    const radius = clamp(shape.radius, 2, Math.min(shape.width, shape.height) / 2);
+    const bezelWidth = Math.max(2, radius * 0.75);
+    const displacements = precalculateDisplacements();
+    const maximumDisplacement = Math.max(...displacements.map(Math.abs));
+    return {
+      displacement: imageDataUrl(createDisplacementMap(
+        shape.width,
+        shape.height,
+        radius,
+        bezelWidth,
+        maximumDisplacement,
+        displacements,
+        pixelRatio
+      )),
+      specular: imageDataUrl(createSpecularMap(
+        shape.width,
+        shape.height,
+        radius,
+        bezelWidth,
+        SPECULAR_ANGLE,
+        pixelRatio
+      )),
+      maximumDisplacement
+    };
   }
-  function settled(current, desired, velocity) {
-    return Object.keys(current).every((key) => Math.abs(current[key] - desired[key]) < 0.08 && Math.abs(velocity[key]) < 0.08);
-  }
-  function createDisplacementMap() {
-    const canvas = document.createElement("canvas");
-    canvas.width = MAP_SIZE;
-    canvas.height = MAP_SIZE;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) return "";
-    const image = context.createImageData(MAP_SIZE, MAP_SIZE);
-    const center = (MAP_SIZE - 1) / 2;
-    for (let y = 0; y < MAP_SIZE; y += 1) {
-      for (let x = 0; x < MAP_SIZE; x += 1) {
-        const nx = (x - center) / center;
-        const ny = (y - center) / center;
-        const radius = Math.sqrt(nx * nx + ny * ny);
-        const edge = smoothStep(0.48, 1, radius);
-        const bloom = Math.sin(Math.min(1, radius) * Math.PI) * 0.18;
-        const strength = Math.min(0.46, edge * 0.38 + bloom);
-        const index = (y * MAP_SIZE + x) * 4;
-        image.data[index] = Math.round(128 + nx * strength * 127);
-        image.data[index + 1] = Math.round(128 + ny * strength * 127);
-        image.data[index + 2] = 128;
-        image.data[index + 3] = Math.round(255 * smoothStep(0.1, 0.96, 1 - Math.max(0, radius - 0.94)));
+  function createDisplacementMap(width, height, radius, bezelWidth, maximumDisplacement, displacements, pixelRatio) {
+    const canvasWidth = Math.max(1, Math.round(width * pixelRatio));
+    const canvasHeight = Math.max(1, Math.round(height * pixelRatio));
+    const image = new ImageData(canvasWidth, canvasHeight);
+    new Uint32Array(image.data.buffer).fill(4278222976);
+    const scaledRadius = radius * pixelRatio;
+    const scaledBezel = bezelWidth * pixelRatio;
+    const radiusSquared = scaledRadius ** 2;
+    const outerSquared = (scaledRadius + 1) ** 2;
+    const innerSquared = (scaledRadius - scaledBezel) ** 2;
+    const middleWidth = canvasWidth - scaledRadius * 2;
+    const middleHeight = canvasHeight - scaledRadius * 2;
+    for (let y = 0; y < canvasHeight; y += 1) {
+      for (let x = 0; x < canvasWidth; x += 1) {
+        const left = x < scaledRadius;
+        const right = x >= canvasWidth - scaledRadius;
+        const top = y < scaledRadius;
+        const bottom = y >= canvasHeight - scaledRadius;
+        const offsetX = left ? x - scaledRadius : right ? x - scaledRadius - middleWidth : 0;
+        const offsetY = top ? y - scaledRadius : bottom ? y - scaledRadius - middleHeight : 0;
+        const distanceSquared = offsetX * offsetX + offsetY * offsetY;
+        if (distanceSquared > outerSquared || distanceSquared < innerSquared) continue;
+        const distance = Math.sqrt(distanceSquared);
+        if (!distance) continue;
+        const antiAlias = distanceSquared < radiusSquared ? 1 : 1 - (distance - scaledRadius);
+        const distanceFromBorder = scaledRadius - distance;
+        const sample = Math.floor(distanceFromBorder / scaledBezel * displacements.length);
+        const magnitude = displacements[sample] ?? 0;
+        const normalizedX = -(offsetX / distance) * magnitude / maximumDisplacement;
+        const normalizedY = -(offsetY / distance) * magnitude / maximumDisplacement;
+        const index = (y * canvasWidth + x) * 4;
+        image.data[index] = 128 + normalizedX * 127 * antiAlias;
+        image.data[index + 1] = 128 + normalizedY * 127 * antiAlias;
+        image.data[index + 2] = 0;
+        image.data[index + 3] = 255;
       }
     }
+    return image;
+  }
+  function createSpecularMap(width, height, radius, bezelWidth, angle, pixelRatio) {
+    const canvasWidth = Math.max(1, Math.round(width * pixelRatio));
+    const canvasHeight = Math.max(1, Math.round(height * pixelRatio));
+    const image = new ImageData(canvasWidth, canvasHeight);
+    const scaledRadius = radius * pixelRatio;
+    const scaledBezel = bezelWidth * pixelRatio;
+    const radiusSquared = scaledRadius ** 2;
+    const outerSquared = (scaledRadius + pixelRatio) ** 2;
+    const innerSquared = (scaledRadius - scaledBezel) ** 2;
+    const middleWidth = canvasWidth - scaledRadius * 2;
+    const middleHeight = canvasHeight - scaledRadius * 2;
+    const light = [Math.cos(angle), Math.sin(angle)];
+    for (let y = 0; y < canvasHeight; y += 1) {
+      for (let x = 0; x < canvasWidth; x += 1) {
+        const left = x < scaledRadius;
+        const right = x >= canvasWidth - scaledRadius;
+        const top = y < scaledRadius;
+        const bottom = y >= canvasHeight - scaledRadius;
+        const offsetX = left ? x - scaledRadius : right ? x - scaledRadius - middleWidth : 0;
+        const offsetY = top ? y - scaledRadius : bottom ? y - scaledRadius - middleHeight : 0;
+        const distanceSquared = offsetX * offsetX + offsetY * offsetY;
+        if (distanceSquared > outerSquared || distanceSquared < innerSquared) continue;
+        const distance = Math.sqrt(distanceSquared);
+        if (!distance) continue;
+        const distanceFromBorder = scaledRadius - distance;
+        const antiAlias = distanceSquared < radiusSquared ? 1 : 1 - (distance - scaledRadius) / pixelRatio;
+        const normalX = offsetX / distance;
+        const normalY = -offsetY / distance;
+        const highlight = Math.abs(normalX * light[0] + normalY * light[1]) * Math.sqrt(Math.max(0, 1 - (1 - distanceFromBorder / pixelRatio) ** 2));
+        const brightness = 255 * highlight;
+        const index = (y * canvasWidth + x) * 4;
+        image.data[index] = brightness;
+        image.data[index + 1] = brightness;
+        image.data[index + 2] = brightness;
+        image.data[index + 3] = brightness * highlight * antiAlias;
+      }
+    }
+    return image;
+  }
+  function imageDataUrl(image) {
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d");
+    if (!context) return "";
     context.putImageData(image, 0, 0);
     return canvas.toDataURL("image/png");
   }
-  function smoothStep(from, to, value) {
-    const t = Math.max(0, Math.min(1, (value - from) / (to - from)));
-    return t * t * (3 - 2 * t);
+  function clamp(value, minimum, maximum) {
+    return Math.min(maximum, Math.max(minimum, value));
   }
-  var MAP_SIZE, MIN_WIDTH, MIN_HEIGHT, LiquidSurface, LiquidGlassLayer;
+  var REFRACTIVE_INDEX, RADIAL_SAMPLE_COUNT, DISTANCE_TO_BACKDROP, GLASS_THICKNESS, SPECULAR_ANGLE;
+  var init_liquid_optics = __esm({
+    "src/components/liquid-optics.ts"() {
+      "use strict";
+      REFRACTIVE_INDEX = 1.5;
+      RADIAL_SAMPLE_COUNT = 128;
+      DISTANCE_TO_BACKDROP = 55;
+      GLASS_THICKNESS = 63;
+      SPECULAR_ANGLE = -Math.PI / 3;
+    }
+  });
+
+  // src/components/liquid-glass.ts
+  function normalizeShape(shape) {
+    const width = Math.max(1, Math.round(shape.width));
+    const height = Math.max(1, Math.round(shape.height));
+    return {
+      width,
+      height,
+      radius: Math.min(Math.max(2, Math.round(shape.radius)), Math.min(width, height) / 2)
+    };
+  }
+  function resolveRadius(value, width, height) {
+    const firstValue = value.trim().split(/\s+/)[0] ?? "0";
+    if (firstValue.endsWith("%")) {
+      return Math.min(width, height) * (Number.parseFloat(firstValue) || 0) / 100;
+    }
+    return Number.parseFloat(firstValue) || Math.min(width, height) / 2;
+  }
+  function svgElement(name) {
+    return document.createElementNS(SVG_NAMESPACE, name);
+  }
+  function attributes(element, values) {
+    Object.entries(values).forEach(([name, value]) => element.setAttribute(name, value));
+  }
+  var SVG_NAMESPACE, REFRACTION_LEVEL, SOURCE_BLUR, SPECULAR_OPACITY, SPECULAR_SATURATION, SPRING_STIFFNESS, SPRING_DAMPING, MAP_CACHE, nextFilterId, LiquidGlassSystem, LiquidGlassBinding;
   var init_liquid_glass = __esm({
     "src/components/liquid-glass.ts"() {
       "use strict";
-      MAP_SIZE = 160;
-      MIN_WIDTH = 58;
-      MIN_HEIGHT = 50;
-      LiquidSurface = class extends HTMLElement {
-      };
-      LiquidGlassLayer = class extends HTMLElement {
-        lens;
-        displacement;
-        desired = { x: 0, y: 0, width: MIN_WIDTH, height: MIN_HEIGHT };
-        current = { ...this.desired };
-        velocity = { x: 0, y: 0, width: 0, height: 0 };
-        pointer = { x: 0, y: 0, previousX: 0, previousY: 0, time: 0, speed: 0 };
-        active = false;
-        activeSurface = null;
-        frame = 0;
-        previousFrame = 0;
-        hideTimer = 0;
+      init_liquid_optics();
+      SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+      REFRACTION_LEVEL = 0.7;
+      SOURCE_BLUR = 1;
+      SPECULAR_OPACITY = 0.2;
+      SPECULAR_SATURATION = 4;
+      SPRING_STIFFNESS = 250;
+      SPRING_DAMPING = 24;
+      MAP_CACHE = /* @__PURE__ */ new Map();
+      nextFilterId = 0;
+      LiquidGlassSystem = class extends HTMLElement {
+        bindings = /* @__PURE__ */ new Map();
+        resizeObserver = new ResizeObserver((entries) => {
+          entries.forEach((entry) => this.bindings.get(entry.target)?.configure());
+        });
+        mutationObserver = new MutationObserver(() => this.scheduleScan());
+        scanScheduled = false;
         connectedCallback() {
-          this.innerHTML = `
-            <svg class="liquid-defs" width="0" height="0" aria-hidden="true">
-                <defs>
-                    <filter id="infinity-liquid-refraction" x="-28%" y="-28%" width="156%" height="156%" color-interpolation-filters="sRGB">
-                        <feImage href="${createDisplacementMap()}" preserveAspectRatio="none" result="bezel-map"></feImage>
-                        <feGaussianBlur in="SourceGraphic" stdDeviation="0.18" result="soft-source"></feGaussianBlur>
-                        <feDisplacementMap in="soft-source" in2="bezel-map" scale="52" xChannelSelector="R" yChannelSelector="G" result="refracted"></feDisplacementMap>
-                        <feColorMatrix in="refracted" type="saturate" values="1.22"></feColorMatrix>
-                    </filter>
-                </defs>
-            </svg>
-            <div class="liquid-lens" aria-hidden="true"></div>
-        `;
-          this.lens = this.querySelector(".liquid-lens");
-          this.displacement = this.querySelector("feDisplacementMap");
-          window.addEventListener("pointermove", this.onPointerMove, { passive: true });
-          window.addEventListener("pointerout", this.onPointerOut, { passive: true });
-          window.addEventListener("blur", this.hide);
+          this.hidden = true;
+          const root = this.parentElement ?? document.body;
+          this.mutationObserver.observe(root, { childList: true, subtree: true });
+          window.addEventListener("resize", this.onWindowResize);
+          this.scheduleScan();
         }
         disconnectedCallback() {
-          window.removeEventListener("pointermove", this.onPointerMove);
-          window.removeEventListener("pointerout", this.onPointerOut);
-          window.removeEventListener("blur", this.hide);
-          cancelAnimationFrame(this.frame);
+          this.mutationObserver.disconnect();
+          this.resizeObserver.disconnect();
+          window.removeEventListener("resize", this.onWindowResize);
+          this.bindings.forEach((binding) => binding.destroy());
+          this.bindings.clear();
         }
-        onPointerMove = (event) => {
-          if (event.pointerType === "touch") return;
-          const now = performance.now();
-          const elapsed = Math.max(8, now - (this.pointer.time || now));
-          const dx = event.clientX - this.pointer.x;
-          const dy = event.clientY - this.pointer.y;
-          const instantaneous = Math.hypot(dx, dy) / elapsed;
-          this.pointer = {
-            x: event.clientX,
-            y: event.clientY,
-            previousX: this.pointer.x,
-            previousY: this.pointer.y,
-            time: now,
-            speed: this.pointer.speed * 0.64 + instantaneous * 0.36
-          };
-          const hit = document.elementFromPoint(event.clientX, event.clientY);
-          const item = hit?.closest("[data-liquid-item]") ?? null;
-          const surface = item?.closest("liquid-surface") ?? findSurfaceAtPoint(event.clientX, event.clientY);
-          if (!surface || surface.closest("[hidden]") || !item && (!this.active || surface !== this.activeSurface)) {
-            this.scheduleHide();
+        scheduleScan() {
+          if (this.scanScheduled) return;
+          this.scanScheduled = true;
+          queueMicrotask(() => {
+            this.scanScheduled = false;
+            this.scan();
+          });
+        }
+        scan() {
+          const root = this.parentElement ?? document.body;
+          const items = new Set(root.querySelectorAll("[data-liquid-item]"));
+          this.bindings.forEach((binding, item) => {
+            if (items.has(item) && item.isConnected) return;
+            this.resizeObserver.unobserve(item);
+            binding.destroy();
+            this.bindings.delete(item);
+          });
+          items.forEach((item) => {
+            if (this.bindings.has(item)) return;
+            const binding = new LiquidGlassBinding(item);
+            this.bindings.set(item, binding);
+            this.resizeObserver.observe(item);
+            binding.configure();
+          });
+        }
+        onWindowResize = () => {
+          this.bindings.forEach((binding) => binding.configure());
+        };
+      };
+      LiquidGlassBinding = class {
+        constructor(item) {
+          this.item = item;
+          this.item.classList.add("liquid-glass-host");
+          this.layer.className = "liquid-glass-layer";
+          this.layer.setAttribute("aria-hidden", "true");
+          this.item.prepend(this.layer);
+          this.item.addEventListener("pointerenter", this.onPointerEnter);
+          this.item.addEventListener("pointerleave", this.onPointerLeave);
+          this.item.addEventListener("pointerdown", this.onPointerDown);
+          this.item.addEventListener("focusin", this.onFocusIn);
+          this.item.addEventListener("focusout", this.onFocusOut);
+          window.addEventListener("pointerup", this.onPointerUp);
+          window.addEventListener("pointercancel", this.onPointerUp);
+        }
+        item;
+        layer = document.createElement("span");
+        svg = null;
+        displacement = null;
+        blur = null;
+        saturation = null;
+        specularAlpha = null;
+        maximumDisplacement = 0;
+        shapeKey = "";
+        target = 0;
+        presence = 0;
+        velocity = 0;
+        frame = 0;
+        pointerInside = false;
+        pointerDown = false;
+        focusInside = false;
+        configure() {
+          const width = this.item.offsetWidth;
+          const height = this.item.offsetHeight;
+          if (!width || !height) return;
+          const shape = normalizeShape({
+            width,
+            height,
+            radius: resolveRadius(getComputedStyle(this.item).borderTopLeftRadius, width, height)
+          });
+          const key = opticalShapeKey(shape);
+          if (key === this.shapeKey && this.svg?.isConnected) return;
+          this.shapeKey = key;
+          const maps = MAP_CACHE.get(key) ?? createOpticalMaps(shape);
+          MAP_CACHE.set(key, maps);
+          this.maximumDisplacement = maps.maximumDisplacement;
+          this.svg?.remove();
+          this.svg = this.createFilter(shape, maps);
+          this.item.prepend(this.svg);
+          this.updateFilter();
+        }
+        destroy() {
+          cancelAnimationFrame(this.frame);
+          this.item.removeEventListener("pointerenter", this.onPointerEnter);
+          this.item.removeEventListener("pointerleave", this.onPointerLeave);
+          this.item.removeEventListener("pointerdown", this.onPointerDown);
+          this.item.removeEventListener("focusin", this.onFocusIn);
+          this.item.removeEventListener("focusout", this.onFocusOut);
+          window.removeEventListener("pointerup", this.onPointerUp);
+          window.removeEventListener("pointercancel", this.onPointerUp);
+          this.item.classList.remove("liquid-glass-host");
+          this.item.style.removeProperty("--liquid-filter");
+          this.item.style.removeProperty("--liquid-presence");
+          delete this.item.dataset.liquidFilterId;
+          delete this.item.dataset.liquidShape;
+          delete this.item.dataset.liquidState;
+          this.svg?.remove();
+          this.layer.remove();
+        }
+        createFilter(shape, maps) {
+          const id = `infinity-liquid-${++nextFilterId}`;
+          const svg = svgElement("svg");
+          svg.classList.add("liquid-filter-defs");
+          svg.setAttribute("color-interpolation-filters", "sRGB");
+          svg.setAttribute("aria-hidden", "true");
+          const definitions = svgElement("defs");
+          const filter = svgElement("filter");
+          filter.id = id;
+          filter.dataset.maximumDisplacement = String(maps.maximumDisplacement);
+          filter.dataset.liquidShape = opticalShapeKey(shape);
+          this.blur = svgElement("feGaussianBlur");
+          attributes(this.blur, { in: "SourceGraphic", stdDeviation: "0", result: "blurred_source" });
+          const displacementImage = svgElement("feImage");
+          attributes(displacementImage, {
+            href: maps.displacement,
+            x: "0",
+            y: "0",
+            width: String(shape.width),
+            height: String(shape.height),
+            result: "displacement_map",
+            "data-optical-map": "displacement"
+          });
+          this.displacement = svgElement("feDisplacementMap");
+          attributes(this.displacement, {
+            in: "blurred_source",
+            in2: "displacement_map",
+            scale: "0",
+            xChannelSelector: "R",
+            yChannelSelector: "G",
+            result: "displaced"
+          });
+          this.saturation = svgElement("feColorMatrix");
+          attributes(this.saturation, {
+            in: "displaced",
+            type: "saturate",
+            values: "1",
+            result: "displaced_saturated"
+          });
+          const specularImage = svgElement("feImage");
+          attributes(specularImage, {
+            href: maps.specular,
+            x: "0",
+            y: "0",
+            width: String(shape.width),
+            height: String(shape.height),
+            result: "specular_layer",
+            "data-optical-map": "specular"
+          });
+          const composite = svgElement("feComposite");
+          attributes(composite, {
+            in: "displaced_saturated",
+            in2: "specular_layer",
+            operator: "in",
+            result: "specular_saturated"
+          });
+          const transfer = svgElement("feComponentTransfer");
+          attributes(transfer, { in: "specular_layer", result: "specular_faded" });
+          this.specularAlpha = svgElement("feFuncA");
+          attributes(this.specularAlpha, { type: "linear", slope: "0" });
+          transfer.append(this.specularAlpha);
+          const saturationBlend = svgElement("feBlend");
+          attributes(saturationBlend, {
+            in: "specular_saturated",
+            in2: "displaced",
+            mode: "normal",
+            result: "withSaturation"
+          });
+          const finalBlend = svgElement("feBlend");
+          attributes(finalBlend, { in: "specular_faded", in2: "withSaturation", mode: "normal" });
+          filter.append(
+            this.blur,
+            displacementImage,
+            this.displacement,
+            this.saturation,
+            specularImage,
+            composite,
+            transfer,
+            saturationBlend,
+            finalBlend
+          );
+          definitions.append(filter);
+          svg.append(definitions);
+          this.item.dataset.liquidFilterId = id;
+          this.item.dataset.liquidShape = opticalShapeKey(shape);
+          this.item.style.setProperty("--liquid-filter", `url("#${id}")`);
+          return svg;
+        }
+        setTarget(value) {
+          this.target = value;
+          if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            this.presence = value;
+            this.velocity = 0;
+            this.updateFilter();
             return;
           }
-          if (item) this.activeSurface = surface;
-          window.clearTimeout(this.hideTimer);
-          const itemRect = item?.getBoundingClientRect();
-          const speedStretch = Math.min(30, this.pointer.speed * 18);
-          const directWidth = itemRect ? Math.min(82, Math.max(MIN_WIDTH, itemRect.height * 1.06)) : MIN_WIDTH;
-          const directHeight = itemRect ? Math.min(62, Math.max(MIN_HEIGHT, itemRect.height * 0.82)) : MIN_HEIGHT;
-          const width = directWidth + speedStretch;
-          const height = Math.max(44, directHeight - Math.min(8, speedStretch * 0.2));
-          this.desired = {
-            x: event.clientX - width / 2,
-            y: event.clientY - height / 2,
-            width,
-            height
-          };
-          this.lens.classList.toggle("is-over-item", Boolean(item));
-          this.show();
-        };
-        onPointerOut = (event) => {
-          if (!event.relatedTarget) this.hide();
-        };
-        show() {
-          if (!this.active) {
-            this.active = true;
-            this.current = { ...this.desired };
-            this.velocity = { x: 0, y: 0, width: 0, height: 0 };
-            this.lens.classList.add("is-visible");
-          }
-          if (!this.frame) {
-            this.previousFrame = performance.now();
-            this.frame = requestAnimationFrame(this.tick);
-          }
+          if (!this.frame) this.frame = requestAnimationFrame(this.tick);
         }
-        scheduleHide() {
-          window.clearTimeout(this.hideTimer);
-          this.hideTimer = window.setTimeout(this.hide, 90);
-        }
-        hide = () => {
-          window.clearTimeout(this.hideTimer);
-          this.active = false;
-          this.activeSurface = null;
-          this.lens?.classList.remove("is-visible");
-        };
-        tick = (time) => {
-          this.frame = 0;
-          const dt = Math.min(0.032, Math.max(1e-3, (time - this.previousFrame) / 1e3));
-          this.previousFrame = time;
-          const enhanced = document.body.classList.contains("enhanced-animations");
-          const stiffness = enhanced ? 340 : 520;
-          const damping = enhanced ? 31 : 42;
-          for (const key of ["x", "y", "width", "height"]) {
-            const acceleration = (this.desired[key] - this.current[key]) * stiffness - this.velocity[key] * damping;
-            this.velocity[key] += acceleration * dt;
-            this.current[key] += this.velocity[key] * dt;
+        tick = () => {
+          const acceleration = (this.target - this.presence) * SPRING_STIFFNESS;
+          this.velocity = (this.velocity + acceleration / 60) * Math.exp(-SPRING_DAMPING / 60);
+          this.presence += this.velocity / 60;
+          if (Math.abs(this.target - this.presence) < 1e-3 && Math.abs(this.velocity) < 0.01) {
+            this.presence = this.target;
+            this.velocity = 0;
+            this.frame = 0;
+            this.updateFilter();
+            return;
           }
-          this.renderLens();
-          if (this.active || !settled(this.current, this.desired, this.velocity)) {
-            this.frame = requestAnimationFrame(this.tick);
-          }
+          this.updateFilter();
+          this.frame = requestAnimationFrame(this.tick);
         };
-        renderLens() {
-          const geometry = this.current;
-          this.lens.style.width = `${geometry.width}px`;
-          this.lens.style.height = `${geometry.height}px`;
-          this.lens.style.transform = `translate3d(${geometry.x}px, ${geometry.y}px, 0)`;
-          const opticalSpeed = Math.min(1, Math.hypot(this.velocity.x, this.velocity.y) / 850);
-          this.lens.style.setProperty("--liquid-speed", opticalSpeed.toFixed(3));
-          this.displacement.setAttribute("scale", String(48 + opticalSpeed * 26));
+        updateFilter() {
+          const presence = Math.min(1, Math.max(0, this.presence));
+          this.displacement?.setAttribute("scale", String(this.maximumDisplacement * REFRACTION_LEVEL * presence));
+          this.blur?.setAttribute("stdDeviation", String(SOURCE_BLUR * presence));
+          this.saturation?.setAttribute("values", String(1 + (SPECULAR_SATURATION - 1) * presence));
+          this.specularAlpha?.setAttribute("slope", String(SPECULAR_OPACITY * presence));
+          this.item.style.setProperty("--liquid-presence", presence.toFixed(4));
+          this.item.dataset.liquidState = presence > 0.01 ? "active" : "idle";
         }
+        refreshTarget() {
+          this.setTarget(this.pointerInside || this.pointerDown || this.focusInside ? 1 : 0);
+        }
+        onPointerEnter = () => {
+          this.pointerInside = true;
+          this.refreshTarget();
+        };
+        onPointerLeave = () => {
+          this.pointerInside = false;
+          this.refreshTarget();
+        };
+        onPointerDown = () => {
+          this.pointerDown = true;
+          this.refreshTarget();
+        };
+        onPointerUp = () => {
+          if (!this.pointerDown) return;
+          this.pointerDown = false;
+          this.refreshTarget();
+        };
+        onFocusIn = () => {
+          this.focusInside = true;
+          this.refreshTarget();
+        };
+        onFocusOut = (event) => {
+          this.focusInside = event.relatedTarget instanceof Node && this.item.contains(event.relatedTarget);
+          this.refreshTarget();
+        };
       };
     }
   });
@@ -1412,15 +1693,15 @@
         render() {
           this.hidden = !appStore.state.settings.layout.showRecent;
           this.innerHTML = `
-            <section class="glass-panel recent-panel">
+            <section class="glass-panel recent-panel" data-liquid-item>
                 <header class="recent-header">
                     <div><span class="section-kicker">\u5E38\u8BBF\u95EE</span><h2>\u6700\u8FD1\u5E38\u8BBF\u95EE\u7684\u7F51\u7AD9</h2></div>
-                    <liquid-surface class="recent-actions"><button class="glass-button refresh-recent" type="button" data-liquid-item>\u5237\u65B0</button></liquid-surface>
+                    <div class="recent-actions"><button class="glass-button refresh-recent" type="button" data-liquid-item>\u5237\u65B0</button></div>
                 </header>
                 <div class="recent-viewport">
-                    <liquid-surface class="recent-track">
+                    <div class="recent-track">
                         ${this.contentTemplate()}
-                    </liquid-surface>
+                    </div>
                 </div>
             </section>
         `;
@@ -1496,7 +1777,7 @@
           const engine = ENGINES[layout.searchEngine];
           this.hidden = !layout.showSearch;
           this.innerHTML = `
-            <form class="search-shell glass-panel" role="search">
+            <form class="search-shell glass-panel" role="search" data-liquid-item>
                 <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
                 <input name="query" type="search" autocomplete="off" list="search-history" placeholder="\u641C\u7D22\u7F51\u7EDC..." aria-label="\u641C\u7D22\u7F51\u7EDC">
                 <span class="search-engine">${engine.label}</span>
@@ -1553,12 +1834,12 @@
           this.innerHTML = `
             <aside class="settings-drawer glass-panel ${this.openState ? "is-open" : ""}" aria-hidden="${!this.openState}" ${this.openState ? "" : "inert"}>
                 <header class="settings-header"><div><span class="section-kicker">\u4E2A\u6027\u5316\u63A7\u5236\u53F0</span><h2>\u8BBE\u7F6E</h2></div><button class="settings-close" type="button" aria-label="\u5173\u95ED">\xD7</button></header>
-                <liquid-surface class="settings-tabs" role="tablist">
+                <div class="settings-tabs" role="tablist">
                     ${tabButton("appearance", "\u5916\u89C2", this.activeTab)}
                     ${tabButton("wallpaper", "\u58C1\u7EB8", this.activeTab)}
                     ${tabButton("layout", "\u5E03\u5C40", this.activeTab)}
                     ${tabButton("data", "\u6570\u636E", this.activeTab)}
-                </liquid-surface>
+                </div>
                 <div class="settings-pane">${this.paneTemplate(settings)}</div>
             </aside>
             <button class="settings-scrim ${this.openState ? "is-open" : ""}" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E"></button>
@@ -1573,11 +1854,11 @@
             ${toggle("darkText", "\u4F7F\u7528\u6DF1\u8272\u6587\u5B57", settings.appearance.theme === "light")}
         `;
           if (this.activeTab === "wallpaper") return `
-            <liquid-surface class="settings-button-stack">
+            <div class="settings-button-stack">
                 <button class="settings-action random-wallpaper" type="button" data-liquid-item>\u2726 \u4E8C\u6B21\u5143\u968F\u673A\u58C1\u7EB8</button>
                 <label class="settings-action upload-wallpaper" data-liquid-item>\u2191 \u4E0A\u4F20\u672C\u5730\u56FE\u7247\u6216\u89C6\u9891<input type="file" accept="image/*,video/*" hidden></label>
                 <button class="settings-action reset-wallpaper" type="button" data-liquid-item>\u21BB \u91CD\u7F6E\u9ED8\u8BA4\u58C1\u7EB8</button>
-            </liquid-surface>
+            </div>
             ${range("blur", "\u6A21\u7CCA\u5EA6", settings.wallpaper.blur, 0, 10, "px")}
             ${range("overlay", "\u6697\u5EA6", settings.wallpaper.overlay, 0, 80, "%")}
         `;
@@ -1589,11 +1870,11 @@
             ${toggle("showRecent", "\u663E\u793A\u6700\u8FD1\u5E38\u8BBF\u95EE", settings.layout.showRecent)}
         `;
           return `
-            <liquid-surface class="settings-button-stack">
+            <div class="settings-button-stack">
                 <button class="settings-action export-data" type="button" data-liquid-item>\u2193 \u5BFC\u51FA\u6570\u636E</button>
                 <label class="settings-action import-data" data-liquid-item>\u2191 \u5BFC\u5165\u6570\u636E<input type="file" accept="application/json,.json" hidden></label>
                 <button class="settings-action danger reset-data" type="button" data-liquid-item>\u21BB \u91CD\u7F6E\u6240\u6709\u8BBE\u7F6E</button>
-            </liquid-surface>
+            </div>
             <div class="data-note"><p>\u5BFC\u51FA\u6587\u4EF6\u5305\u542B\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u56FE\u7247/\u89C6\u9891\u58C1\u7EB8\u3002</p><p>\u517C\u5BB9\u65E7\u7248 1.0 \u4E0E 2.0 \u5907\u4EFD\uFF0C\u5BFC\u5165\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E\u3002</p></div>
         `;
         }
@@ -1803,7 +2084,7 @@
           this.innerHTML = `
             <wallpaper-surface></wallpaper-surface>
             <div class="ambient-orb orb-one"></div><div class="ambient-orb orb-two"></div>
-            <liquid-surface class="floating-settings-surface"><button class="settings-trigger" type="button" data-liquid-item aria-label="\u6253\u5F00\u8BBE\u7F6E" title="\u8BBE\u7F6E"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"></path><circle cx="16" cy="6" r="2"></circle><circle cx="8" cy="12" r="2"></circle><circle cx="13" cy="18" r="2"></circle></svg></button></liquid-surface>
+            <button class="settings-trigger" type="button" data-liquid-item aria-label="\u6253\u5F00\u8BBE\u7F6E" title="\u8BBE\u7F6E"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"></path><circle cx="16" cy="6" r="2"></circle><circle cx="8" cy="12" r="2"></circle><circle cx="13" cy="18" r="2"></circle></svg></button>
             <main class="app-shell">
                 <dashboard-header></dashboard-header>
                 <search-command></search-command>
@@ -1813,7 +2094,7 @@
             <settings-drawer></settings-drawer>
             <bookmark-dialog></bookmark-dialog>
             <backup-toast></backup-toast>
-            <liquid-glass-layer></liquid-glass-layer>
+            <liquid-glass-system></liquid-glass-system>
         `;
           this.querySelector(".settings-trigger")?.addEventListener("click", () => {
             this.querySelector("settings-drawer")?.open();
@@ -1835,8 +2116,7 @@
         return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
       }
       var elements = [
-        ["liquid-surface", LiquidSurface],
-        ["liquid-glass-layer", LiquidGlassLayer],
+        ["liquid-glass-system", LiquidGlassSystem],
         ["wallpaper-surface", WallpaperSurface],
         ["dashboard-header", DashboardHeader],
         ["search-command", SearchCommand],

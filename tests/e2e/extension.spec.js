@@ -82,6 +82,88 @@ async function centerOf(locator) {
     return { x: box.x + box.width / 2, y: box.y + box.height / 2, box };
 }
 
+async function inspectArticleFilter(page, locator) {
+    await expect(locator).toHaveClass(/liquid-glass-host/);
+    const before = await locator.evaluate((element) => {
+        const filter = element.querySelector('filter');
+        return {
+            backdrop: getComputedStyle(element.querySelector('.liquid-glass-layer')).backdropFilter,
+            scale: Number(filter?.querySelector('feDisplacementMap')?.getAttribute('scale') || 0),
+            state: element.dataset.liquidState
+        };
+    });
+    await locator.hover();
+    await expect.poll(() => locator.evaluate((element) => Number(
+        getComputedStyle(element).getPropertyValue('--liquid-presence') || 0
+    ))).toBeGreaterThan(0.999);
+    const info = await locator.evaluate((element) => {
+        const id = element.dataset.liquidFilterId;
+        const filter = id ? element.querySelector(`#${id}`) : null;
+        const displacement = filter?.querySelector('feImage[data-optical-map="displacement"]');
+        const specular = filter?.querySelector('feImage[data-optical-map="specular"]');
+        const scale = Number(filter?.querySelector('feDisplacementMap')?.getAttribute('scale') || 0);
+        const maximum = Number(filter?.dataset.maximumDisplacement || 0);
+        return {
+            id,
+            width: element.offsetWidth,
+            height: element.offsetHeight,
+            backdrop: getComputedStyle(element.querySelector('.liquid-glass-layer')).backdropFilter,
+            coLocated: filter?.closest('svg')?.parentElement === element,
+            displacementWidth: Number(displacement?.getAttribute('width')),
+            displacementHeight: Number(displacement?.getAttribute('height')),
+            displacementHref: displacement?.getAttribute('href'),
+            specularWidth: Number(specular?.getAttribute('width')),
+            specularHeight: Number(specular?.getAttribute('height')),
+            specularHref: specular?.getAttribute('href'),
+            compositeCount: filter?.querySelectorAll('feComposite').length,
+            transferCount: filter?.querySelectorAll('feComponentTransfer').length,
+            blendCount: filter?.querySelectorAll('feBlend').length,
+            nodeOrder: filter ? [...filter.children].map((node) => node.tagName.toLowerCase()) : [],
+            xChannel: filter?.querySelector('feDisplacementMap')?.getAttribute('xChannelSelector'),
+            yChannel: filter?.querySelector('feDisplacementMap')?.getAttribute('yChannelSelector'),
+            blur: filter?.querySelector('feGaussianBlur')?.getAttribute('stdDeviation'),
+            saturation: filter?.querySelector('feColorMatrix')?.getAttribute('values'),
+            specularOpacity: filter?.querySelector('feFuncA')?.getAttribute('slope'),
+            scale,
+            maximum
+        };
+    });
+    expect(info.id).toBeTruthy();
+    expect(before.backdrop).toContain(info.id);
+    expect(before.scale).toBe(0);
+    expect(before.state).toBe('idle');
+    expect(info.backdrop).toContain(info.id);
+    expect(info.coLocated).toBe(true);
+    expect(info.displacementWidth).toBe(info.width);
+    expect(info.displacementHeight).toBe(info.height);
+    expect(info.specularWidth).toBe(info.width);
+    expect(info.specularHeight).toBe(info.height);
+    expect(info.displacementHref).toMatch(/^data:image\/png;base64,/);
+    expect(info.specularHref).toMatch(/^data:image\/png;base64,/);
+    expect(info.compositeCount).toBe(1);
+    expect(info.transferCount).toBe(1);
+    expect(info.blendCount).toBe(2);
+    expect(info.nodeOrder).toEqual([
+        'fegaussianblur',
+        'feimage',
+        'fedisplacementmap',
+        'fecolormatrix',
+        'feimage',
+        'fecomposite',
+        'fecomponenttransfer',
+        'feblend',
+        'feblend'
+    ]);
+    expect(info.xChannel).toBe('R');
+    expect(info.yChannel).toBe('G');
+    expect(Number(info.blur)).toBeCloseTo(1, 2);
+    expect(Number(info.saturation)).toBeCloseTo(4, 2);
+    expect(Number(info.specularOpacity)).toBeCloseTo(0.2, 2);
+    expect(info.maximum).toBeGreaterThan(30);
+    expect(info.scale / info.maximum).toBeCloseTo(0.7, 2);
+    return info;
+}
+
 async function openSettings(page, tab = 'appearance') {
     await page.locator('.settings-trigger').click();
     await expect(page.locator('.settings-drawer')).toHaveClass(/is-open/);
@@ -99,62 +181,41 @@ test('renders the TypeScript Web Component home screen', async ({ page }) => {
     await expect(page.locator('.recent-track')).not.toContainText('google');
     await expect(page.locator('.cpu-chip')).toHaveText('CPU: 8 线程');
     await expect(page.locator('.battery-chip')).toContainText('82%');
-    await expect(page.locator('liquid-glass-layer')).toHaveCount(1);
-    await expect(page.locator('.liquid-lens')).toHaveText('');
-    await expect(page.locator('.liquid-lens')).not.toHaveClass(/is-visible/);
+    await expect(page.locator('liquid-glass-system')).toHaveCount(1);
+    await expect(page.locator('.bookmark-tile').first()).toHaveClass(/liquid-glass-host/);
+    const coverage = await page.evaluate(() => {
+        const items = [...document.querySelectorAll('[data-liquid-item]')];
+        return {
+            total: items.length,
+            oldWrappers: document.querySelectorAll('liquid-surface, liquid-filter-bank').length,
+            withoutFilter: items.filter((item) => item.getClientRects().length && (!item.classList.contains('liquid-glass-host') || !item.dataset.liquidFilterId)).length,
+            withoutLocalFilter: items.filter((item) => item.getClientRects().length && !item.querySelector('svg.liquid-filter-defs filter')).length
+        };
+    });
+    expect(coverage.total).toBeGreaterThan(10);
+    expect(coverage.oldWrappers).toBe(0);
+    expect(coverage.withoutFilter).toBe(0);
+    expect(coverage.withoutLocalFilter).toBe(0);
     expect(errors).toEqual([]);
 });
 
-test('drives one real optical droplet directly from pointer position', async ({ page }) => {
+test('co-locates the article optical pipeline inside every real component', async ({ page }) => {
     const errors = await openExtension(page);
-    const first = await centerOf(page.locator('.anime-wallpaper'));
-    const second = await centerOf(page.locator('.create-folder'));
-    const lens = page.locator('.liquid-lens');
-    const mapHref = await page.locator('feImage').getAttribute('href');
-    expect(mapHref).toMatch(/^data:image\/png;base64,/);
+    const action = await inspectArticleFilter(page, page.locator('.anime-wallpaper'));
+    const secondAction = await inspectArticleFilter(page, page.locator('.create-folder'));
+    expect(secondAction.id).not.toBe(action.id);
 
-    await page.mouse.move(first.x, first.y);
-    await expect(lens).toHaveClass(/is-visible/);
-    await page.waitForTimeout(180);
-    const firstLens = await lens.boundingBox();
-    expect(firstLens.width).toBeLessThan(first.box.width);
-    expect(firstLens.width).toBeGreaterThan(55);
-    expect(await lens.evaluate((element) => getComputedStyle(element).backdropFilter)).toContain('infinity-liquid-refraction');
+    const folder = await inspectArticleFilter(page, page.locator('.folder-tile[data-folder="POM"]'));
+    const bookmark = await inspectArticleFilter(page, page.locator('.bookmark-tile[data-bookmark-id="1"]'));
+    expect(bookmark.id).not.toBe(folder.id);
 
-    const midpoint = { x: (first.box.x + first.box.width + second.box.x) / 2, y: (first.y + second.y) / 2 };
-    await page.mouse.move(midpoint.x, midpoint.y);
-    await page.waitForTimeout(650);
-    const paused = await lens.boundingBox();
-    const pausedTransform = await lens.evaluate((element) => element.style.transform);
-    expect(Math.abs(paused.x + paused.width / 2 - midpoint.x)).toBeLessThan(2);
-    expect(paused.x + paused.width / 2).toBeGreaterThan(first.x);
-    expect(paused.x + paused.width / 2).toBeLessThan(second.x);
-    await page.waitForTimeout(250);
-    expect(await lens.evaluate((element) => element.style.transform)).toBe(pausedTransform);
-
-    const later = { x: first.x + (second.x - first.x) * 0.78, y: first.y };
-    await page.mouse.move(later.x, later.y);
-    await page.waitForTimeout(120);
-    const laterBox = await lens.boundingBox();
-    expect(laterBox.x + laterBox.width / 2).toBeGreaterThan(paused.x + paused.width / 2);
-    await page.mouse.move(midpoint.x, midpoint.y);
-    await page.waitForTimeout(120);
-    const reversed = await lens.boundingBox();
-    expect(reversed.x + reversed.width / 2).toBeLessThan(laterBox.x + laterBox.width / 2);
-
-    const bookmarkOne = await centerOf(page.locator('.bookmark-tile[data-bookmark-id="1"]'));
-    const bookmarkTwo = await centerOf(page.locator('.bookmark-tile[data-bookmark-id="2"]'));
-    await page.mouse.move(bookmarkOne.x, bookmarkOne.y);
-    await page.mouse.move((bookmarkOne.x + bookmarkTwo.x) / 2, bookmarkOne.y, { steps: 8 });
-    await page.waitForTimeout(350);
-    await expect(lens).toHaveClass(/is-visible/);
-    const gridGap = await lens.boundingBox();
-    expect(gridGap.x + gridGap.width / 2).toBeGreaterThan(bookmarkOne.x);
-    expect(gridGap.x + gridGap.width / 2).toBeLessThan(bookmarkTwo.x);
+    await inspectArticleFilter(page, page.locator('.recent-card').first());
+    await inspectArticleFilter(page, page.locator('.search-shell'));
 
     await page.mouse.move(10, 10);
-    await page.waitForTimeout(180);
-    await expect(lens).not.toHaveClass(/is-visible/);
+    await expect.poll(() => page.locator('.anime-wallpaper').evaluate((element) => Number(
+        element.querySelector('feDisplacementMap')?.getAttribute('scale') || 0
+    ))).toBeLessThan(0.2);
     expect(errors).toEqual([]);
 });
 

@@ -35,7 +35,7 @@ export class BookmarkDialog extends HTMLElement {
                     <label>文件夹<select name="folder">${appStore.state.folders.map((folder) => `<option value="${escapeHtml(folder)}" ${folder === selected ? 'selected' : ''}>${escapeHtml(folder)}</option>`).join('')}</select></label>
                     <label>图标地址（可选）<input name="icon" type="url" placeholder="https://example.com/favicon.ico" value="${escapeHtml(bookmark?.icon ?? '')}"></label>
                     <div class="dialog-preview"><img alt=""><span>输入网址后预览图标</span></div>
-                    <liquid-surface class="dialog-actions"><button class="glass-button cancel-dialog" type="button" data-liquid-item>取消</button><button class="glass-button primary" type="submit" data-liquid-item>保存</button></liquid-surface>
+                    <div class="dialog-actions"><button class="glass-button cancel-dialog" type="button" data-liquid-item>取消</button><button class="glass-button primary" type="submit" data-liquid-item>保存</button></div>
                 </form>
             </div>
         `;

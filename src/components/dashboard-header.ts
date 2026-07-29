@@ -28,14 +28,14 @@ export class DashboardHeader extends StoreElement {
                 <span class="hero-date" id="date">----</span>
             </div>
             <div class="status-grid" ${layout.showStatus ? '' : 'hidden'}>
-                <article class="glass-panel status-panel status-panel-wide">
+                <article class="glass-panel status-panel status-panel-wide" data-liquid-item>
                     <span class="section-kicker">活动</span>
-                    <liquid-surface class="status-pills">
+                    <div class="status-pills">
                         <button class="status-chip is-media" type="button" data-liquid-item>无媒体播放</button>
                         <button class="status-chip is-download" type="button" data-liquid-item>无下载</button>
-                    </liquid-surface>
+                    </div>
                 </article>
-                <article class="glass-panel status-panel">
+                <article class="glass-panel status-panel" data-liquid-item>
                     <span class="section-kicker">系统</span>
                     <div class="status-pills system-pills">
                         <span class="status-chip cpu-chip">CPU: --</span>

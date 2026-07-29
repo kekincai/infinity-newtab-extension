@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { sanitizeImportedData, sanitizeSettings } from '../src/core/backup';
 import { rankSites } from '../src/core/history';
 import { AppStore } from '../src/core/store';
+import { convexSquircle, precalculateDisplacements } from '../src/components/liquid-optics';
 
 const syncData: Record<string, unknown> = {};
 const localData: Record<string, unknown> = {};
@@ -82,6 +83,13 @@ assert.equal(ranked.length, 2);
 assert.equal(ranked[0].host, 'youtube.com');
 assert.equal(ranked[0].url, 'https://youtube.com/');
 assert.equal(ranked[0].count, 12);
+
+const opticalSamples = precalculateDisplacements(55, 63, convexSquircle, 1.5, 128);
+assert.equal(opticalSamples.length, 128, '折射场必须覆盖 SVG 颜色通道的 128 个径向取样位置');
+assert.ok(opticalSamples.every(Number.isFinite));
+assert.ok(Math.abs(opticalSamples.at(-1) ?? 0) < Math.abs(opticalSamples[0]), '位移应从玻璃边缘向平面区域平滑衰减');
+assert.ok(Math.max(...opticalSamples.map(Math.abs)) > 70, '凸面 squircle 必须产生可见的物理位移');
+assert.ok(convexSquircle(0.5) > 0.9, '凸面 squircle 应保持平滑的内侧曲率');
 
 async function testTransactions(): Promise<void> {
     Object.assign(syncData, {

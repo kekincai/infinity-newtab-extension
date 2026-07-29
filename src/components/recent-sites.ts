@@ -18,15 +18,15 @@ export class RecentSites extends StoreElement {
     protected render(): void {
         this.hidden = !appStore.state.settings.layout.showRecent;
         this.innerHTML = `
-            <section class="glass-panel recent-panel">
+            <section class="glass-panel recent-panel" data-liquid-item>
                 <header class="recent-header">
                     <div><span class="section-kicker">常访问</span><h2>最近常访问的网站</h2></div>
-                    <liquid-surface class="recent-actions"><button class="glass-button refresh-recent" type="button" data-liquid-item>刷新</button></liquid-surface>
+                    <div class="recent-actions"><button class="glass-button refresh-recent" type="button" data-liquid-item>刷新</button></div>
                 </header>
                 <div class="recent-viewport">
-                    <liquid-surface class="recent-track">
+                    <div class="recent-track">
                         ${this.contentTemplate()}
-                    </liquid-surface>
+                    </div>
                 </div>
             </section>
         `;
