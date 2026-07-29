@@ -228,7 +228,9 @@ class ImportExportManager {
                     appearance.enhancedAnimations,
                     defaults.appearance.enhancedAnimations
                 ),
-                theme: appearance.theme === 'light' ? 'light' : 'dark'
+                theme: ['light', 'dark'].includes(appearance.theme)
+                    ? appearance.theme
+                    : defaults.appearance.theme
             }
         };
     }

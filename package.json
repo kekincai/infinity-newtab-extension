@@ -1,0 +1,29 @@
+{
+  "name": "infinity-newtab-extension",
+  "version": "1.1.0",
+  "description": "一个功能丰富、界面精美的 Chrome 新标签页扩展，让你的每一次打开新标签都成为愉悦的体验。",
+  "main": "script.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node tests/run-tests.js",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kekincai/infinity-newtab-extension.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/kekincai/infinity-newtab-extension/issues"
+  },
+  "homepage": "https://github.com/kekincai/infinity-newtab-extension#readme",
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "^1.62.0"
+  }
+}

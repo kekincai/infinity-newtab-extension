@@ -621,8 +621,9 @@ label,
 
 .backup-toast {
     position: fixed;
-    right: 20px;
+    right: auto;
     bottom: 20px;
+    left: 20px;
     background: rgba(255, 255, 255, 0.96);
     border: 1px solid rgba(255, 122, 195, 0.25);
     border-radius: 16px;
@@ -633,6 +634,14 @@ label,
     flex-direction: column;
     gap: 0.75rem;
     animation: fadeInUp 0.4s ease;
+}
+
+@media (max-width: 768px) {
+    .backup-toast {
+        right: 16px;
+        bottom: 110px;
+        left: 16px;
+    }
 }
 
 .backup-text {

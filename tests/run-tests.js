@@ -34,7 +34,7 @@ const defaults = {
         clockFormat: '24h',
         dateFormat: 'long',
         enhancedAnimations: true,
-        theme: 'dark'
+        theme: 'light'
     }
 };
 
@@ -106,7 +106,7 @@ const unsafe = importer.sanitizeImportedData({
 assert.equal(unsafe.bookmarks.length, 0);
 assert.equal(unsafe.settings.wallpaper.type, 'gradient');
 assert.equal(unsafe.settings.wallpaper.value, '');
-assert.equal(unsafe.settings.appearance.theme, 'dark');
+assert.equal(unsafe.settings.appearance.theme, 'light');
 assert.equal('unknownKey' in unsafe, false);
 
 const WallpaperManager = loadClass('modules/wallpaper.js', 'WallpaperManager');

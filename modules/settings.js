@@ -22,7 +22,7 @@ const DEFAULT_SETTINGS = {
         clockFormat: '24h', // '12h' or '24h'
         dateFormat: 'long', // 'long' or 'short'
         enhancedAnimations: true,
-        theme: 'dark'
+        theme: 'light'
     }
 };
 
