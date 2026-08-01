@@ -197,7 +197,7 @@ function paneHeader(title: string, description: string): string {
 }
 
 function toggle(name: string, label: string, checked: boolean, description = ''): string {
-    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ''}</span><input type="checkbox" data-toggle="${name}" ${checked ? 'checked' : ''}><i aria-hidden="true"></i></label>`;
+    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ''}</span><liquid-toggle><input type="checkbox" data-toggle="${name}" ${checked ? 'checked' : ''}><span class="liquid-toggle-track" aria-hidden="true"><span class="liquid-toggle-thumb"></span></span></liquid-toggle></label>`;
 }
 
 function hdrDescription(): string {
@@ -210,7 +210,7 @@ function hdrDescription(): string {
 }
 
 function range(name: string, label: string, value: number, min: number, max: number, unit: string): string {
-    return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}"></label>`;
+    return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}"></liquid-range></label>`;
 }
 
 function showError(error: unknown): void {

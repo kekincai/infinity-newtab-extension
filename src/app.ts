@@ -6,6 +6,7 @@ import { BookmarkDialog } from './components/bookmark-dialog';
 import { BookmarkLaunchpad } from './components/bookmark-launchpad';
 import { DashboardHeader } from './components/dashboard-header';
 import { LiquidGlassSystem } from './components/liquid-glass';
+import { LiquidRange, LiquidToggle } from './components/liquid-controls';
 import { RecentSites } from './components/recent-sites';
 import { SearchCommand } from './components/search-command';
 import { SettingsDrawer } from './components/settings-drawer';
@@ -95,6 +96,8 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 const elements: Array<[string, CustomElementConstructor]> = [
     ['liquid-glass-system', LiquidGlassSystem],
+    ['liquid-range', LiquidRange],
+    ['liquid-toggle', LiquidToggle],
     ['wallpaper-surface', WallpaperSurface],
     ['dashboard-header', DashboardHeader],
     ['search-command', SearchCommand],

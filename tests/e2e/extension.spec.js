@@ -157,12 +157,12 @@ async function inspectArticleFilter(page, locator) {
     ]);
     expect(info.xChannel).toBe('R');
     expect(info.yChannel).toBe('G');
-    expect(Number(info.blur)).toBeCloseTo(0.2, 2);
-    expect(Number(info.saturation)).toBeCloseTo(5, 2);
-    expect(Number(info.specularOpacity)).toBeCloseTo(0.42, 2);
+    expect(Number(info.blur)).toBeCloseTo(0, 2);
+    expect(Number(info.saturation)).toBeCloseTo(9, 2);
+    expect(Number(info.specularOpacity)).toBeCloseTo(0.5, 2);
     expect(info.maximum).toBeGreaterThan(30);
-    expect(info.scales[0]).toBe(26);
-    expect(info.scales[1] / info.maximum).toBeCloseTo(0.92, 2);
+    expect(info.scales[0]).toBe(24);
+    expect(info.scales[1] / info.maximum).toBeCloseTo(1, 2);
     return info;
 }
 
@@ -385,6 +385,14 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     await page.locator('input[data-toggle="showStatus"]').uncheck();
     await expect(page.locator('.status-grid')).toBeHidden();
     await page.locator('[data-tab="appearance"]').click();
+    await expect(page.locator('liquid-toggle')).toHaveCount(3);
+    await expect(page.locator('.liquid-toggle-thumb[data-liquid-profile="lip"]')).toHaveCount(3);
+    const toggleDisplacement = page.locator('liquid-toggle').first().locator('feDisplacementMap');
+    await expect(toggleDisplacement).toHaveAttribute('scale', String(55.65161904498752 * 0.4));
+    await page.locator('input[data-toggle="hdrHighlights"]').dispatchEvent('pointerdown');
+    await expect(page.locator('liquid-toggle').nth(1)).toHaveClass(/is-active/);
+    await expect(page.locator('liquid-toggle').nth(1).locator('feDisplacementMap')).toHaveAttribute('scale', String(55.65161904498752 * 0.9));
+    await page.locator('input[data-toggle="hdrHighlights"]').dispatchEvent('pointerup');
     await expect(page.locator('input[data-toggle="hdrHighlights"]')).toBeChecked();
     await page.locator('input[data-toggle="hdrHighlights"]').uncheck();
     await expect(page.locator('body')).not.toHaveClass(/hdr-highlights/);
@@ -393,6 +401,15 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     await page.locator('input[data-toggle="darkText"]').uncheck();
     await expect(page.locator('body')).toHaveClass(/theme-dark/);
     await page.locator('[data-tab="wallpaper"]').click();
+    await expect(page.locator('liquid-range')).toHaveCount(2);
+    await expect(page.locator('.liquid-range-thumb[data-liquid-profile="convex"]')).toHaveCount(2);
+    const overlayRange = page.locator('input[name="overlay"]');
+    await overlayRange.fill('62');
+    await expect(page.locator('liquid-range').nth(1)).toHaveCSS('--liquid-progress', '77.5%');
+    await overlayRange.dispatchEvent('pointerdown');
+    await expect(page.locator('liquid-range').nth(1)).toHaveClass(/is-active/);
+    await expect(page.locator('liquid-range').nth(1).locator('feDisplacementMap')).toHaveAttribute('scale', String(83.88118841653394 * 0.9));
+    await overlayRange.dispatchEvent('pointerup');
     await page.locator('.upload-wallpaper input').setInputFiles({
         name: 'wallpaper.png',
         mimeType: 'image/png',

@@ -42,16 +42,24 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let inside = 1.0 - smoothstep(0.0, 2.0, sdf);
     let rim = exp(-abs(sdf) * 0.58) * inside;
 
-    let keyLight = pow(max(0.0, 1.0 - distance(uv, vec2f(0.18, 0.13)) / 0.72), 4.0);
-    let diagonal = pow(max(0.0, 1.0 - abs(uv.x + uv.y - 0.46) / 0.2), 4.0);
-    let lowerGlow = pow(max(0.0, 1.0 - distance(uv, vec2f(0.82, 0.88)) / 0.56), 5.0);
-    let motionGain = 1.0 + glass.bridge * 0.5;
+    let gradient = vec2f(dpdx(sdf), dpdy(sdf));
+    let normal = gradient / max(length(gradient), 0.0001);
+    let light = normalize(vec2f(0.5, -0.8660254));
+    let tangent = vec2f(-light.y, light.x);
+    let facing = abs(dot(normal, light));
+    let specular = pow(facing, 3.2);
+    let dispersion = dot(normal, tangent);
+    let cyanEdge = pow(max(dispersion, 0.0), 2.4);
+    let pinkEdge = pow(max(-dispersion, 0.0), 2.4);
+    let innerCaustic = exp(-abs(sdf + 4.2) * 0.42) * inside;
+    let motionGain = 1.0 + glass.bridge * 0.42;
 
-    let whiteSpecular = vec3f(3.4, 3.4, 3.4) * rim * (0.24 + keyLight * 1.18);
-    let skyDispersion = vec3f(0.22, 1.15, 2.75) * rim * diagonal * 0.72;
-    let pinkDispersion = vec3f(2.25, 0.28, 0.92) * rim * lowerGlow * 0.48;
-    let radiance = (whiteSpecular + skyDispersion + pinkDispersion) * motionGain;
-    let alpha = clamp(rim * (0.28 + keyLight * 0.66 + diagonal * 0.2), 0.0, 0.96);
+    let whiteSpecular = vec3f(3.25) * rim * (0.16 + specular * 1.12);
+    let skyDispersion = vec3f(0.16, 1.05, 2.8) * rim * cyanEdge * 0.52;
+    let pinkDispersion = vec3f(2.35, 0.22, 0.82) * rim * pinkEdge * 0.4;
+    let caustic = vec3f(0.52, 0.82, 1.35) * innerCaustic * (0.08 + glass.bridge * 0.12);
+    let radiance = (whiteSpecular + skyDispersion + pinkDispersion + caustic) * motionGain;
+    let alpha = clamp(rim * (0.2 + specular * 0.7 + (cyanEdge + pinkEdge) * 0.12) + innerCaustic * 0.08, 0.0, 0.96);
 
     return vec4f(radiance * alpha, alpha);
 }`;

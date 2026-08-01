@@ -1168,6 +1168,10 @@
           }
           try {
             const battery = await navigator.getBattery();
+            if (!Number.isFinite(battery.level)) {
+              chip.textContent = "\u7535\u6C60: \u4E0D\u53EF\u7528";
+              return;
+            }
             chip.textContent = `\u7535\u6C60: ${Math.round(battery.level * 100)}%${battery.charging ? " \u26A1" : ""}`;
           } catch {
             chip.textContent = "\u7535\u6C60: \u4E0D\u53EF\u7528";
@@ -1184,6 +1188,12 @@
   }
   function convexSquircle(value) {
     return Math.pow(1 - Math.pow(1 - value, 4), 1 / 4);
+  }
+  function lipSquircle(value) {
+    const convex = convexSquircle(value);
+    const concave = 1 - convex;
+    const blend = smootherstep(value);
+    return convex * (1 - blend) + concave * blend;
   }
   function precalculateDisplacements(distanceToBackdrop = DISTANCE_TO_BACKDROP, glassThickness = GLASS_THICKNESS, surface = convexSquircle, refractiveIndex = REFRACTIVE_INDEX, samples = RADIAL_SAMPLE_COUNT) {
     const ratio = 1 / refractiveIndex;
@@ -1208,11 +1218,12 @@
       return refracted[0] * (depth / refracted[1]);
     });
   }
-  function createOpticalMaps(shape) {
+  function createOpticalMaps(shape, profile = "convex") {
     const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
     const radius = clamp(shape.radius, 2, Math.min(shape.width, shape.height) / 2);
     const bezelWidth = Math.max(2, radius * 0.75);
-    const displacements = precalculateDisplacements();
+    const surface = profile === "lip" ? lipSquircle : convexSquircle;
+    const displacements = precalculateDisplacements(DISTANCE_TO_BACKDROP, GLASS_THICKNESS, surface);
     const maximumDisplacement = Math.max(...displacements.map(Math.abs));
     return {
       magnifying: imageDataUrl(createMagnifyingMap(
@@ -1353,6 +1364,10 @@
     const progress = clamp((value - start) / (end - start), 0, 1);
     return progress * progress * (3 - 2 * progress);
   }
+  function smootherstep(value) {
+    const progress = clamp(value, 0, 1);
+    return progress ** 3 * (progress * (progress * 6 - 15) + 10);
+  }
   var REFRACTIVE_INDEX, RADIAL_SAMPLE_COUNT, DISTANCE_TO_BACKDROP, GLASS_THICKNESS, SPECULAR_ANGLE;
   var init_liquid_optics = __esm({
     "src/components/liquid-optics.ts"() {
@@ -1405,16 +1420,24 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let inside = 1.0 - smoothstep(0.0, 2.0, sdf);
     let rim = exp(-abs(sdf) * 0.58) * inside;
 
-    let keyLight = pow(max(0.0, 1.0 - distance(uv, vec2f(0.18, 0.13)) / 0.72), 4.0);
-    let diagonal = pow(max(0.0, 1.0 - abs(uv.x + uv.y - 0.46) / 0.2), 4.0);
-    let lowerGlow = pow(max(0.0, 1.0 - distance(uv, vec2f(0.82, 0.88)) / 0.56), 5.0);
-    let motionGain = 1.0 + glass.bridge * 0.5;
+    let gradient = vec2f(dpdx(sdf), dpdy(sdf));
+    let normal = gradient / max(length(gradient), 0.0001);
+    let light = normalize(vec2f(0.5, -0.8660254));
+    let tangent = vec2f(-light.y, light.x);
+    let facing = abs(dot(normal, light));
+    let specular = pow(facing, 3.2);
+    let dispersion = dot(normal, tangent);
+    let cyanEdge = pow(max(dispersion, 0.0), 2.4);
+    let pinkEdge = pow(max(-dispersion, 0.0), 2.4);
+    let innerCaustic = exp(-abs(sdf + 4.2) * 0.42) * inside;
+    let motionGain = 1.0 + glass.bridge * 0.42;
 
-    let whiteSpecular = vec3f(3.4, 3.4, 3.4) * rim * (0.24 + keyLight * 1.18);
-    let skyDispersion = vec3f(0.22, 1.15, 2.75) * rim * diagonal * 0.72;
-    let pinkDispersion = vec3f(2.25, 0.28, 0.92) * rim * lowerGlow * 0.48;
-    let radiance = (whiteSpecular + skyDispersion + pinkDispersion) * motionGain;
-    let alpha = clamp(rim * (0.28 + keyLight * 0.66 + diagonal * 0.2), 0.0, 0.96);
+    let whiteSpecular = vec3f(3.25) * rim * (0.16 + specular * 1.12);
+    let skyDispersion = vec3f(0.16, 1.05, 2.8) * rim * cyanEdge * 0.52;
+    let pinkDispersion = vec3f(2.35, 0.22, 0.82) * rim * pinkEdge * 0.4;
+    let caustic = vec3f(0.52, 0.82, 1.35) * innerCaustic * (0.08 + glass.bridge * 0.12);
+    let radiance = (whiteSpecular + skyDispersion + pinkDispersion + caustic) * motionGain;
+    let alpha = clamp(rim * (0.2 + specular * 0.7 + (cyanEdge + pinkEdge) * 0.12) + innerCaustic * 0.08, 0.0, 0.96);
 
     return vec4f(radiance * alpha, alpha);
 }`;
@@ -1667,8 +1690,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       ITEM_SELECTOR = "[data-liquid-item]";
       LENS_PADDING = 8;
       GROUP_MARGIN = 20;
-      MAGNIFICATION_SCALE = 26;
-      REFRACTION_LEVEL = 0.92;
+      MAGNIFICATION_SCALE = 24;
+      REFRACTION_LEVEL = 1;
       MAP_CACHE = /* @__PURE__ */ new Map();
       MAP_READY_CACHE = /* @__PURE__ */ new Map();
       nextFilterId = 0;
@@ -1839,13 +1862,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             <filter id="${id}" color-interpolation-filters="sRGB">
                 <feImage href="${maps.magnifying}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="magnifying_displacement_map" data-optical-map="magnifying"></feImage>
                 <feDisplacementMap in="SourceGraphic" in2="magnifying_displacement_map" scale="${MAGNIFICATION_SCALE}" xChannelSelector="R" yChannelSelector="G" result="magnified_source"></feDisplacementMap>
-                <feGaussianBlur in="magnified_source" stdDeviation="0.2" result="blurred_source"></feGaussianBlur>
+                <feGaussianBlur in="magnified_source" stdDeviation="0" result="blurred_source"></feGaussianBlur>
                 <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="displacement_map" data-optical-map="displacement"></feImage>
                 <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${maps.maximumDisplacement * REFRACTION_LEVEL}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
-                <feColorMatrix in="displaced" type="saturate" values="5" result="displaced_saturated"></feColorMatrix>
+                <feColorMatrix in="displaced" type="saturate" values="9" result="displaced_saturated"></feColorMatrix>
                 <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="specular_layer" data-optical-map="specular"></feImage>
                 <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
-                <feComponentTransfer in="specular_layer" result="specular_faded"><feFuncA type="linear" slope="0.42"></feFuncA></feComponentTransfer>
+                <feComponentTransfer in="specular_layer" result="specular_faded"><feFuncA type="linear" slope="0.5"></feFuncA></feComponentTransfer>
                 <feBlend in="specular_saturated" in2="displaced" mode="normal" result="withSaturation"></feBlend>
                 <feBlend in="specular_faded" in2="withSaturation" mode="normal"></feBlend>
             </filter>`;
@@ -1890,6 +1913,128 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.hdrGlass.hide();
           delete this.lens.dataset.liquidProgress;
           delete this.lens.dataset.liquidTarget;
+        }
+      };
+    }
+  });
+
+  // src/components/liquid-controls.ts
+  var nextControlFilterId, LiquidControlElement, LiquidRange, LiquidToggle;
+  var init_liquid_controls = __esm({
+    "src/components/liquid-controls.ts"() {
+      "use strict";
+      init_liquid_optics();
+      nextControlFilterId = 0;
+      LiquidControlElement = class extends HTMLElement {
+        input = null;
+        filterDefs = null;
+        displacement = null;
+        tuning = null;
+        disconnectedCallback() {
+          this.input?.removeEventListener("input", this.onValueChange);
+          this.input?.removeEventListener("change", this.onValueChange);
+          this.input?.removeEventListener("focus", this.onFocus);
+          this.input?.removeEventListener("blur", this.onBlur);
+          this.input?.removeEventListener("pointerdown", this.onPointerDown);
+          window.removeEventListener("pointerup", this.onPointerUp);
+          window.removeEventListener("pointercancel", this.onPointerUp);
+        }
+        connectInput(selector) {
+          this.input = this.querySelector(selector);
+          this.input?.addEventListener("input", this.onValueChange);
+          this.input?.addEventListener("change", this.onValueChange);
+          this.input?.addEventListener("focus", this.onFocus);
+          this.input?.addEventListener("blur", this.onBlur);
+          this.input?.addEventListener("pointerdown", this.onPointerDown);
+          this.update();
+        }
+        installFilter(target, shape, tuning) {
+          this.filterDefs?.remove();
+          const maps = createOpticalMaps(shape, tuning.profile);
+          const id = `infinity-liquid-control-${++nextControlFilterId}`;
+          const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          svg.classList.add("liquid-control-defs");
+          svg.setAttribute("aria-hidden", "true");
+          svg.innerHTML = `
+            <defs>
+                <filter id="${id}" color-interpolation-filters="sRGB">
+                    <feGaussianBlur in="SourceGraphic" stdDeviation="${tuning.blur}" result="blurred_source"></feGaussianBlur>
+                    <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="displacement_map"></feImage>
+                    <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${tuning.maximumDisplacement * tuning.restingRefraction}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
+                    <feColorMatrix in="displaced" type="saturate" values="${tuning.saturation}" result="displaced_saturated"></feColorMatrix>
+                    <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="specular_layer"></feImage>
+                    <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
+                    <feComponentTransfer in="specular_layer" result="specular_faded"><feFuncA type="linear" slope="${tuning.specularOpacity}"></feFuncA></feComponentTransfer>
+                    <feBlend in="specular_saturated" in2="displaced" mode="normal" result="with_saturation"></feBlend>
+                    <feBlend in="specular_faded" in2="with_saturation" mode="normal"></feBlend>
+                </filter>
+            </defs>`;
+          this.prepend(svg);
+          this.filterDefs = svg;
+          this.displacement = svg.querySelector("feDisplacementMap");
+          this.tuning = tuning;
+          target.style.setProperty("--liquid-control-filter", `url("#${id}")`);
+          target.dataset.liquidProfile = tuning.profile;
+        }
+        onValueChange = () => this.update();
+        onFocus = () => this.classList.add("is-focused");
+        onBlur = () => {
+          this.classList.remove("is-focused");
+          this.setActive(false);
+        };
+        onPointerDown = () => {
+          this.setActive(true);
+          window.addEventListener("pointerup", this.onPointerUp, { once: true });
+          window.addEventListener("pointercancel", this.onPointerUp, { once: true });
+        };
+        onPointerUp = () => this.setActive(false);
+        setActive(active) {
+          this.classList.toggle("is-active", active);
+          if (!this.displacement || !this.tuning) return;
+          const ratio = active ? this.tuning.activeRefraction : this.tuning.restingRefraction;
+          this.displacement.setAttribute("scale", String(this.tuning.maximumDisplacement * ratio));
+        }
+      };
+      LiquidRange = class extends LiquidControlElement {
+        connectedCallback() {
+          this.connectInput('input[type="range"]');
+          const thumb = this.querySelector(".liquid-range-thumb");
+          if (thumb) this.installFilter(thumb, { width: 90, height: 60, radius: 30 }, {
+            profile: "convex",
+            blur: 0,
+            maximumDisplacement: 83.88118841653394,
+            restingRefraction: 0.4,
+            activeRefraction: 0.9,
+            saturation: 7,
+            specularOpacity: 0.4
+          });
+        }
+        update() {
+          if (!this.input) return;
+          const minimum = Number(this.input.min) || 0;
+          const maximum = Number(this.input.max) || 100;
+          const progress = maximum === minimum ? 0 : (Number(this.input.value) - minimum) / (maximum - minimum);
+          const clamped = Math.max(0, Math.min(1, progress));
+          this.style.setProperty("--liquid-progress", `${clamped * 100}%`);
+          this.style.setProperty("--liquid-thumb-left", `calc(${clamped * 100}% - ${clamped * 54}px - 18px)`);
+        }
+      };
+      LiquidToggle = class extends LiquidControlElement {
+        connectedCallback() {
+          this.connectInput('input[type="checkbox"]');
+          const thumb = this.querySelector(".liquid-toggle-thumb");
+          if (thumb) this.installFilter(thumb, { width: 146, height: 92, radius: 46 }, {
+            profile: "lip",
+            blur: 0.2,
+            maximumDisplacement: 55.65161904498752,
+            restingRefraction: 0.4,
+            activeRefraction: 0.9,
+            saturation: 6,
+            specularOpacity: 0.5
+          });
+        }
+        update() {
+          this.classList.toggle("is-checked", Boolean(this.input?.checked));
         }
       };
     }
@@ -2056,7 +2201,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     return `<header class="settings-pane-header"><h3>${title}</h3><p>${description}</p></header>`;
   }
   function toggle(name, label, checked, description = "") {
-    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ""}</span><input type="checkbox" data-toggle="${name}" ${checked ? "checked" : ""}><i aria-hidden="true"></i></label>`;
+    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ""}</span><liquid-toggle><input type="checkbox" data-toggle="${name}" ${checked ? "checked" : ""}><span class="liquid-toggle-track" aria-hidden="true"><span class="liquid-toggle-thumb"></span></span></liquid-toggle></label>`;
   }
   function hdrDescription() {
     const hdrDisplay = window.matchMedia("(dynamic-range: high)").matches && CSS.supports("dynamic-range-limit", "no-limit");
@@ -2064,7 +2209,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     return "gpu" in navigator ? "HDR \u5A92\u4F53\u4E0E WebGPU \u73BB\u7483\u9AD8\u5149\u5747\u5DF2\u542F\u7528" : "HDR \u5A92\u4F53\u5DF2\u542F\u7528\uFF0C\u5F53\u524D\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u52A8\u6001 HDR \u9AD8\u5149";
   }
   function range(name, label, value, min, max, unit) {
-    return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}"></label>`;
+    return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}"></liquid-range></label>`;
   }
   function showError2(error) {
     alert(error instanceof Error ? error.message : "\u64CD\u4F5C\u5931\u8D25");
@@ -2339,6 +2484,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_bookmark_launchpad();
       init_dashboard_header();
       init_liquid_glass();
+      init_liquid_controls();
       init_recent_sites();
       init_search_command();
       init_settings_drawer();
@@ -2417,6 +2563,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       }
       var elements = [
         ["liquid-glass-system", LiquidGlassSystem],
+        ["liquid-range", LiquidRange],
+        ["liquid-toggle", LiquidToggle],
         ["wallpaper-surface", WallpaperSurface],
         ["dashboard-header", DashboardHeader],
         ["search-command", SearchCommand],

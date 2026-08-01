@@ -99,6 +99,10 @@ export class DashboardHeader extends StoreElement {
         }
         try {
             const battery = await navigator.getBattery();
+            if (!Number.isFinite(battery.level)) {
+                chip.textContent = '电池: 不可用';
+                return;
+            }
             chip.textContent = `电池: ${Math.round(battery.level * 100)}%${battery.charging ? ' ⚡' : ''}`;
         } catch {
             chip.textContent = '电池: 不可用';

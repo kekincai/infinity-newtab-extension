@@ -12,8 +12,8 @@ type Point = { x: number; y: number };
 const ITEM_SELECTOR = '[data-liquid-item]';
 const LENS_PADDING = 8;
 const GROUP_MARGIN = 20;
-const MAGNIFICATION_SCALE = 26;
-const REFRACTION_LEVEL = 0.92;
+const MAGNIFICATION_SCALE = 24;
+const REFRACTION_LEVEL = 1;
 const MAP_CACHE = new Map<string, OpticalMaps>();
 const MAP_READY_CACHE = new Map<string, Promise<void>>();
 let nextFilterId = 0;
@@ -204,13 +204,13 @@ export class LiquidGlassSystem extends HTMLElement {
             <filter id="${id}" color-interpolation-filters="sRGB">
                 <feImage href="${maps.magnifying}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="magnifying_displacement_map" data-optical-map="magnifying"></feImage>
                 <feDisplacementMap in="SourceGraphic" in2="magnifying_displacement_map" scale="${MAGNIFICATION_SCALE}" xChannelSelector="R" yChannelSelector="G" result="magnified_source"></feDisplacementMap>
-                <feGaussianBlur in="magnified_source" stdDeviation="0.2" result="blurred_source"></feGaussianBlur>
+                <feGaussianBlur in="magnified_source" stdDeviation="0" result="blurred_source"></feGaussianBlur>
                 <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="displacement_map" data-optical-map="displacement"></feImage>
                 <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${maps.maximumDisplacement * REFRACTION_LEVEL}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
-                <feColorMatrix in="displaced" type="saturate" values="5" result="displaced_saturated"></feColorMatrix>
+                <feColorMatrix in="displaced" type="saturate" values="9" result="displaced_saturated"></feColorMatrix>
                 <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="specular_layer" data-optical-map="specular"></feImage>
                 <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
-                <feComponentTransfer in="specular_layer" result="specular_faded"><feFuncA type="linear" slope="0.42"></feFuncA></feComponentTransfer>
+                <feComponentTransfer in="specular_layer" result="specular_faded"><feFuncA type="linear" slope="0.5"></feFuncA></feComponentTransfer>
                 <feBlend in="specular_saturated" in2="displaced" mode="normal" result="withSaturation"></feBlend>
                 <feBlend in="specular_faded" in2="withSaturation" mode="normal"></feBlend>
             </filter>`;

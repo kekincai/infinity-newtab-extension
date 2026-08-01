@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { sanitizeImportedData, sanitizeSettings } from '../src/core/backup';
 import { rankSites } from '../src/core/history';
 import { AppStore } from '../src/core/store';
-import { convexSquircle, precalculateDisplacements } from '../src/components/liquid-optics';
+import { convexSquircle, lipSquircle, precalculateDisplacements } from '../src/components/liquid-optics';
 
 const syncData: Record<string, unknown> = {};
 const localData: Record<string, unknown> = {};
@@ -91,6 +91,12 @@ assert.ok(opticalSamples.every(Number.isFinite));
 assert.ok(Math.abs(opticalSamples.at(-1) ?? 0) < Math.abs(opticalSamples[0]), '位移应从玻璃边缘向平面区域平滑衰减');
 assert.ok(Math.max(...opticalSamples.map(Math.abs)) > 70, '凸面 squircle 必须产生可见的物理位移');
 assert.ok(convexSquircle(0.5) > 0.9, '凸面 squircle 应保持平滑的内侧曲率');
+
+const lipSamples = precalculateDisplacements(55, 63, lipSquircle, 1.5, 128);
+assert.ok(lipSamples.every(Number.isFinite));
+assert.ok(Math.max(...lipSamples) > 50 && Math.min(...lipSamples) < -30, 'lip 表面必须同时产生凸缘和凹心折射');
+assert.equal(lipSquircle(0), 0);
+assert.equal(lipSquircle(1), 0);
 
 async function testTransactions(): Promise<void> {
     Object.assign(syncData, {

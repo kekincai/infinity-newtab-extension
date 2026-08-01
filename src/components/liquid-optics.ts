@@ -11,6 +11,8 @@ export type OpticalMaps = {
     maximumDisplacement: number;
 };
 
+export type OpticalProfile = 'convex' | 'lip';
+
 const REFRACTIVE_INDEX = 1.5;
 const RADIAL_SAMPLE_COUNT = 128;
 const DISTANCE_TO_BACKDROP = 55;
@@ -24,6 +26,13 @@ export function opticalShapeKey(shape: OpticalShape): string {
 
 export function convexSquircle(value: number): number {
     return Math.pow(1 - Math.pow(1 - value, 4), 1 / 4);
+}
+
+export function lipSquircle(value: number): number {
+    const convex = convexSquircle(value);
+    const concave = 1 - convex;
+    const blend = smootherstep(value);
+    return convex * (1 - blend) + concave * blend;
 }
 
 /** Port of the article's Snell-law radius precomputation. */
@@ -58,11 +67,12 @@ export function precalculateDisplacements(
     });
 }
 
-export function createOpticalMaps(shape: OpticalShape): OpticalMaps {
+export function createOpticalMaps(shape: OpticalShape, profile: OpticalProfile = 'convex'): OpticalMaps {
     const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
     const radius = clamp(shape.radius, 2, Math.min(shape.width, shape.height) / 2);
     const bezelWidth = Math.max(2, radius * 0.75);
-    const displacements = precalculateDisplacements();
+    const surface = profile === 'lip' ? lipSquircle : convexSquircle;
+    const displacements = precalculateDisplacements(DISTANCE_TO_BACKDROP, GLASS_THICKNESS, surface);
     const maximumDisplacement = Math.max(...displacements.map(Math.abs));
 
     return {
@@ -238,4 +248,9 @@ function clamp(value: number, minimum: number, maximum: number): number {
 function smoothstep(start: number, end: number, value: number): number {
     const progress = clamp((value - start) / (end - start), 0, 1);
     return progress * progress * (3 - 2 * progress);
+}
+
+function smootherstep(value: number): number {
+    const progress = clamp(value, 0, 1);
+    return progress ** 3 * (progress * (progress * 6 - 15) + 10);
 }
