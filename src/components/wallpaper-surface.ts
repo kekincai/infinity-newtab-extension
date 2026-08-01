@@ -3,6 +3,7 @@ import { appStore } from '../core/store';
 import { StoreElement } from './base';
 
 export class WallpaperSurface extends StoreElement {
+    protected readonly observedChanges = ['settings.wallpaper'] as const;
     private objectUrl = '';
     private renderToken = 0;
 

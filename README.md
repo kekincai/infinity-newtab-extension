@@ -1,6 +1,20 @@
-# Infinity New Tab
+<p align="center"><img src="icons/icon-128.png" width="112" height="112" alt="Infinity New Tab"></p>
 
-一个面向 Chrome 桌面端的二次元启动台新标签页。界面、状态、书签、设置与 Liquid Glass 光学层均由 TypeScript 原生 Web Components 实现。
+<h1 align="center">Infinity New Tab</h1>
+
+<p align="center">为 Chrome 桌面端设计的二次元启动台：书签、状态、常访问、动态壁纸与真实折射 Liquid Glass。</p>
+
+<p align="center"><strong>TypeScript · 原生 Web Components · SVG Refraction · WebGPU HDR</strong></p>
+
+Infinity New Tab 不依赖前端框架。页面组件、数据层、光学位移图和 HDR 镜面层均在扩展内部运行，旧版备份可以直接导入。
+
+## 亮点
+
+| 启动台 | 视觉 | 数据 |
+| --- | --- | --- |
+| 书签、文件夹同网格拖放 | 文章同源的 SVG 物理折射 | Chrome 同步存储 |
+| 最近常访问按域名聚合 | WebGPU HDR 镜面高光 | 兼容 1.0 / 2.0 备份 |
+| 媒体、下载与设备状态 | 本地图片和循环视频壁纸 | 危险 URL 清洗与去重 |
 
 ## 功能
 
@@ -18,6 +32,7 @@
 - “设置 → 外观 → HDR 高光”默认开启，并显示当前屏幕是否支持真实 HDR 输出。
 - 在 HDR 屏幕与兼容 Chrome 上，Liquid Glass 叠加一个透明 WebGPU 镜面层，以 `rgba16float` 和 `extended` 色调映射绘制亮度超过 SDR 白色的动态高光；本地 HDR 图片或视频保持原始动态范围。
 - 普通 SDR 壁纸不会被伪装成 HDR；不支持 HDR 的屏幕或浏览器会自动使用原有 SDR 配色。
+- 设置页的 lip 开关和 convex 滑块共用同一个 WebGPU HDR 渲染器；悬浮、按下或拖动时，高光会贴合真实玻璃拇指移动，不会为每个控件创建独立 GPU 设备。
 
 ## Liquid Glass
 
@@ -34,6 +49,13 @@ Liquid Glass 按 [Liquid Glass in the Browser: Refraction with CSS and SVG](http
 - 每次稳定落到新组件时，运行时会按镜片实际尺寸生成并缓存中央放大、边缘位移和镜面高光图；移动过程中只更新真实几何，不生成截图或假组件。
 
 实现不保存文章截图或界面贴图；PNG 只作为 SVG 要求的运行时位移/高光数据载体，由算法在浏览器内生成。SVG `backdrop-filter` 按文章说明仅保证 Chromium/Chrome 可用。
+
+## 性能设计
+
+- 设置抽屉只在首次挂载和切换分类时构建 DOM；打开、关闭或保存设置不会重建整张面板。
+- lip 与 convex 光学位移图按曲面、尺寸和像素密度缓存，同类开关与滑块复用同一份运行时图像。
+- 数据变更按 `bookmarks`、`folders`、`settings.appearance`、`settings.wallpaper`、`settings.layout` 等范围分发，修改滑块不会刷新书签、历史记录或系统状态。
+- 首页组件和设置控件复用单一 HDR 画布，交互期间只更新几何与 uniform；不创建截图、克隆 DOM 或逐控件 WebGPU 上下文。
 
 ## 数据导入与导出
 
@@ -60,7 +82,13 @@ Liquid Glass 按 [Liquid Glass in the Browser: Refraction with CSS and SVG](http
 3. 点击“加载已解压的扩展程序”，选择本项目目录。
 4. 已经加载过时，点击扩展卡片上的“重新加载”，再打开新标签页。
 
-当前版本应显示为 `2.4.0`。
+当前版本应显示为 `2.4.1`。
+
+### 运行要求
+
+- Chrome 120 或更高版本。
+- Liquid Glass 的 SVG `backdrop-filter` 以 Chromium 为目标。
+- 真正超过 SDR 白色亮度的高光需要 HDR 显示器、WebGPU 和 Chrome 的 extended tone mapping；其他环境自动回退到 SDR。
 
 ## 项目结构
 
@@ -114,6 +142,14 @@ npm test
 扩展不会把浏览历史发送给第三方图标服务。随机二次元壁纸依赖 `dmoe.cc` 的可用性。
 
 ## 更新日志
+
+### 2.4.1 - 2026-08-01
+
+- 设置页开关与滑块接入共享 WebGPU HDR 镜面层，HDR 高光会跟随真实控件位置、缩放和拖动状态。
+- 设置抽屉改为常驻 DOM；打开、关闭和保存设置不再重建全部 Web Components。
+- 新增 lip / convex 光学图缓存，同类控件不再重复生成高分辨率位移图和镜面图。
+- Store 更新改为按数据范围分发，修改外观或壁纸时不会重绘书签、常访问与系统状态组件。
+- 新增控件 HDR 几何、光学图复用和保存设置后 DOM 保留回归测试。
 
 ### 2.4.0 - 2026-08-01
 

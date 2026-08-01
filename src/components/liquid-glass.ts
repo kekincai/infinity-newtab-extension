@@ -10,6 +10,7 @@ type LensGeometry = OpticalShape & { x: number; y: number };
 type Point = { x: number; y: number };
 
 const ITEM_SELECTOR = '[data-liquid-item]';
+const CONTROL_SELECTOR = 'liquid-toggle, liquid-range';
 const LENS_PADDING = 8;
 const GROUP_MARGIN = 20;
 const MAGNIFICATION_SCALE = 24;
@@ -29,11 +30,14 @@ export class LiquidGlassSystem extends HTMLElement {
     private readonly hdrGlass = new HdrGlassRenderer();
     private activeItem: HTMLElement | null = null;
     private activeGroup: HTMLElement | null = null;
+    private activeControl: HTMLElement | null = null;
     private filter: SVGFilterElement | null = null;
     private filterImages: SVGFEImageElement[] = [];
     private filterVersion = 0;
     private mapShapeKey = '';
     private hideTimer = 0;
+    private controlFrame = 0;
+    private controlTrackUntil = 0;
 
     connectedCallback(): void {
         this.lens.className = 'liquid-glass-lens';
@@ -46,6 +50,7 @@ export class LiquidGlassSystem extends HTMLElement {
         document.addEventListener('pointerover', this.onPointerOver, true);
         document.addEventListener('pointermove', this.onPointerMove, { passive: true, capture: true });
         document.addEventListener('pointerdown', this.onPointerDown, true);
+        document.addEventListener('input', this.onControlInput, true);
         document.addEventListener('focusin', this.onFocusIn, true);
         document.addEventListener('focusout', this.onFocusOut, true);
         window.addEventListener('resize', this.onViewportChange);
@@ -56,20 +61,34 @@ export class LiquidGlassSystem extends HTMLElement {
         document.removeEventListener('pointerover', this.onPointerOver, true);
         document.removeEventListener('pointermove', this.onPointerMove, true);
         document.removeEventListener('pointerdown', this.onPointerDown, true);
+        document.removeEventListener('input', this.onControlInput, true);
         document.removeEventListener('focusin', this.onFocusIn, true);
         document.removeEventListener('focusout', this.onFocusOut, true);
         window.removeEventListener('resize', this.onViewportChange);
         window.removeEventListener('scroll', this.onViewportChange, true);
         window.clearTimeout(this.hideTimer);
+        cancelAnimationFrame(this.controlFrame);
         this.hdrGlass.disconnect();
     }
 
     private readonly onPointerOver = (event: PointerEvent): void => {
+        const control = findControl(event.target);
+        if (control) {
+            this.activateControl(control);
+            return;
+        }
         const item = findItem(event.target);
         if (item) this.activate(item);
     };
 
     private readonly onPointerMove = (event: PointerEvent): void => {
+        const control = findControl(event.target);
+        if (control) {
+            if (control !== this.activeControl) this.activateControl(control);
+            else this.renderControl(control);
+            return;
+        }
+        if (this.activeControl) this.deactivateControl();
         const item = findItem(event.target);
         if (item) {
             if (item !== this.activeItem) this.activate(item);
@@ -86,6 +105,11 @@ export class LiquidGlassSystem extends HTMLElement {
     };
 
     private readonly onPointerDown = (event: PointerEvent): void => {
+        const control = findControl(event.target);
+        if (control) {
+            this.activateControl(control, 320);
+            return;
+        }
         const item = findItem(event.target);
         if (!item) return;
         this.activate(item);
@@ -97,27 +121,84 @@ export class LiquidGlassSystem extends HTMLElement {
     private readonly releasePress = (): void => this.lens.classList.remove('is-pressed');
 
     private readonly onFocusIn = (event: FocusEvent): void => {
+        const control = findControl(event.target);
+        if (control) {
+            this.activateControl(control);
+            return;
+        }
         const item = findItem(event.target);
         if (item) this.activate(item);
     };
 
     private readonly onFocusOut = (event: FocusEvent): void => {
+        if (this.activeControl && !findControl(event.relatedTarget)) {
+            this.deactivateControl();
+            return;
+        }
         if (!findItem(event.relatedTarget)) this.scheduleHide(80);
     };
 
+    private readonly onControlInput = (event: Event): void => {
+        const control = findControl(event.target);
+        if (control && control === this.activeControl) this.trackControl(control, 220);
+    };
+
     private readonly onViewportChange = (): void => {
-        if (this.activeItem?.isConnected) this.render(geometryFor(this.activeItem));
+        if (this.activeControl?.isConnected) this.renderControl(this.activeControl);
+        else if (this.activeItem?.isConnected) this.render(geometryFor(this.activeItem));
         else this.hide();
     };
 
     private activate(item: HTMLElement): void {
         this.cancelHide();
+        this.activeControl = null;
+        this.controlTrackUntil = 0;
+        delete this.hdrGlass.canvas.dataset.hdrTarget;
         this.activeItem = item;
         this.activeGroup = item.parentElement;
         this.lens.dataset.liquidTarget = targetName(item);
         this.lens.classList.add('is-visible');
         this.hdrGlass.show();
         this.render(geometryFor(item));
+    }
+
+    private activateControl(control: HTMLElement, duration = 180): void {
+        this.cancelHide();
+        this.activeItem = null;
+        this.activeGroup = null;
+        this.activeControl = control;
+        this.lens.classList.remove('is-visible', 'is-bridging', 'is-pressed');
+        this.hdrGlass.canvas.dataset.hdrTarget = control.tagName.toLowerCase();
+        this.hdrGlass.show();
+        this.trackControl(control, duration);
+    }
+
+    private deactivateControl(): void {
+        this.activeControl = null;
+        this.controlTrackUntil = 0;
+        cancelAnimationFrame(this.controlFrame);
+        this.controlFrame = 0;
+        delete this.hdrGlass.canvas.dataset.hdrTarget;
+        this.hdrGlass.hide();
+    }
+
+    private trackControl(control: HTMLElement, duration: number): void {
+        this.controlTrackUntil = Math.max(this.controlTrackUntil, performance.now() + duration);
+        this.renderControl(control);
+        if (this.controlFrame) return;
+        const tick = (time: number): void => {
+            this.controlFrame = 0;
+            if (this.activeControl !== control || !control.isConnected) return;
+            this.renderControl(control);
+            if (time < this.controlTrackUntil) this.controlFrame = requestAnimationFrame(tick);
+        };
+        this.controlFrame = requestAnimationFrame(tick);
+    }
+
+    private renderControl(control: HTMLElement): void {
+        const geometry = controlGeometry(control);
+        if (!geometry) return;
+        this.hdrGlass.render(geometry, control.classList.contains('is-active') ? 0.55 : 0.12);
     }
 
     private renderBetween(pointer: Point): void {
@@ -256,11 +337,21 @@ export class LiquidGlassSystem extends HTMLElement {
     private hide(): void {
         this.activeItem = null;
         this.activeGroup = null;
+        this.activeControl = null;
+        this.controlTrackUntil = 0;
+        cancelAnimationFrame(this.controlFrame);
+        this.controlFrame = 0;
         this.lens.classList.remove('is-visible', 'is-bridging', 'is-pressed');
+        delete this.hdrGlass.canvas.dataset.hdrTarget;
         this.hdrGlass.hide();
         delete this.lens.dataset.liquidProgress;
         delete this.lens.dataset.liquidTarget;
     }
+}
+
+function findControl(target: EventTarget | null): HTMLElement | null {
+    const control = target instanceof Element ? target.closest(CONTROL_SELECTOR) : null;
+    return control instanceof HTMLElement && control.getClientRects().length ? control : null;
 }
 
 function findItem(target: EventTarget | null): HTMLElement | null {
@@ -278,6 +369,23 @@ function geometryFor(item: HTMLElement): LensGeometry {
         width: rect.width + padding * 2,
         height: rect.height + padding * 2,
         radius: radius + padding
+    });
+}
+
+function controlGeometry(control: HTMLElement): LensGeometry | null {
+    const surface = control.querySelector<HTMLElement>(
+        control.matches('liquid-range') ? '.liquid-range-thumb' : '.liquid-toggle-thumb'
+    );
+    if (!surface) return null;
+    const rect = surface.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const padding = 2;
+    return normalizeGeometry({
+        x: rect.left - padding,
+        y: rect.top - padding,
+        width: rect.width + padding * 2,
+        height: rect.height + padding * 2,
+        radius: Math.min(rect.width, rect.height) / 2 + padding
     });
 }
 

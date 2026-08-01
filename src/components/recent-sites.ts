@@ -5,6 +5,7 @@ import { escapeHtml, faviconUrl, truncate } from '../core/utils';
 import { StoreElement } from './base';
 
 export class RecentSites extends StoreElement {
+    protected readonly observedChanges = ['settings.layout'] as const;
     private sites: RecentSite[] = [];
     private loading = true;
     private error = '';

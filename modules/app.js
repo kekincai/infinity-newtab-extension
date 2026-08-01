@@ -323,7 +323,7 @@
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
   }
-  var MANAGED_KEYS, AppStore, appStore;
+  var MANAGED_KEYS, ALL_CHANGES, AppStore, appStore;
   var init_store = __esm({
     "src/core/store.ts"() {
       "use strict";
@@ -331,6 +331,15 @@
       init_storage();
       init_utils();
       MANAGED_KEYS = ["bookmarks", "folders", "settings", "recentSearches", "lastBackupPrompt"];
+      ALL_CHANGES = [
+        "bookmarks",
+        "folders",
+        "recentSearches",
+        "lastBackupPrompt",
+        "settings.appearance",
+        "settings.wallpaper",
+        "settings.layout"
+      ];
       AppStore = class extends EventTarget {
         stateValue = initialState();
         initialized = false;
@@ -350,7 +359,7 @@
             lastBackupPrompt: finiteNumber(stored.lastBackupPrompt, 0)
           };
           this.initialized = true;
-          this.emit();
+          this.emit(ALL_CHANGES);
         }
         async updateSettings(section, patch) {
           await this.commit((draft) => {
@@ -358,7 +367,7 @@
               ...draft.settings,
               [section]: { ...draft.settings[section], ...patch }
             });
-          }, ["settings"]);
+          }, ["settings"], [`settings.${section}`]);
         }
         async addFolder(value) {
           const name = cleanText(value, 80);
@@ -463,14 +472,14 @@
           if (staleKeys.length) await storageRemove(staleKeys);
           this.stateValue = next;
           this.initialized = true;
-          this.emit();
+          this.emit(ALL_CHANGES);
         }
         async reset() {
           await storageClear("sync");
           this.stateValue = initialState();
-          this.emit();
+          this.emit(ALL_CHANGES);
         }
-        async commit(mutator, keys) {
+        async commit(mutator, keys, changes = keys) {
           const draft = structuredClone(this.stateValue);
           mutator(draft);
           const values = {};
@@ -479,10 +488,10 @@
           });
           await storageSet(values);
           this.stateValue = draft;
-          this.emit();
+          this.emit(changes);
         }
-        emit() {
-          this.dispatchEvent(new CustomEvent("change", { detail: this.stateValue }));
+        emit(changes) {
+          this.dispatchEvent(new CustomEvent("change", { detail: { state: this.stateValue, changes } }));
         }
       };
       appStore = new AppStore();
@@ -697,13 +706,21 @@
       "use strict";
       init_store();
       StoreElement = class extends HTMLElement {
-        onStoreChange = () => this.render();
+        observedChanges = null;
+        onStoreChange = (event) => {
+          const changes = event.detail?.changes;
+          if (this.observedChanges && changes && !changes.some((change) => this.observedChanges?.includes(change))) return;
+          this.handleStoreChange();
+        };
         connectedCallback() {
           appStore.addEventListener("change", this.onStoreChange);
           this.render();
         }
         disconnectedCallback() {
           appStore.removeEventListener("change", this.onStoreChange);
+        }
+        handleStoreChange() {
+          this.render();
         }
       };
     }
@@ -719,6 +736,7 @@
       init_base();
       REMINDER_INTERVAL = 7 * 24 * 60 * 60 * 1e3;
       BackupToast = class extends StoreElement {
+        observedChanges = ["lastBackupPrompt"];
         dismissed = false;
         render() {
           const due = Date.now() - appStore.state.lastBackupPrompt >= REMINDER_INTERVAL;
@@ -843,6 +861,7 @@
       init_base();
       FOLDER_COLORS = ["#ff92c8", "#80d8ff", "#ffd27d", "#9be7c4", "#b8a6ff"];
       BookmarkLaunchpad = class extends StoreElement {
+        observedChanges = ["bookmarks", "folders", "settings.layout"];
         currentFolder = "\u5168\u90E8";
         draggingId = null;
         render() {
@@ -1080,6 +1099,7 @@
       init_utils();
       init_base();
       DashboardHeader = class extends StoreElement {
+        observedChanges = ["settings.layout"];
         clockTimer = 0;
         statusTimer = 0;
         connectedCallback() {
@@ -1587,6 +1607,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   });
 
   // src/components/liquid-glass.ts
+  function findControl(target) {
+    const control = target instanceof Element ? target.closest(CONTROL_SELECTOR) : null;
+    return control instanceof HTMLElement && control.getClientRects().length ? control : null;
+  }
   function findItem(target) {
     const item = target instanceof Element ? target.closest(ITEM_SELECTOR) : null;
     return item instanceof HTMLElement && item.getClientRects().length ? item : null;
@@ -1601,6 +1625,22 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       width: rect.width + padding * 2,
       height: rect.height + padding * 2,
       radius: radius + padding
+    });
+  }
+  function controlGeometry(control) {
+    const surface = control.querySelector(
+      control.matches("liquid-range") ? ".liquid-range-thumb" : ".liquid-toggle-thumb"
+    );
+    if (!surface) return null;
+    const rect = surface.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const padding = 2;
+    return normalizeGeometry({
+      x: rect.left - padding,
+      y: rect.top - padding,
+      width: rect.width + padding * 2,
+      height: rect.height + padding * 2,
+      radius: Math.min(rect.width, rect.height) / 2 + padding
     });
   }
   function normalizeGeometry(geometry) {
@@ -1681,13 +1721,14 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   function lerp(from, to, progress) {
     return from + (to - from) * progress;
   }
-  var ITEM_SELECTOR, LENS_PADDING, GROUP_MARGIN, MAGNIFICATION_SCALE, REFRACTION_LEVEL, MAP_CACHE, MAP_READY_CACHE, nextFilterId, LiquidGlassSystem;
+  var ITEM_SELECTOR, CONTROL_SELECTOR, LENS_PADDING, GROUP_MARGIN, MAGNIFICATION_SCALE, REFRACTION_LEVEL, MAP_CACHE, MAP_READY_CACHE, nextFilterId, LiquidGlassSystem;
   var init_liquid_glass = __esm({
     "src/components/liquid-glass.ts"() {
       "use strict";
       init_liquid_optics();
       init_hdr_glass();
       ITEM_SELECTOR = "[data-liquid-item]";
+      CONTROL_SELECTOR = "liquid-toggle, liquid-range";
       LENS_PADDING = 8;
       GROUP_MARGIN = 20;
       MAGNIFICATION_SCALE = 24;
@@ -1702,11 +1743,14 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         hdrGlass = new HdrGlassRenderer();
         activeItem = null;
         activeGroup = null;
+        activeControl = null;
         filter = null;
         filterImages = [];
         filterVersion = 0;
         mapShapeKey = "";
         hideTimer = 0;
+        controlFrame = 0;
+        controlTrackUntil = 0;
         connectedCallback() {
           this.lens.className = "liquid-glass-lens";
           this.lens.setAttribute("aria-hidden", "true");
@@ -1718,6 +1762,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           document.addEventListener("pointerover", this.onPointerOver, true);
           document.addEventListener("pointermove", this.onPointerMove, { passive: true, capture: true });
           document.addEventListener("pointerdown", this.onPointerDown, true);
+          document.addEventListener("input", this.onControlInput, true);
           document.addEventListener("focusin", this.onFocusIn, true);
           document.addEventListener("focusout", this.onFocusOut, true);
           window.addEventListener("resize", this.onViewportChange);
@@ -1727,18 +1772,32 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           document.removeEventListener("pointerover", this.onPointerOver, true);
           document.removeEventListener("pointermove", this.onPointerMove, true);
           document.removeEventListener("pointerdown", this.onPointerDown, true);
+          document.removeEventListener("input", this.onControlInput, true);
           document.removeEventListener("focusin", this.onFocusIn, true);
           document.removeEventListener("focusout", this.onFocusOut, true);
           window.removeEventListener("resize", this.onViewportChange);
           window.removeEventListener("scroll", this.onViewportChange, true);
           window.clearTimeout(this.hideTimer);
+          cancelAnimationFrame(this.controlFrame);
           this.hdrGlass.disconnect();
         }
         onPointerOver = (event) => {
+          const control = findControl(event.target);
+          if (control) {
+            this.activateControl(control);
+            return;
+          }
           const item = findItem(event.target);
           if (item) this.activate(item);
         };
         onPointerMove = (event) => {
+          const control = findControl(event.target);
+          if (control) {
+            if (control !== this.activeControl) this.activateControl(control);
+            else this.renderControl(control);
+            return;
+          }
+          if (this.activeControl) this.deactivateControl();
           const item = findItem(event.target);
           if (item) {
             if (item !== this.activeItem) this.activate(item);
@@ -1754,6 +1813,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.renderBetween(point);
         };
         onPointerDown = (event) => {
+          const control = findControl(event.target);
+          if (control) {
+            this.activateControl(control, 320);
+            return;
+          }
           const item = findItem(event.target);
           if (!item) return;
           this.activate(item);
@@ -1763,24 +1827,76 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         };
         releasePress = () => this.lens.classList.remove("is-pressed");
         onFocusIn = (event) => {
+          const control = findControl(event.target);
+          if (control) {
+            this.activateControl(control);
+            return;
+          }
           const item = findItem(event.target);
           if (item) this.activate(item);
         };
         onFocusOut = (event) => {
+          if (this.activeControl && !findControl(event.relatedTarget)) {
+            this.deactivateControl();
+            return;
+          }
           if (!findItem(event.relatedTarget)) this.scheduleHide(80);
         };
+        onControlInput = (event) => {
+          const control = findControl(event.target);
+          if (control && control === this.activeControl) this.trackControl(control, 220);
+        };
         onViewportChange = () => {
-          if (this.activeItem?.isConnected) this.render(geometryFor(this.activeItem));
+          if (this.activeControl?.isConnected) this.renderControl(this.activeControl);
+          else if (this.activeItem?.isConnected) this.render(geometryFor(this.activeItem));
           else this.hide();
         };
         activate(item) {
           this.cancelHide();
+          this.activeControl = null;
+          this.controlTrackUntil = 0;
+          delete this.hdrGlass.canvas.dataset.hdrTarget;
           this.activeItem = item;
           this.activeGroup = item.parentElement;
           this.lens.dataset.liquidTarget = targetName(item);
           this.lens.classList.add("is-visible");
           this.hdrGlass.show();
           this.render(geometryFor(item));
+        }
+        activateControl(control, duration = 180) {
+          this.cancelHide();
+          this.activeItem = null;
+          this.activeGroup = null;
+          this.activeControl = control;
+          this.lens.classList.remove("is-visible", "is-bridging", "is-pressed");
+          this.hdrGlass.canvas.dataset.hdrTarget = control.tagName.toLowerCase();
+          this.hdrGlass.show();
+          this.trackControl(control, duration);
+        }
+        deactivateControl() {
+          this.activeControl = null;
+          this.controlTrackUntil = 0;
+          cancelAnimationFrame(this.controlFrame);
+          this.controlFrame = 0;
+          delete this.hdrGlass.canvas.dataset.hdrTarget;
+          this.hdrGlass.hide();
+        }
+        trackControl(control, duration) {
+          this.controlTrackUntil = Math.max(this.controlTrackUntil, performance.now() + duration);
+          this.renderControl(control);
+          if (this.controlFrame) return;
+          const tick = (time) => {
+            this.controlFrame = 0;
+            if (this.activeControl !== control || !control.isConnected) return;
+            this.renderControl(control);
+            if (time < this.controlTrackUntil) this.controlFrame = requestAnimationFrame(tick);
+          };
+          this.controlFrame = requestAnimationFrame(tick);
+        }
+        renderControl(control) {
+          const geometry = controlGeometry(control);
+          if (!geometry) return;
+          this.hdrGlass.render(geometry, control.classList.contains("is-active") ? 0.55 : 0.12);
         }
         renderBetween(pointer) {
           const source = this.activeItem;
@@ -1909,7 +2025,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         hide() {
           this.activeItem = null;
           this.activeGroup = null;
+          this.activeControl = null;
+          this.controlTrackUntil = 0;
+          cancelAnimationFrame(this.controlFrame);
+          this.controlFrame = 0;
           this.lens.classList.remove("is-visible", "is-bridging", "is-pressed");
+          delete this.hdrGlass.canvas.dataset.hdrTarget;
           this.hdrGlass.hide();
           delete this.lens.dataset.liquidProgress;
           delete this.lens.dataset.liquidTarget;
@@ -1919,12 +2040,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   });
 
   // src/components/liquid-controls.ts
-  var nextControlFilterId, LiquidControlElement, LiquidRange, LiquidToggle;
+  var nextControlFilterId, controlMapCache, LiquidControlElement, LiquidRange, LiquidToggle;
   var init_liquid_controls = __esm({
     "src/components/liquid-controls.ts"() {
       "use strict";
       init_liquid_optics();
       nextControlFilterId = 0;
+      controlMapCache = /* @__PURE__ */ new Map();
       LiquidControlElement = class extends HTMLElement {
         input = null;
         filterDefs = null;
@@ -1950,7 +2072,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         installFilter(target, shape, tuning) {
           this.filterDefs?.remove();
-          const maps = createOpticalMaps(shape, tuning.profile);
+          const cacheKey = `${tuning.profile}:${opticalShapeKey(shape)}`;
+          const maps = controlMapCache.get(cacheKey) ?? createOpticalMaps(shape, tuning.profile);
+          controlMapCache.set(cacheKey, maps);
           const id = `infinity-liquid-control-${++nextControlFilterId}`;
           const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
           svg.classList.add("liquid-control-defs");
@@ -2078,6 +2202,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_utils();
       init_base();
       RecentSites = class extends StoreElement {
+        observedChanges = ["settings.layout"];
         sites = [];
         loading = true;
         error = "";
@@ -2168,6 +2293,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         duckduckgo: { label: "DuckDuckGo", url: "https://duckduckgo.com/?q=" }
       };
       SearchCommand = class extends StoreElement {
+        observedChanges = ["settings.layout", "recentSearches"];
         render() {
           const { layout } = appStore.state.settings;
           const engine = ENGINES[layout.searchEngine];
@@ -2223,15 +2349,19 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_store();
       init_base();
       SettingsDrawer = class extends StoreElement {
+        observedChanges = ["settings.appearance", "settings.wallpaper", "settings.layout"];
         openState = false;
         activeTab = "appearance";
         open() {
           this.openState = true;
-          this.render();
+          this.syncOpenState();
         }
         close() {
           this.openState = false;
-          this.render();
+          this.syncOpenState();
+        }
+        handleStoreChange() {
+          this.syncControls(appStore.state.settings);
         }
         render() {
           const settings = appStore.state.settings;
@@ -2255,6 +2385,45 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             <button class="settings-scrim ${this.openState ? "is-open" : ""}" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E"></button>
         `;
           this.bind();
+          this.syncOpenState();
+        }
+        syncOpenState() {
+          const drawer = this.querySelector(".settings-drawer");
+          const scrim = this.querySelector(".settings-scrim");
+          drawer?.classList.toggle("is-open", this.openState);
+          drawer?.setAttribute("aria-hidden", String(!this.openState));
+          drawer?.toggleAttribute("inert", !this.openState);
+          scrim?.classList.toggle("is-open", this.openState);
+        }
+        syncControls(settings) {
+          const clockFormat = this.querySelector('[data-setting="clockFormat"]');
+          const searchEngine = this.querySelector('[data-setting="searchEngine"]');
+          if (clockFormat) clockFormat.value = settings.appearance.clockFormat;
+          if (searchEngine) searchEngine.value = settings.layout.searchEngine;
+          const toggles = {
+            enhancedAnimations: settings.appearance.enhancedAnimations,
+            hdrHighlights: settings.appearance.hdrHighlights,
+            darkText: settings.appearance.theme === "light",
+            showClock: settings.layout.showClock,
+            showSearch: settings.layout.showSearch,
+            showBookmarks: settings.layout.showBookmarks,
+            showStatus: settings.layout.showStatus,
+            showRecent: settings.layout.showRecent
+          };
+          this.querySelectorAll("input[data-toggle]").forEach((input) => {
+            input.checked = toggles[input.dataset.toggle ?? ""] ?? input.checked;
+            input.closest("liquid-toggle")?.classList.toggle("is-checked", input.checked);
+          });
+          const ranges = {
+            blur: settings.wallpaper.blur,
+            overlay: settings.wallpaper.overlay
+          };
+          this.querySelectorAll('input[type="range"]').forEach((input) => {
+            const value = ranges[input.name];
+            if (!Number.isFinite(value)) return;
+            input.value = String(value);
+            input.dispatchEvent(new Event("input", { bubbles: false }));
+          });
         }
         paneTemplate(settings) {
           if (this.activeTab === "appearance") return `
@@ -2421,6 +2590,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_store();
       init_base();
       WallpaperSurface = class extends StoreElement {
+        observedChanges = ["settings.wallpaper"];
         objectUrl = "";
         renderToken = 0;
         disconnectedCallback() {
@@ -2505,12 +2675,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           document.body.classList.toggle("hdr-capable", hdrCapable);
           document.body.dataset.hdrOutput = hdrDisplay ? "high" : "standard";
         };
+        onStoreChange = (event) => {
+          const changes = event.detail?.changes;
+          if (!changes || changes.includes("settings.appearance")) this.updateClasses();
+        };
         async connectedCallback() {
           this.innerHTML = '<div class="app-loading"><span></span><p>\u6B63\u5728\u6574\u7406\u4F60\u7684\u542F\u52A8\u53F0\u2026</p></div>';
           try {
             await appStore.init();
             this.updateClasses();
-            appStore.addEventListener("change", this.updateClasses);
+            appStore.addEventListener("change", this.onStoreChange);
             this.hdrMedia.addEventListener("change", this.updateClasses);
             this.render();
             window.addEventListener("keydown", this.onKeyDown);
@@ -2519,7 +2693,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           }
         }
         disconnectedCallback() {
-          appStore.removeEventListener("change", this.updateClasses);
+          appStore.removeEventListener("change", this.onStoreChange);
           this.hdrMedia.removeEventListener("change", this.updateClasses);
           window.removeEventListener("keydown", this.onKeyDown);
         }

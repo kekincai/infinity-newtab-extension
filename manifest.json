@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
     "name": "Infinity New Tab",
-    "version": "2.4.0",
-    "description": "一个美观的新标签页，管理你的常用网站",
+    "version": "2.4.1",
+    "description": "TypeScript 与原生 Web Components 打造的二次元新标签页，支持书签启动台、动态壁纸与 Liquid Glass HDR。",
     "permissions": [
         "storage",
         "tabs",

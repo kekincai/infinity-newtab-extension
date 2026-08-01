@@ -387,6 +387,19 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     await page.locator('[data-tab="appearance"]').click();
     await expect(page.locator('liquid-toggle')).toHaveCount(3);
     await expect(page.locator('.liquid-toggle-thumb[data-liquid-profile="lip"]')).toHaveCount(3);
+    const toggleMapCount = await page.locator('liquid-toggle feImage[result="displacement_map"]').evaluateAll((images) => (
+        new Set(images.map((image) => image.getAttribute('href'))).size
+    ));
+    expect(toggleMapCount).toBe(1);
+    await page.locator('liquid-toggle').first().evaluate((control) => { window.__retainedLiquidControl = control; });
+    await page.locator('liquid-toggle').first().hover();
+    await expect(page.locator('.hdr-glass-layer')).toHaveAttribute('data-hdr-target', 'liquid-toggle');
+    const controlHdrSize = await page.locator('.hdr-glass-layer').evaluate((canvas) => ({
+        width: Number.parseFloat(canvas.style.getPropertyValue('--hdr-glass-width')),
+        height: Number.parseFloat(canvas.style.getPropertyValue('--hdr-glass-height'))
+    }));
+    expect(controlHdrSize.width).toBeGreaterThan(20);
+    expect(controlHdrSize.height).toBeGreaterThan(20);
     const toggleDisplacement = page.locator('liquid-toggle').first().locator('feDisplacementMap');
     await expect(toggleDisplacement).toHaveAttribute('scale', String(55.65161904498752 * 0.4));
     await page.locator('input[data-toggle="hdrHighlights"]').dispatchEvent('pointerdown');
@@ -396,13 +409,28 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     await expect(page.locator('input[data-toggle="hdrHighlights"]')).toBeChecked();
     await page.locator('input[data-toggle="hdrHighlights"]').uncheck();
     await expect(page.locator('body')).not.toHaveClass(/hdr-highlights/);
+    expect(await page.evaluate(() => (
+        window.__retainedLiquidControl?.isConnected
+        && window.__retainedLiquidControl === document.querySelector('liquid-toggle')
+    ))).toBe(true);
     await page.locator('input[data-toggle="hdrHighlights"]').check();
     await expect(page.locator('body')).toHaveClass(/hdr-highlights/);
     await page.locator('input[data-toggle="darkText"]').uncheck();
     await expect(page.locator('body')).toHaveClass(/theme-dark/);
+    await page.locator('.settings-close').click();
+    await expect(page.locator('.settings-drawer')).not.toHaveClass(/is-open/);
+    await page.locator('.settings-trigger').click();
+    expect(await page.evaluate(() => (
+        window.__retainedLiquidControl?.isConnected
+        && window.__retainedLiquidControl === document.querySelector('liquid-toggle')
+    ))).toBe(true);
     await page.locator('[data-tab="wallpaper"]').click();
     await expect(page.locator('liquid-range')).toHaveCount(2);
     await expect(page.locator('.liquid-range-thumb[data-liquid-profile="convex"]')).toHaveCount(2);
+    const rangeMapCount = await page.locator('liquid-range feImage[result="displacement_map"]').evaluateAll((images) => (
+        new Set(images.map((image) => image.getAttribute('href'))).size
+    ));
+    expect(rangeMapCount).toBe(1);
     const overlayRange = page.locator('input[name="overlay"]');
     await overlayRange.fill('62');
     await expect(page.locator('liquid-range').nth(1)).toHaveCSS('--liquid-progress', '77.5%');

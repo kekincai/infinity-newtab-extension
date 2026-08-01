@@ -5,6 +5,7 @@ import { StoreElement } from './base';
 const REMINDER_INTERVAL = 7 * 24 * 60 * 60 * 1000;
 
 export class BackupToast extends StoreElement {
+    protected readonly observedChanges = ['lastBackupPrompt'] as const;
     private dismissed = false;
 
     protected render(): void {

@@ -1,7 +1,7 @@
 {
   "name": "infinity-newtab-extension",
-  "version": "2.4.0",
-  "description": "一个功能丰富、界面精美的 Chrome 新标签页扩展，让你的每一次打开新标签都成为愉悦的体验。",
+  "version": "2.4.1",
+  "description": "TypeScript 与原生 Web Components 打造的二次元 Chrome 新标签页，支持书签启动台、动态壁纸与 Liquid Glass HDR。",
   "main": "modules/app.js",
   "directories": {
     "test": "tests"

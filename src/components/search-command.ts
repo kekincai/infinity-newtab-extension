@@ -10,6 +10,7 @@ const ENGINES = {
 } as const;
 
 export class SearchCommand extends StoreElement {
+    protected readonly observedChanges = ['settings.layout', 'recentSearches'] as const;
     protected render(): void {
         const { layout } = appStore.state.settings;
         const engine = ENGINES[layout.searchEngine];

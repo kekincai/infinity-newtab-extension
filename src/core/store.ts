@@ -4,6 +4,16 @@ import type { AppSettings, AppState, Bookmark, SettingsSection } from './types';
 import { cleanText, normalizeUrl, sanitizeRemoteUrl } from './utils';
 
 const MANAGED_KEYS = ['bookmarks', 'folders', 'settings', 'recentSearches', 'lastBackupPrompt'] as const;
+export type StoreChangeKey = keyof AppState | `settings.${SettingsSection}`;
+const ALL_CHANGES: StoreChangeKey[] = [
+    'bookmarks',
+    'folders',
+    'recentSearches',
+    'lastBackupPrompt',
+    'settings.appearance',
+    'settings.wallpaper',
+    'settings.layout'
+];
 
 function initialState(): AppState {
     return {
@@ -36,7 +46,7 @@ export class AppStore extends EventTarget {
             lastBackupPrompt: finiteNumber(stored.lastBackupPrompt, 0)
         };
         this.initialized = true;
-        this.emit();
+        this.emit(ALL_CHANGES);
     }
 
     async updateSettings<S extends SettingsSection>(
@@ -48,7 +58,7 @@ export class AppStore extends EventTarget {
                 ...draft.settings,
                 [section]: { ...draft.settings[section], ...patch }
             });
-        }, ['settings']);
+        }, ['settings'], [`settings.${section}`]);
     }
 
     async addFolder(value: string): Promise<boolean> {
@@ -162,27 +172,31 @@ export class AppStore extends EventTarget {
         if (staleKeys.length) await storageRemove(staleKeys);
         this.stateValue = next;
         this.initialized = true;
-        this.emit();
+        this.emit(ALL_CHANGES);
     }
 
     async reset(): Promise<void> {
         await storageClear('sync');
         this.stateValue = initialState();
-        this.emit();
+        this.emit(ALL_CHANGES);
     }
 
-    private async commit(mutator: (draft: AppState) => void, keys: Array<keyof AppState>): Promise<void> {
+    private async commit(
+        mutator: (draft: AppState) => void,
+        keys: Array<keyof AppState>,
+        changes: StoreChangeKey[] = keys
+    ): Promise<void> {
         const draft = structuredClone(this.stateValue);
         mutator(draft);
         const values: Record<string, unknown> = {};
         keys.forEach((key) => { values[key] = draft[key]; });
         await storageSet(values);
         this.stateValue = draft;
-        this.emit();
+        this.emit(changes);
     }
 
-    private emit(): void {
-        this.dispatchEvent(new CustomEvent('change', { detail: this.stateValue }));
+    private emit(changes: StoreChangeKey[]): void {
+        this.dispatchEvent(new CustomEvent('change', { detail: { state: this.stateValue, changes } }));
     }
 }
 

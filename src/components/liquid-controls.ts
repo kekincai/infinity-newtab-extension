@@ -1,4 +1,10 @@
-import { createOpticalMaps, type OpticalProfile, type OpticalShape } from './liquid-optics';
+import {
+    createOpticalMaps,
+    opticalShapeKey,
+    type OpticalMaps,
+    type OpticalProfile,
+    type OpticalShape
+} from './liquid-optics';
 
 type FilterTuning = {
     profile: OpticalProfile;
@@ -11,6 +17,7 @@ type FilterTuning = {
 };
 
 let nextControlFilterId = 0;
+const controlMapCache = new Map<string, OpticalMaps>();
 
 abstract class LiquidControlElement extends HTMLElement {
     protected input: HTMLInputElement | null = null;
@@ -40,7 +47,9 @@ abstract class LiquidControlElement extends HTMLElement {
 
     protected installFilter(target: HTMLElement, shape: OpticalShape, tuning: FilterTuning): void {
         this.filterDefs?.remove();
-        const maps = createOpticalMaps(shape, tuning.profile);
+        const cacheKey = `${tuning.profile}:${opticalShapeKey(shape)}`;
+        const maps = controlMapCache.get(cacheKey) ?? createOpticalMaps(shape, tuning.profile);
+        controlMapCache.set(cacheKey, maps);
         const id = `infinity-liquid-control-${++nextControlFilterId}`;
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.classList.add('liquid-control-defs');

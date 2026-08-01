@@ -6,6 +6,7 @@ import { StoreElement } from './base';
 const FOLDER_COLORS = ['#ff92c8', '#80d8ff', '#ffd27d', '#9be7c4', '#b8a6ff'];
 
 export class BookmarkLaunchpad extends StoreElement {
+    protected readonly observedChanges = ['bookmarks', 'folders', 'settings.layout'] as const;
     private currentFolder = '全部';
     private draggingId: Bookmark['id'] | null = null;
 

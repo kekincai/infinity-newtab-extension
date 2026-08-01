@@ -32,12 +32,17 @@ class InfinityNewTabApp extends HTMLElement {
         document.body.dataset.hdrOutput = hdrDisplay ? 'high' : 'standard';
     };
 
+    private readonly onStoreChange = (event: Event) => {
+        const changes = (event as CustomEvent<{ changes?: string[] }>).detail?.changes;
+        if (!changes || changes.includes('settings.appearance')) this.updateClasses();
+    };
+
     async connectedCallback(): Promise<void> {
         this.innerHTML = '<div class="app-loading"><span></span><p>正在整理你的启动台…</p></div>';
         try {
             await appStore.init();
             this.updateClasses();
-            appStore.addEventListener('change', this.updateClasses);
+            appStore.addEventListener('change', this.onStoreChange);
             this.hdrMedia.addEventListener('change', this.updateClasses);
             this.render();
             window.addEventListener('keydown', this.onKeyDown);
@@ -47,7 +52,7 @@ class InfinityNewTabApp extends HTMLElement {
     }
 
     disconnectedCallback(): void {
-        appStore.removeEventListener('change', this.updateClasses);
+        appStore.removeEventListener('change', this.onStoreChange);
         this.hdrMedia.removeEventListener('change', this.updateClasses);
         window.removeEventListener('keydown', this.onKeyDown);
     }

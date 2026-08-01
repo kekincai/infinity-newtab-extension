@@ -3,6 +3,7 @@ import { truncate } from '../core/utils';
 import { StoreElement } from './base';
 
 export class DashboardHeader extends StoreElement {
+    protected readonly observedChanges = ['settings.layout'] as const;
     private clockTimer = 0;
     private statusTimer = 0;
 

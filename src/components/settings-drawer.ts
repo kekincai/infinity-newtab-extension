@@ -7,17 +7,22 @@ import { StoreElement } from './base';
 type Tab = 'appearance' | 'wallpaper' | 'layout' | 'data';
 
 export class SettingsDrawer extends StoreElement {
+    protected readonly observedChanges = ['settings.appearance', 'settings.wallpaper', 'settings.layout'] as const;
     private openState = false;
     private activeTab: Tab = 'appearance';
 
     open(): void {
         this.openState = true;
-        this.render();
+        this.syncOpenState();
     }
 
     close(): void {
         this.openState = false;
-        this.render();
+        this.syncOpenState();
+    }
+
+    protected handleStoreChange(): void {
+        this.syncControls(appStore.state.settings);
     }
 
     protected render(): void {
@@ -42,6 +47,49 @@ export class SettingsDrawer extends StoreElement {
             <button class="settings-scrim ${this.openState ? 'is-open' : ''}" type="button" aria-label="关闭设置"></button>
         `;
         this.bind();
+        this.syncOpenState();
+    }
+
+    private syncOpenState(): void {
+        const drawer = this.querySelector<HTMLElement>('.settings-drawer');
+        const scrim = this.querySelector<HTMLElement>('.settings-scrim');
+        drawer?.classList.toggle('is-open', this.openState);
+        drawer?.setAttribute('aria-hidden', String(!this.openState));
+        drawer?.toggleAttribute('inert', !this.openState);
+        scrim?.classList.toggle('is-open', this.openState);
+    }
+
+    private syncControls(settings: AppSettings): void {
+        const clockFormat = this.querySelector<HTMLSelectElement>('[data-setting="clockFormat"]');
+        const searchEngine = this.querySelector<HTMLSelectElement>('[data-setting="searchEngine"]');
+        if (clockFormat) clockFormat.value = settings.appearance.clockFormat;
+        if (searchEngine) searchEngine.value = settings.layout.searchEngine;
+
+        const toggles: Record<string, boolean> = {
+            enhancedAnimations: settings.appearance.enhancedAnimations,
+            hdrHighlights: settings.appearance.hdrHighlights,
+            darkText: settings.appearance.theme === 'light',
+            showClock: settings.layout.showClock,
+            showSearch: settings.layout.showSearch,
+            showBookmarks: settings.layout.showBookmarks,
+            showStatus: settings.layout.showStatus,
+            showRecent: settings.layout.showRecent
+        };
+        this.querySelectorAll<HTMLInputElement>('input[data-toggle]').forEach((input) => {
+            input.checked = toggles[input.dataset.toggle ?? ''] ?? input.checked;
+            input.closest('liquid-toggle')?.classList.toggle('is-checked', input.checked);
+        });
+
+        const ranges: Record<string, number> = {
+            blur: settings.wallpaper.blur,
+            overlay: settings.wallpaper.overlay
+        };
+        this.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach((input) => {
+            const value = ranges[input.name];
+            if (!Number.isFinite(value)) return;
+            input.value = String(value);
+            input.dispatchEvent(new Event('input', { bubbles: false }));
+        });
     }
 
     private paneTemplate(settings: AppSettings): string {
