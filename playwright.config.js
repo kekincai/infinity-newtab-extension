@@ -11,7 +11,8 @@ module.exports = defineConfig({
     use: {
         baseURL: 'http://127.0.0.1:4173',
         channel: 'chrome',
-        headless: true,
+        // SVG fragment filters in backdrop-filter are not composited by headless Chrome.
+        headless: false,
         locale: 'zh-CN',
         screenshot: 'off',
         trace: 'retain-on-failure'

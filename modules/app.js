@@ -1213,6 +1213,11 @@
     const displacements = precalculateDisplacements();
     const maximumDisplacement = Math.max(...displacements.map(Math.abs));
     return {
+      magnifying: imageDataUrl(createMagnifyingMap(
+        shape.width,
+        shape.height,
+        pixelRatio
+      )),
       displacement: imageDataUrl(createDisplacementMap(
         shape.width,
         shape.height,
@@ -1232,6 +1237,25 @@
       )),
       maximumDisplacement
     };
+  }
+  function createMagnifyingMap(width, height, pixelRatio) {
+    const canvasWidth = Math.max(1, Math.round(width * pixelRatio));
+    const canvasHeight = Math.max(1, Math.round(height * pixelRatio));
+    const image = new ImageData(canvasWidth, canvasHeight);
+    for (let y = 0; y < canvasHeight; y += 1) {
+      for (let x = 0; x < canvasWidth; x += 1) {
+        const normalizedX = (x + 0.5) / canvasWidth * 2 - 1;
+        const normalizedY = (y + 0.5) / canvasHeight * 2 - 1;
+        const distance = Math.hypot(normalizedX, normalizedY);
+        const strength = distance < 1 ? 1 - smoothstep(0.08, 0.94, distance) : 0;
+        const index = (y * canvasWidth + x) * 4;
+        image.data[index] = 128 - normalizedX * strength * 112;
+        image.data[index + 1] = 128 - normalizedY * strength * 112;
+        image.data[index + 2] = 128;
+        image.data[index + 3] = 255;
+      }
+    }
+    return image;
   }
   function createDisplacementMap(width, height, radius, bezelWidth, maximumDisplacement, displacements, pixelRatio) {
     const canvasWidth = Math.max(1, Math.round(width * pixelRatio));
@@ -1323,6 +1347,10 @@
   function clamp(value, minimum, maximum) {
     return Math.min(maximum, Math.max(minimum, value));
   }
+  function smoothstep(start, end, value) {
+    const progress = clamp((value - start) / (end - start), 0, 1);
+    return progress * progress * (3 - 2 * progress);
+  }
   var REFRACTIVE_INDEX, RADIAL_SAMPLE_COUNT, DISTANCE_TO_BACKDROP, GLASS_THICKNESS, SPECULAR_ANGLE;
   var init_liquid_optics = __esm({
     "src/components/liquid-optics.ts"() {
@@ -1336,272 +1364,313 @@
   });
 
   // src/components/liquid-glass.ts
-  function normalizeShape(shape) {
-    const width = Math.max(1, Math.round(shape.width));
-    const height = Math.max(1, Math.round(shape.height));
+  function findItem(target) {
+    const item = target instanceof Element ? target.closest(ITEM_SELECTOR) : null;
+    return item instanceof HTMLElement && item.getClientRects().length ? item : null;
+  }
+  function geometryFor(item) {
+    const rect = item.getBoundingClientRect();
+    const padding = Math.min(14, Math.max(LENS_PADDING, Math.min(rect.width, rect.height) * 0.08));
+    const radius = resolveRadius(getComputedStyle(item).borderTopLeftRadius, rect.width, rect.height);
+    return normalizeGeometry({
+      x: rect.left - padding,
+      y: rect.top - padding,
+      width: rect.width + padding * 2,
+      height: rect.height + padding * 2,
+      radius: radius + padding
+    });
+  }
+  function normalizeGeometry(geometry) {
+    const width = Math.max(24, geometry.width);
+    const height = Math.max(24, geometry.height);
     return {
+      x: geometry.x,
+      y: geometry.y,
       width,
       height,
-      radius: Math.min(Math.max(2, Math.round(shape.radius)), Math.min(width, height) / 2)
+      radius: clamp2(geometry.radius, 8, Math.min(width, height) / 2)
     };
   }
+  function normalizeShape(geometry) {
+    const normalized = normalizeGeometry({ ...geometry, x: 0, y: 0 });
+    return {
+      width: Math.max(24, Math.round(normalized.width)),
+      height: Math.max(24, Math.round(normalized.height)),
+      radius: Math.max(8, Math.round(normalized.radius))
+    };
+  }
+  function centerOf(geometry) {
+    return { x: geometry.x + geometry.width / 2, y: geometry.y + geometry.height / 2 };
+  }
+  function nearestItem(items, point) {
+    let nearest = null;
+    let distance = Number.POSITIVE_INFINITY;
+    items.forEach((item) => {
+      const rect = item.getBoundingClientRect();
+      const candidateDistance = Math.hypot(point.x - (rect.left + rect.width / 2), point.y - (rect.top + rect.height / 2));
+      if (candidateDistance < distance) {
+        nearest = item;
+        distance = candidateDistance;
+      }
+    });
+    return nearest;
+  }
+  function groupBounds(items) {
+    if (!items.length) return new DOMRect();
+    const rects = items.map((item) => item.getBoundingClientRect());
+    const left = Math.min(...rects.map((rect) => rect.left));
+    const top = Math.min(...rects.map((rect) => rect.top));
+    const right = Math.max(...rects.map((rect) => rect.right));
+    const bottom = Math.max(...rects.map((rect) => rect.bottom));
+    return new DOMRect(left, top, right - left, bottom - top);
+  }
+  function containsPoint(rect, point, margin) {
+    return point.x >= rect.left - margin && point.x <= rect.right + margin && point.y >= rect.top - margin && point.y <= rect.bottom + margin;
+  }
+  function targetName(item) {
+    return item.className || item.tagName.toLowerCase();
+  }
   function resolveRadius(value, width, height) {
-    const firstValue = value.trim().split(/\s+/)[0] ?? "0";
-    if (firstValue.endsWith("%")) {
-      return Math.min(width, height) * (Number.parseFloat(firstValue) || 0) / 100;
-    }
-    return Number.parseFloat(firstValue) || Math.min(width, height) / 2;
+    if (value.endsWith("%")) return Math.min(width, height) * Number.parseFloat(value) / 100;
+    return Number.parseFloat(value) || Math.min(width, height) / 2;
   }
   async function decodeOpticalMaps(maps) {
-    await Promise.all([maps.displacement, maps.specular].map(async (source) => {
+    await Promise.all([maps.magnifying, maps.displacement, maps.specular].map((source) => new Promise((resolve) => {
       const image = new Image();
+      image.onload = () => resolve();
+      image.onerror = () => resolve();
       image.src = source;
-      try {
-        await image.decode();
-      } catch {
-      }
-    }));
+      if (image.complete) resolve();
+    })));
   }
-  var REFRACTION_LEVEL, SOURCE_BLUR, SPECULAR_OPACITY, SPECULAR_SATURATION, SPRING_STIFFNESS, SPRING_DAMPING, MAP_CACHE, MAP_READY_CACHE, nextFilterId, LiquidGlassSystem, LiquidGlassBinding;
+  function clamp2(value, minimum, maximum) {
+    return Math.max(minimum, Math.min(maximum, value));
+  }
+  function lerp(from, to, progress) {
+    return from + (to - from) * progress;
+  }
+  var ITEM_SELECTOR, LENS_PADDING, GROUP_MARGIN, MAGNIFICATION_SCALE, REFRACTION_LEVEL, MAP_CACHE, MAP_READY_CACHE, nextFilterId, LiquidGlassSystem;
   var init_liquid_glass = __esm({
     "src/components/liquid-glass.ts"() {
       "use strict";
       init_liquid_optics();
-      REFRACTION_LEVEL = 0.7;
-      SOURCE_BLUR = 1;
-      SPECULAR_OPACITY = 0.2;
-      SPECULAR_SATURATION = 4;
-      SPRING_STIFFNESS = 250;
-      SPRING_DAMPING = 24;
+      ITEM_SELECTOR = "[data-liquid-item]";
+      LENS_PADDING = 8;
+      GROUP_MARGIN = 20;
+      MAGNIFICATION_SCALE = 26;
+      REFRACTION_LEVEL = 0.92;
       MAP_CACHE = /* @__PURE__ */ new Map();
       MAP_READY_CACHE = /* @__PURE__ */ new Map();
       nextFilterId = 0;
       LiquidGlassSystem = class extends HTMLElement {
-        bindings = /* @__PURE__ */ new Map();
-        resizeObserver = new ResizeObserver((entries) => {
-          entries.forEach((entry) => this.bindings.get(entry.target)?.configure());
-        });
-        mutationObserver = new MutationObserver(() => this.scheduleScan());
-        scanScheduled = false;
+        lens = document.createElement("span");
+        defs = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        filterContainer = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+        activeItem = null;
+        activeGroup = null;
+        filter = null;
+        filterImages = [];
+        filterVersion = 0;
+        mapShapeKey = "";
+        hideTimer = 0;
         connectedCallback() {
-          this.hidden = true;
-          const root = this.parentElement ?? document.body;
-          this.mutationObserver.observe(root, { childList: true, subtree: true });
-          window.addEventListener("resize", this.onWindowResize);
-          this.scheduleScan();
+          this.lens.className = "liquid-glass-lens";
+          this.lens.setAttribute("aria-hidden", "true");
+          this.defs.classList.add("liquid-filter-defs");
+          this.defs.setAttribute("aria-hidden", "true");
+          this.defs.append(this.filterContainer);
+          this.append(this.defs, this.lens);
+          document.addEventListener("pointerover", this.onPointerOver, true);
+          document.addEventListener("pointermove", this.onPointerMove, { passive: true, capture: true });
+          document.addEventListener("pointerdown", this.onPointerDown, true);
+          document.addEventListener("focusin", this.onFocusIn, true);
+          document.addEventListener("focusout", this.onFocusOut, true);
+          window.addEventListener("resize", this.onViewportChange);
+          window.addEventListener("scroll", this.onViewportChange, true);
         }
         disconnectedCallback() {
-          this.mutationObserver.disconnect();
-          this.resizeObserver.disconnect();
-          window.removeEventListener("resize", this.onWindowResize);
-          this.bindings.forEach((binding) => binding.destroy());
-          this.bindings.clear();
+          document.removeEventListener("pointerover", this.onPointerOver, true);
+          document.removeEventListener("pointermove", this.onPointerMove, true);
+          document.removeEventListener("pointerdown", this.onPointerDown, true);
+          document.removeEventListener("focusin", this.onFocusIn, true);
+          document.removeEventListener("focusout", this.onFocusOut, true);
+          window.removeEventListener("resize", this.onViewportChange);
+          window.removeEventListener("scroll", this.onViewportChange, true);
+          window.clearTimeout(this.hideTimer);
         }
-        scheduleScan() {
-          if (this.scanScheduled) return;
-          this.scanScheduled = true;
-          queueMicrotask(() => {
-            this.scanScheduled = false;
-            this.scan();
-          });
-        }
-        scan() {
-          const root = this.parentElement ?? document.body;
-          const items = new Set(root.querySelectorAll("[data-liquid-item]"));
-          this.bindings.forEach((binding, item) => {
-            if (items.has(item) && item.isConnected) return;
-            this.resizeObserver.unobserve(item);
-            binding.destroy();
-            this.bindings.delete(item);
-          });
-          items.forEach((item) => {
-            if (this.bindings.has(item)) return;
-            const binding = new LiquidGlassBinding(item);
-            this.bindings.set(item, binding);
-            this.resizeObserver.observe(item);
-            binding.configure();
-          });
-        }
-        onWindowResize = () => {
-          this.bindings.forEach((binding) => binding.configure());
+        onPointerOver = (event) => {
+          const item = findItem(event.target);
+          if (item) this.activate(item);
         };
-      };
-      LiquidGlassBinding = class {
-        constructor(item) {
-          this.item = item;
-          this.content = document.createElement(
-            this.item.matches("button, a, label") ? "span" : "div"
-          );
-          this.item.classList.add("liquid-glass-host");
-          this.base.className = "liquid-glass-base";
-          this.base.setAttribute("aria-hidden", "true");
-          this.layer.className = "liquid-glass-layer";
-          this.layer.setAttribute("aria-hidden", "true");
-          this.content.className = "liquid-glass-content";
-          this.content.append(...Array.from(this.item.childNodes));
-          this.item.append(this.content);
-          this.item.addEventListener("pointerenter", this.onPointerEnter);
-          this.item.addEventListener("pointerleave", this.onPointerLeave);
-          this.item.addEventListener("pointerdown", this.onPointerDown);
-          this.item.addEventListener("focusin", this.onFocusIn);
-          this.item.addEventListener("focusout", this.onFocusOut);
-          window.addEventListener("pointerup", this.onPointerUp);
-          window.addEventListener("pointercancel", this.onPointerUp);
+        onPointerMove = (event) => {
+          const item = findItem(event.target);
+          if (item) {
+            if (item !== this.activeItem) this.activate(item);
+            return;
+          }
+          if (!this.activeItem || !this.activeGroup) return;
+          const point = { x: event.clientX, y: event.clientY };
+          if (!containsPoint(groupBounds(this.groupItems()), point, GROUP_MARGIN)) {
+            this.scheduleHide();
+            return;
+          }
+          this.cancelHide();
+          this.renderBetween(point);
+        };
+        onPointerDown = (event) => {
+          const item = findItem(event.target);
+          if (!item) return;
+          this.activate(item);
+          this.lens.classList.add("is-pressed");
+          window.addEventListener("pointerup", this.releasePress, { once: true });
+          window.addEventListener("pointercancel", this.releasePress, { once: true });
+        };
+        releasePress = () => this.lens.classList.remove("is-pressed");
+        onFocusIn = (event) => {
+          const item = findItem(event.target);
+          if (item) this.activate(item);
+        };
+        onFocusOut = (event) => {
+          if (!findItem(event.relatedTarget)) this.scheduleHide(80);
+        };
+        onViewportChange = () => {
+          if (this.activeItem?.isConnected) this.render(geometryFor(this.activeItem));
+          else this.hide();
+        };
+        activate(item) {
+          this.cancelHide();
+          this.activeItem = item;
+          this.activeGroup = item.parentElement;
+          this.lens.dataset.liquidTarget = targetName(item);
+          this.lens.classList.add("is-visible");
+          this.render(geometryFor(item));
         }
-        item;
-        base = document.createElement("span");
-        layer = document.createElement("span");
-        content;
-        svg = null;
-        shapeKey = "";
-        pendingShapeKey = "";
-        configurationVersion = 0;
-        target = 0;
-        presence = 0;
-        velocity = 0;
-        frame = 0;
-        pointerInside = false;
-        pointerDown = false;
-        focusInside = false;
-        configure() {
-          const width = this.item.offsetWidth;
-          const height = this.item.offsetHeight;
-          if (!width || !height) return;
-          const shape = normalizeShape({
+        renderBetween(pointer) {
+          const source = this.activeItem;
+          if (!source) return;
+          const candidates = this.groupItems().filter((item) => item !== source);
+          const destination = nearestItem(candidates, pointer);
+          if (!destination) return;
+          const from = geometryFor(source);
+          const to = geometryFor(destination);
+          const fromCenter = centerOf(from);
+          const toCenter = centerOf(to);
+          const deltaX = toCenter.x - fromCenter.x;
+          const deltaY = toCenter.y - fromCenter.y;
+          const distanceSquared = deltaX ** 2 + deltaY ** 2;
+          if (!distanceSquared) return;
+          const progress = clamp2(
+            ((pointer.x - fromCenter.x) * deltaX + (pointer.y - fromCenter.y) * deltaY) / distanceSquared,
+            0,
+            1
+          );
+          const bridge = Math.sin(Math.PI * progress);
+          const horizontal = Math.abs(deltaX) >= Math.abs(deltaY);
+          const travel = Math.sqrt(distanceSquared);
+          let width = lerp(from.width, to.width, progress);
+          let height = lerp(from.height, to.height, progress);
+          const stretch = Math.min(72, travel * 0.27) * bridge;
+          if (horizontal) {
+            width += stretch;
+            height *= 1 - bridge * 0.11;
+          } else {
+            height += stretch;
+            width *= 1 - bridge * 0.11;
+          }
+          const centerX = lerp(fromCenter.x, toCenter.x, progress);
+          const centerY = lerp(fromCenter.y, toCenter.y, progress);
+          this.lens.dataset.liquidProgress = progress.toFixed(3);
+          this.lens.classList.toggle("is-bridging", progress > 0.01 && progress < 0.99);
+          this.render({
+            x: centerX - width / 2,
+            y: centerY - height / 2,
             width,
             height,
-            radius: resolveRadius(getComputedStyle(this.item).borderTopLeftRadius, width, height)
-          });
+            radius: lerp(from.radius, to.radius, progress) + bridge * 8
+          }, false);
+        }
+        render(geometry, refreshMaps = true) {
+          this.lens.style.setProperty("--liquid-x", `${geometry.x}px`);
+          this.lens.style.setProperty("--liquid-y", `${geometry.y}px`);
+          this.lens.style.setProperty("--liquid-width", `${geometry.width}px`);
+          this.lens.style.setProperty("--liquid-height", `${geometry.height}px`);
+          this.lens.style.setProperty("--liquid-radius", `${geometry.radius}px`);
+          this.sizeFilter(geometry);
+          if (refreshMaps) void this.ensureFilter(geometry);
+        }
+        async ensureFilter(geometry) {
+          const shape = normalizeShape(geometry);
           const key = opticalShapeKey(shape);
-          if (key === this.shapeKey && (this.svg?.isConnected || this.pendingShapeKey === key)) return;
-          this.shapeKey = key;
-          this.pendingShapeKey = key;
-          const version = ++this.configurationVersion;
+          if (key === this.mapShapeKey && this.filter) return;
+          this.mapShapeKey = key;
+          const version = ++this.filterVersion;
           const maps = MAP_CACHE.get(key) ?? createOpticalMaps(shape);
           MAP_CACHE.set(key, maps);
           const ready = MAP_READY_CACHE.get(key) ?? decodeOpticalMaps(maps);
           MAP_READY_CACHE.set(key, ready);
-          void ready.then(() => this.installFilter(shape, maps, version));
+          await ready;
+          if (version !== this.filterVersion || !this.isConnected) return;
+          this.installFilter(shape, maps);
         }
-        installFilter(shape, maps, version) {
-          if (version !== this.configurationVersion || !this.item.isConnected) return;
-          this.pendingShapeKey = "";
-          this.svg?.remove();
-          this.svg = this.createFilter(shape, maps);
-          if (this.layer.isConnected) this.item.prepend(this.svg);
-          else this.item.prepend(this.svg, this.base, this.layer);
-          const filterId = this.item.dataset.liquidFilterId;
-          if (filterId) this.item.style.setProperty("--liquid-filter", `url("#${filterId}")`);
-          this.updateFilter();
-        }
-        destroy() {
-          this.configurationVersion += 1;
-          cancelAnimationFrame(this.frame);
-          this.item.removeEventListener("pointerenter", this.onPointerEnter);
-          this.item.removeEventListener("pointerleave", this.onPointerLeave);
-          this.item.removeEventListener("pointerdown", this.onPointerDown);
-          this.item.removeEventListener("focusin", this.onFocusIn);
-          this.item.removeEventListener("focusout", this.onFocusOut);
-          window.removeEventListener("pointerup", this.onPointerUp);
-          window.removeEventListener("pointercancel", this.onPointerUp);
-          this.item.classList.remove("liquid-glass-host");
-          this.item.style.removeProperty("--liquid-filter");
-          this.item.style.removeProperty("--liquid-presence");
-          delete this.item.dataset.liquidFilterId;
-          delete this.item.dataset.liquidShape;
-          delete this.item.dataset.liquidState;
-          this.svg?.remove();
-          this.base.remove();
-          this.layer.remove();
-          this.content.replaceWith(...Array.from(this.content.childNodes));
-        }
-        createFilter(shape, maps) {
-          const id = `infinity-liquid-${++nextFilterId}`;
+        installFilter(shape, maps) {
+          this.filter?.remove();
+          const id = `infinity-liquid-lens-${++nextFilterId}`;
           const template = document.createElement("template");
           template.innerHTML = `
-            <svg class="liquid-filter-defs" color-interpolation-filters="sRGB" aria-hidden="true">
-                <defs>
-                    <filter id="${id}">
-                        <feGaussianBlur in="SourceGraphic" stdDeviation="${SOURCE_BLUR}" result="blurred_source"></feGaussianBlur>
-                        <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" result="displacement_map" data-optical-map="displacement"></feImage>
-                        <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${maps.maximumDisplacement * REFRACTION_LEVEL}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
-                        <feColorMatrix in="displaced" type="saturate" values="${SPECULAR_SATURATION}" result="displaced_saturated"></feColorMatrix>
-                        <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" result="specular_layer" data-optical-map="specular"></feImage>
-                        <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
-                        <feComponentTransfer in="specular_layer" result="specular_faded">
-                            <feFuncA type="linear" slope="${SPECULAR_OPACITY}"></feFuncA>
-                        </feComponentTransfer>
-                        <feBlend in="specular_saturated" in2="displaced" mode="normal" result="withSaturation"></feBlend>
-                        <feBlend in="specular_faded" in2="withSaturation" mode="normal"></feBlend>
-                    </filter>
-                </defs>
-            </svg>
-        `;
-          const svg = template.content.firstElementChild;
-          const filter = svg.querySelector("filter");
+            <filter id="${id}" color-interpolation-filters="sRGB">
+                <feImage href="${maps.magnifying}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="magnifying_displacement_map" data-optical-map="magnifying"></feImage>
+                <feDisplacementMap in="SourceGraphic" in2="magnifying_displacement_map" scale="${MAGNIFICATION_SCALE}" xChannelSelector="R" yChannelSelector="G" result="magnified_source"></feDisplacementMap>
+                <feGaussianBlur in="magnified_source" stdDeviation="0.2" result="blurred_source"></feGaussianBlur>
+                <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="displacement_map" data-optical-map="displacement"></feImage>
+                <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${maps.maximumDisplacement * REFRACTION_LEVEL}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
+                <feColorMatrix in="displaced" type="saturate" values="5" result="displaced_saturated"></feColorMatrix>
+                <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="specular_layer" data-optical-map="specular"></feImage>
+                <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
+                <feComponentTransfer in="specular_layer" result="specular_faded"><feFuncA type="linear" slope="0.42"></feFuncA></feComponentTransfer>
+                <feBlend in="specular_saturated" in2="displaced" mode="normal" result="withSaturation"></feBlend>
+                <feBlend in="specular_faded" in2="withSaturation" mode="normal"></feBlend>
+            </filter>`;
+          const filter = template.content.firstElementChild;
           filter.dataset.maximumDisplacement = String(maps.maximumDisplacement);
           filter.dataset.liquidShape = opticalShapeKey(shape);
-          this.item.dataset.liquidFilterId = id;
-          this.item.dataset.liquidShape = opticalShapeKey(shape);
-          return svg;
+          this.filterContainer.append(filter);
+          this.filter = filter;
+          this.filterImages = Array.from(filter.querySelectorAll("feImage"));
+          this.lens.style.setProperty("--liquid-filter", `url("#${id}")`);
+          this.lens.dataset.liquidFilterId = id;
+          this.sizeFilter(shape);
         }
-        setTarget(value) {
-          this.target = value;
-          if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-            this.presence = value;
-            this.velocity = 0;
-            this.updateFilter();
-            return;
-          }
-          if (!this.frame) this.frame = requestAnimationFrame(this.tick);
+        sizeFilter(geometry) {
+          this.filterImages.forEach((image) => {
+            image.setAttribute("width", String(Math.round(geometry.width)));
+            image.setAttribute("height", String(Math.round(geometry.height)));
+          });
         }
-        tick = () => {
-          const acceleration = (this.target - this.presence) * SPRING_STIFFNESS;
-          this.velocity = (this.velocity + acceleration / 60) * Math.exp(-SPRING_DAMPING / 60);
-          this.presence += this.velocity / 60;
-          if (Math.abs(this.target - this.presence) < 1e-3 && Math.abs(this.velocity) < 0.01) {
-            this.presence = this.target;
-            this.velocity = 0;
-            this.frame = 0;
-            this.updateFilter();
-            return;
-          }
-          this.updateFilter();
-          this.frame = requestAnimationFrame(this.tick);
-        };
-        updateFilter() {
-          const presence = Math.min(1, Math.max(0, this.presence));
-          this.item.style.setProperty("--liquid-presence", presence.toFixed(4));
-          this.item.dataset.liquidState = presence > 0.01 ? "active" : "idle";
+        groupItems() {
+          if (!this.activeGroup) return [];
+          return Array.from(this.activeGroup.children).filter(
+            (child) => child instanceof HTMLElement && child.matches(ITEM_SELECTOR)
+          );
         }
-        refreshTarget() {
-          this.setTarget(this.pointerInside || this.pointerDown || this.focusInside ? 1 : 0);
+        scheduleHide(delay = 150) {
+          if (this.hideTimer) return;
+          this.hideTimer = window.setTimeout(() => {
+            this.hideTimer = 0;
+            this.hide();
+          }, delay);
         }
-        onPointerEnter = () => {
-          this.pointerInside = true;
-          this.refreshTarget();
-        };
-        onPointerLeave = () => {
-          this.pointerInside = false;
-          this.refreshTarget();
-        };
-        onPointerDown = () => {
-          this.pointerDown = true;
-          this.refreshTarget();
-        };
-        onPointerUp = () => {
-          if (!this.pointerDown) return;
-          this.pointerDown = false;
-          this.refreshTarget();
-        };
-        onFocusIn = () => {
-          this.focusInside = true;
-          this.refreshTarget();
-        };
-        onFocusOut = (event) => {
-          this.focusInside = event.relatedTarget instanceof Node && this.item.contains(event.relatedTarget);
-          this.refreshTarget();
-        };
+        cancelHide() {
+          if (!this.hideTimer) return;
+          window.clearTimeout(this.hideTimer);
+          this.hideTimer = 0;
+        }
+        hide() {
+          this.activeItem = null;
+          this.activeGroup = null;
+          this.lens.classList.remove("is-visible", "is-bridging", "is-pressed");
+          delete this.lens.dataset.liquidProgress;
+          delete this.lens.dataset.liquidTarget;
+        }
       };
     }
   });

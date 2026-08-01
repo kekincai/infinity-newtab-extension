@@ -5,300 +5,348 @@ import {
     opticalShapeKey
 } from './liquid-optics';
 
-const REFRACTION_LEVEL = 0.7;
-const SOURCE_BLUR = 1;
-const SPECULAR_OPACITY = 0.2;
-const SPECULAR_SATURATION = 4;
-const SPRING_STIFFNESS = 250;
-const SPRING_DAMPING = 24;
+type LensGeometry = OpticalShape & { x: number; y: number };
+type Point = { x: number; y: number };
+
+const ITEM_SELECTOR = '[data-liquid-item]';
+const LENS_PADDING = 8;
+const GROUP_MARGIN = 20;
+const MAGNIFICATION_SCALE = 26;
+const REFRACTION_LEVEL = 0.92;
 const MAP_CACHE = new Map<string, OpticalMaps>();
 const MAP_READY_CACHE = new Map<string, Promise<void>>();
 let nextFilterId = 0;
 
 /**
- * Finds real controls and equips each one with the article's co-located SVG
- * filter. There is no cursor lens or shared geometry moving between controls.
+ * Owns one empty optical lens. The real controls stay untouched underneath it,
+ * so SVG backdrop refraction bends their actual text, icons and borders.
  */
 export class LiquidGlassSystem extends HTMLElement {
-    private readonly bindings = new Map<HTMLElement, LiquidGlassBinding>();
-    private readonly resizeObserver = new ResizeObserver((entries) => {
-        entries.forEach((entry) => this.bindings.get(entry.target as HTMLElement)?.configure());
-    });
-    private readonly mutationObserver = new MutationObserver(() => this.scheduleScan());
-    private scanScheduled = false;
+    private readonly lens = document.createElement('span');
+    private readonly defs = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    private readonly filterContainer = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    private activeItem: HTMLElement | null = null;
+    private activeGroup: HTMLElement | null = null;
+    private filter: SVGFilterElement | null = null;
+    private filterImages: SVGFEImageElement[] = [];
+    private filterVersion = 0;
+    private mapShapeKey = '';
+    private hideTimer = 0;
 
     connectedCallback(): void {
-        this.hidden = true;
-        const root = this.parentElement ?? document.body;
-        this.mutationObserver.observe(root, { childList: true, subtree: true });
-        window.addEventListener('resize', this.onWindowResize);
-        this.scheduleScan();
+        this.lens.className = 'liquid-glass-lens';
+        this.lens.setAttribute('aria-hidden', 'true');
+        this.defs.classList.add('liquid-filter-defs');
+        this.defs.setAttribute('aria-hidden', 'true');
+        this.defs.append(this.filterContainer);
+        this.append(this.defs, this.lens);
+        document.addEventListener('pointerover', this.onPointerOver, true);
+        document.addEventListener('pointermove', this.onPointerMove, { passive: true, capture: true });
+        document.addEventListener('pointerdown', this.onPointerDown, true);
+        document.addEventListener('focusin', this.onFocusIn, true);
+        document.addEventListener('focusout', this.onFocusOut, true);
+        window.addEventListener('resize', this.onViewportChange);
+        window.addEventListener('scroll', this.onViewportChange, true);
     }
 
     disconnectedCallback(): void {
-        this.mutationObserver.disconnect();
-        this.resizeObserver.disconnect();
-        window.removeEventListener('resize', this.onWindowResize);
-        this.bindings.forEach((binding) => binding.destroy());
-        this.bindings.clear();
+        document.removeEventListener('pointerover', this.onPointerOver, true);
+        document.removeEventListener('pointermove', this.onPointerMove, true);
+        document.removeEventListener('pointerdown', this.onPointerDown, true);
+        document.removeEventListener('focusin', this.onFocusIn, true);
+        document.removeEventListener('focusout', this.onFocusOut, true);
+        window.removeEventListener('resize', this.onViewportChange);
+        window.removeEventListener('scroll', this.onViewportChange, true);
+        window.clearTimeout(this.hideTimer);
     }
 
-    private scheduleScan(): void {
-        if (this.scanScheduled) return;
-        this.scanScheduled = true;
-        queueMicrotask(() => {
-            this.scanScheduled = false;
-            this.scan();
-        });
-    }
-
-    private scan(): void {
-        const root = this.parentElement ?? document.body;
-        const items = new Set(root.querySelectorAll<HTMLElement>('[data-liquid-item]'));
-
-        this.bindings.forEach((binding, item) => {
-            if (items.has(item) && item.isConnected) return;
-            this.resizeObserver.unobserve(item);
-            binding.destroy();
-            this.bindings.delete(item);
-        });
-
-        items.forEach((item) => {
-            if (this.bindings.has(item)) return;
-            const binding = new LiquidGlassBinding(item);
-            this.bindings.set(item, binding);
-            this.resizeObserver.observe(item);
-            binding.configure();
-        });
-    }
-
-    private readonly onWindowResize = (): void => {
-        this.bindings.forEach((binding) => binding.configure());
+    private readonly onPointerOver = (event: PointerEvent): void => {
+        const item = findItem(event.target);
+        if (item) this.activate(item);
     };
-}
 
-class LiquidGlassBinding {
-    private readonly base = document.createElement('span');
-    private readonly layer = document.createElement('span');
-    private readonly content: HTMLSpanElement | HTMLDivElement;
-    private svg: SVGSVGElement | null = null;
-    private shapeKey = '';
-    private pendingShapeKey = '';
-    private configurationVersion = 0;
-    private target = 0;
-    private presence = 0;
-    private velocity = 0;
-    private frame = 0;
-    private pointerInside = false;
-    private pointerDown = false;
-    private focusInside = false;
+    private readonly onPointerMove = (event: PointerEvent): void => {
+        const item = findItem(event.target);
+        if (item) {
+            if (item !== this.activeItem) this.activate(item);
+            return;
+        }
+        if (!this.activeItem || !this.activeGroup) return;
+        const point = { x: event.clientX, y: event.clientY };
+        if (!containsPoint(groupBounds(this.groupItems()), point, GROUP_MARGIN)) {
+            this.scheduleHide();
+            return;
+        }
+        this.cancelHide();
+        this.renderBetween(point);
+    };
 
-    constructor(private readonly item: HTMLElement) {
-        this.content = document.createElement(
-            this.item.matches('button, a, label') ? 'span' : 'div'
-        );
-        this.item.classList.add('liquid-glass-host');
-        this.base.className = 'liquid-glass-base';
-        this.base.setAttribute('aria-hidden', 'true');
-        this.layer.className = 'liquid-glass-layer';
-        this.layer.setAttribute('aria-hidden', 'true');
-        this.content.className = 'liquid-glass-content';
-        this.content.append(...Array.from(this.item.childNodes));
-        this.item.append(this.content);
-        this.item.addEventListener('pointerenter', this.onPointerEnter);
-        this.item.addEventListener('pointerleave', this.onPointerLeave);
-        this.item.addEventListener('pointerdown', this.onPointerDown);
-        this.item.addEventListener('focusin', this.onFocusIn);
-        this.item.addEventListener('focusout', this.onFocusOut);
-        window.addEventListener('pointerup', this.onPointerUp);
-        window.addEventListener('pointercancel', this.onPointerUp);
+    private readonly onPointerDown = (event: PointerEvent): void => {
+        const item = findItem(event.target);
+        if (!item) return;
+        this.activate(item);
+        this.lens.classList.add('is-pressed');
+        window.addEventListener('pointerup', this.releasePress, { once: true });
+        window.addEventListener('pointercancel', this.releasePress, { once: true });
+    };
+
+    private readonly releasePress = (): void => this.lens.classList.remove('is-pressed');
+
+    private readonly onFocusIn = (event: FocusEvent): void => {
+        const item = findItem(event.target);
+        if (item) this.activate(item);
+    };
+
+    private readonly onFocusOut = (event: FocusEvent): void => {
+        if (!findItem(event.relatedTarget)) this.scheduleHide(80);
+    };
+
+    private readonly onViewportChange = (): void => {
+        if (this.activeItem?.isConnected) this.render(geometryFor(this.activeItem));
+        else this.hide();
+    };
+
+    private activate(item: HTMLElement): void {
+        this.cancelHide();
+        this.activeItem = item;
+        this.activeGroup = item.parentElement;
+        this.lens.dataset.liquidTarget = targetName(item);
+        this.lens.classList.add('is-visible');
+        this.render(geometryFor(item));
     }
 
-    configure(): void {
-        const width = this.item.offsetWidth;
-        const height = this.item.offsetHeight;
-        if (!width || !height) return;
-        const shape = normalizeShape({
+    private renderBetween(pointer: Point): void {
+        const source = this.activeItem;
+        if (!source) return;
+        const candidates = this.groupItems().filter((item) => item !== source);
+        const destination = nearestItem(candidates, pointer);
+        if (!destination) return;
+
+        const from = geometryFor(source);
+        const to = geometryFor(destination);
+        const fromCenter = centerOf(from);
+        const toCenter = centerOf(to);
+        const deltaX = toCenter.x - fromCenter.x;
+        const deltaY = toCenter.y - fromCenter.y;
+        const distanceSquared = deltaX ** 2 + deltaY ** 2;
+        if (!distanceSquared) return;
+        const progress = clamp(
+            ((pointer.x - fromCenter.x) * deltaX + (pointer.y - fromCenter.y) * deltaY) / distanceSquared,
+            0,
+            1
+        );
+        const bridge = Math.sin(Math.PI * progress);
+        const horizontal = Math.abs(deltaX) >= Math.abs(deltaY);
+        const travel = Math.sqrt(distanceSquared);
+        let width = lerp(from.width, to.width, progress);
+        let height = lerp(from.height, to.height, progress);
+        const stretch = Math.min(72, travel * 0.27) * bridge;
+        if (horizontal) {
+            width += stretch;
+            height *= 1 - bridge * 0.11;
+        } else {
+            height += stretch;
+            width *= 1 - bridge * 0.11;
+        }
+        const centerX = lerp(fromCenter.x, toCenter.x, progress);
+        const centerY = lerp(fromCenter.y, toCenter.y, progress);
+        this.lens.dataset.liquidProgress = progress.toFixed(3);
+        this.lens.classList.toggle('is-bridging', progress > 0.01 && progress < 0.99);
+        this.render({
+            x: centerX - width / 2,
+            y: centerY - height / 2,
             width,
             height,
-            radius: resolveRadius(getComputedStyle(this.item).borderTopLeftRadius, width, height)
-        });
-        const key = opticalShapeKey(shape);
-        if (key === this.shapeKey && (this.svg?.isConnected || this.pendingShapeKey === key)) return;
-        this.shapeKey = key;
-        this.pendingShapeKey = key;
-        const version = ++this.configurationVersion;
+            radius: lerp(from.radius, to.radius, progress) + bridge * 8
+        }, false);
+    }
 
+    private render(geometry: LensGeometry, refreshMaps = true): void {
+        this.lens.style.setProperty('--liquid-x', `${geometry.x}px`);
+        this.lens.style.setProperty('--liquid-y', `${geometry.y}px`);
+        this.lens.style.setProperty('--liquid-width', `${geometry.width}px`);
+        this.lens.style.setProperty('--liquid-height', `${geometry.height}px`);
+        this.lens.style.setProperty('--liquid-radius', `${geometry.radius}px`);
+        this.sizeFilter(geometry);
+        if (refreshMaps) void this.ensureFilter(geometry);
+    }
+
+    private async ensureFilter(geometry: LensGeometry): Promise<void> {
+        const shape = normalizeShape(geometry);
+        const key = opticalShapeKey(shape);
+        if (key === this.mapShapeKey && this.filter) return;
+        this.mapShapeKey = key;
+        const version = ++this.filterVersion;
         const maps = MAP_CACHE.get(key) ?? createOpticalMaps(shape);
         MAP_CACHE.set(key, maps);
         const ready = MAP_READY_CACHE.get(key) ?? decodeOpticalMaps(maps);
         MAP_READY_CACHE.set(key, ready);
-        void ready.then(() => this.installFilter(shape, maps, version));
+        await ready;
+        if (version !== this.filterVersion || !this.isConnected) return;
+        this.installFilter(shape, maps);
     }
 
-    private installFilter(
-        shape: OpticalShape,
-        maps: OpticalMaps,
-        version: number
-    ): void {
-        if (version !== this.configurationVersion || !this.item.isConnected) return;
-        this.pendingShapeKey = '';
-        this.svg?.remove();
-        this.svg = this.createFilter(shape, maps);
-        if (this.layer.isConnected) this.item.prepend(this.svg);
-        else this.item.prepend(this.svg, this.base, this.layer);
-        const filterId = this.item.dataset.liquidFilterId;
-        if (filterId) this.item.style.setProperty('--liquid-filter', `url("#${filterId}")`);
-        this.updateFilter();
-    }
-
-    destroy(): void {
-        this.configurationVersion += 1;
-        cancelAnimationFrame(this.frame);
-        this.item.removeEventListener('pointerenter', this.onPointerEnter);
-        this.item.removeEventListener('pointerleave', this.onPointerLeave);
-        this.item.removeEventListener('pointerdown', this.onPointerDown);
-        this.item.removeEventListener('focusin', this.onFocusIn);
-        this.item.removeEventListener('focusout', this.onFocusOut);
-        window.removeEventListener('pointerup', this.onPointerUp);
-        window.removeEventListener('pointercancel', this.onPointerUp);
-        this.item.classList.remove('liquid-glass-host');
-        this.item.style.removeProperty('--liquid-filter');
-        this.item.style.removeProperty('--liquid-presence');
-        delete this.item.dataset.liquidFilterId;
-        delete this.item.dataset.liquidShape;
-        delete this.item.dataset.liquidState;
-        this.svg?.remove();
-        this.base.remove();
-        this.layer.remove();
-        this.content.replaceWith(...Array.from(this.content.childNodes));
-    }
-
-    private createFilter(shape: OpticalShape, maps: OpticalMaps): SVGSVGElement {
-        const id = `infinity-liquid-${++nextFilterId}`;
+    private installFilter(shape: OpticalShape, maps: OpticalMaps): void {
+        this.filter?.remove();
+        const id = `infinity-liquid-lens-${++nextFilterId}`;
         const template = document.createElement('template');
         template.innerHTML = `
-            <svg class="liquid-filter-defs" color-interpolation-filters="sRGB" aria-hidden="true">
-                <defs>
-                    <filter id="${id}">
-                        <feGaussianBlur in="SourceGraphic" stdDeviation="${SOURCE_BLUR}" result="blurred_source"></feGaussianBlur>
-                        <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" result="displacement_map" data-optical-map="displacement"></feImage>
-                        <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${maps.maximumDisplacement * REFRACTION_LEVEL}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
-                        <feColorMatrix in="displaced" type="saturate" values="${SPECULAR_SATURATION}" result="displaced_saturated"></feColorMatrix>
-                        <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" result="specular_layer" data-optical-map="specular"></feImage>
-                        <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
-                        <feComponentTransfer in="specular_layer" result="specular_faded">
-                            <feFuncA type="linear" slope="${SPECULAR_OPACITY}"></feFuncA>
-                        </feComponentTransfer>
-                        <feBlend in="specular_saturated" in2="displaced" mode="normal" result="withSaturation"></feBlend>
-                        <feBlend in="specular_faded" in2="withSaturation" mode="normal"></feBlend>
-                    </filter>
-                </defs>
-            </svg>
-        `;
-        const svg = template.content.firstElementChild as SVGSVGElement;
-        const filter = svg.querySelector('filter') as SVGFilterElement;
+            <filter id="${id}" color-interpolation-filters="sRGB">
+                <feImage href="${maps.magnifying}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="magnifying_displacement_map" data-optical-map="magnifying"></feImage>
+                <feDisplacementMap in="SourceGraphic" in2="magnifying_displacement_map" scale="${MAGNIFICATION_SCALE}" xChannelSelector="R" yChannelSelector="G" result="magnified_source"></feDisplacementMap>
+                <feGaussianBlur in="magnified_source" stdDeviation="0.2" result="blurred_source"></feGaussianBlur>
+                <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="displacement_map" data-optical-map="displacement"></feImage>
+                <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${maps.maximumDisplacement * REFRACTION_LEVEL}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
+                <feColorMatrix in="displaced" type="saturate" values="5" result="displaced_saturated"></feColorMatrix>
+                <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="specular_layer" data-optical-map="specular"></feImage>
+                <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
+                <feComponentTransfer in="specular_layer" result="specular_faded"><feFuncA type="linear" slope="0.42"></feFuncA></feComponentTransfer>
+                <feBlend in="specular_saturated" in2="displaced" mode="normal" result="withSaturation"></feBlend>
+                <feBlend in="specular_faded" in2="withSaturation" mode="normal"></feBlend>
+            </filter>`;
+        const filter = template.content.firstElementChild as SVGFilterElement;
         filter.dataset.maximumDisplacement = String(maps.maximumDisplacement);
         filter.dataset.liquidShape = opticalShapeKey(shape);
-        this.item.dataset.liquidFilterId = id;
-        this.item.dataset.liquidShape = opticalShapeKey(shape);
-        return svg;
+        this.filterContainer.append(filter);
+        this.filter = filter;
+        this.filterImages = Array.from(filter.querySelectorAll<SVGFEImageElement>('feImage'));
+        this.lens.style.setProperty('--liquid-filter', `url("#${id}")`);
+        this.lens.dataset.liquidFilterId = id;
+        this.sizeFilter(shape);
     }
 
-    private setTarget(value: number): void {
-        this.target = value;
-        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-            this.presence = value;
-            this.velocity = 0;
-            this.updateFilter();
-            return;
-        }
-        if (!this.frame) this.frame = requestAnimationFrame(this.tick);
+    private sizeFilter(geometry: Pick<LensGeometry, 'width' | 'height'>): void {
+        this.filterImages.forEach((image) => {
+            image.setAttribute('width', String(Math.round(geometry.width)));
+            image.setAttribute('height', String(Math.round(geometry.height)));
+        });
     }
 
-    private readonly tick = (): void => {
-        const acceleration = (this.target - this.presence) * SPRING_STIFFNESS;
-        this.velocity = (this.velocity + acceleration / 60) * Math.exp(-SPRING_DAMPING / 60);
-        this.presence += this.velocity / 60;
-        if (Math.abs(this.target - this.presence) < 0.001 && Math.abs(this.velocity) < 0.01) {
-            this.presence = this.target;
-            this.velocity = 0;
-            this.frame = 0;
-            this.updateFilter();
-            return;
-        }
-        this.updateFilter();
-        this.frame = requestAnimationFrame(this.tick);
-    };
-
-    private updateFilter(): void {
-        const presence = Math.min(1, Math.max(0, this.presence));
-        this.item.style.setProperty('--liquid-presence', presence.toFixed(4));
-        this.item.dataset.liquidState = presence > 0.01 ? 'active' : 'idle';
+    private groupItems(): HTMLElement[] {
+        if (!this.activeGroup) return [];
+        return Array.from(this.activeGroup.children).filter(
+            (child): child is HTMLElement => child instanceof HTMLElement && child.matches(ITEM_SELECTOR)
+        );
     }
 
-    private refreshTarget(): void {
-        this.setTarget(this.pointerInside || this.pointerDown || this.focusInside ? 1 : 0);
+    private scheduleHide(delay = 150): void {
+        if (this.hideTimer) return;
+        this.hideTimer = window.setTimeout(() => {
+            this.hideTimer = 0;
+            this.hide();
+        }, delay);
     }
 
-    private readonly onPointerEnter = (): void => {
-        this.pointerInside = true;
-        this.refreshTarget();
-    };
+    private cancelHide(): void {
+        if (!this.hideTimer) return;
+        window.clearTimeout(this.hideTimer);
+        this.hideTimer = 0;
+    }
 
-    private readonly onPointerLeave = (): void => {
-        this.pointerInside = false;
-        this.refreshTarget();
-    };
+    private hide(): void {
+        this.activeItem = null;
+        this.activeGroup = null;
+        this.lens.classList.remove('is-visible', 'is-bridging', 'is-pressed');
+        delete this.lens.dataset.liquidProgress;
+        delete this.lens.dataset.liquidTarget;
+    }
+}
 
-    private readonly onPointerDown = (): void => {
-        this.pointerDown = true;
-        this.refreshTarget();
-    };
+function findItem(target: EventTarget | null): HTMLElement | null {
+    const item = target instanceof Element ? target.closest(ITEM_SELECTOR) : null;
+    return item instanceof HTMLElement && item.getClientRects().length ? item : null;
+}
 
-    private readonly onPointerUp = (): void => {
-        if (!this.pointerDown) return;
-        this.pointerDown = false;
-        this.refreshTarget();
-    };
+function geometryFor(item: HTMLElement): LensGeometry {
+    const rect = item.getBoundingClientRect();
+    const padding = Math.min(14, Math.max(LENS_PADDING, Math.min(rect.width, rect.height) * 0.08));
+    const radius = resolveRadius(getComputedStyle(item).borderTopLeftRadius, rect.width, rect.height);
+    return normalizeGeometry({
+        x: rect.left - padding,
+        y: rect.top - padding,
+        width: rect.width + padding * 2,
+        height: rect.height + padding * 2,
+        radius: radius + padding
+    });
+}
 
-    private readonly onFocusIn = (): void => {
-        this.focusInside = true;
-        this.refreshTarget();
-    };
-
-    private readonly onFocusOut = (event: FocusEvent): void => {
-        this.focusInside = event.relatedTarget instanceof Node && this.item.contains(event.relatedTarget);
-        this.refreshTarget();
+function normalizeGeometry(geometry: LensGeometry): LensGeometry {
+    const width = Math.max(24, geometry.width);
+    const height = Math.max(24, geometry.height);
+    return {
+        x: geometry.x,
+        y: geometry.y,
+        width,
+        height,
+        radius: clamp(geometry.radius, 8, Math.min(width, height) / 2)
     };
 }
 
-function normalizeShape(shape: OpticalShape): OpticalShape {
-    const width = Math.max(1, Math.round(shape.width));
-    const height = Math.max(1, Math.round(shape.height));
+function normalizeShape(geometry: Pick<LensGeometry, 'width' | 'height' | 'radius'>): OpticalShape {
+    const normalized = normalizeGeometry({ ...geometry, x: 0, y: 0 });
     return {
-        width,
-        height,
-        radius: Math.min(Math.max(2, Math.round(shape.radius)), Math.min(width, height) / 2)
+        width: Math.max(24, Math.round(normalized.width)),
+        height: Math.max(24, Math.round(normalized.height)),
+        radius: Math.max(8, Math.round(normalized.radius))
     };
+}
+
+function centerOf(geometry: LensGeometry): Point {
+    return { x: geometry.x + geometry.width / 2, y: geometry.y + geometry.height / 2 };
+}
+
+function nearestItem(items: HTMLElement[], point: Point): HTMLElement | null {
+    let nearest: HTMLElement | null = null;
+    let distance = Number.POSITIVE_INFINITY;
+    items.forEach((item) => {
+        const rect = item.getBoundingClientRect();
+        const candidateDistance = Math.hypot(point.x - (rect.left + rect.width / 2), point.y - (rect.top + rect.height / 2));
+        if (candidateDistance < distance) {
+            nearest = item;
+            distance = candidateDistance;
+        }
+    });
+    return nearest;
+}
+
+function groupBounds(items: HTMLElement[]): DOMRect {
+    if (!items.length) return new DOMRect();
+    const rects = items.map((item) => item.getBoundingClientRect());
+    const left = Math.min(...rects.map((rect) => rect.left));
+    const top = Math.min(...rects.map((rect) => rect.top));
+    const right = Math.max(...rects.map((rect) => rect.right));
+    const bottom = Math.max(...rects.map((rect) => rect.bottom));
+    return new DOMRect(left, top, right - left, bottom - top);
+}
+
+function containsPoint(rect: DOMRect, point: Point, margin: number): boolean {
+    return point.x >= rect.left - margin && point.x <= rect.right + margin
+        && point.y >= rect.top - margin && point.y <= rect.bottom + margin;
+}
+
+function targetName(item: HTMLElement): string {
+    return item.className || item.tagName.toLowerCase();
 }
 
 function resolveRadius(value: string, width: number, height: number): number {
-    const firstValue = value.trim().split(/\s+/)[0] ?? '0';
-    if (firstValue.endsWith('%')) {
-        return Math.min(width, height) * (Number.parseFloat(firstValue) || 0) / 100;
-    }
-    return Number.parseFloat(firstValue) || Math.min(width, height) / 2;
+    if (value.endsWith('%')) return Math.min(width, height) * Number.parseFloat(value) / 100;
+    return Number.parseFloat(value) || Math.min(width, height) / 2;
 }
 
 async function decodeOpticalMaps(maps: OpticalMaps): Promise<void> {
-    await Promise.all([maps.displacement, maps.specular].map(async (source) => {
+    await Promise.all([maps.magnifying, maps.displacement, maps.specular].map((source) => new Promise<void>((resolve) => {
         const image = new Image();
+        image.onload = () => resolve();
+        image.onerror = () => resolve();
         image.src = source;
-        try {
-            await image.decode();
-        } catch {
-            // The SVG filter can still attempt to load the data URL directly.
-        }
-    }));
+        if (image.complete) resolve();
+    })));
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+    return Math.max(minimum, Math.min(maximum, value));
+}
+
+function lerp(from: number, to: number, progress: number): number {
+    return from + (to - from) * progress;
 }

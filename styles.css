@@ -1015,7 +1015,7 @@ backup-toast {
 }
 
 .liquid-filter-defs {
-    position: absolute;
+    position: fixed;
     display: none;
     width: 0;
     height: 0;
@@ -1024,60 +1024,60 @@ backup-toast {
 }
 
 liquid-glass-system {
-    display: none !important;
+    display: contents;
 }
 
-:where(.liquid-glass-host) {
-    position: relative;
-}
-
-.liquid-glass-host {
-    background: transparent !important;
-    box-shadow: none !important;
-}
-
-.liquid-glass-base,
-.liquid-glass-layer {
-    position: absolute;
-    z-index: 0;
-    inset: 0;
-    border-radius: inherit;
-    background: var(--liquid-glass-background, rgba(255, 255, 255, 0.12));
-    box-shadow: var(--liquid-glass-shadow, none);
+.liquid-glass-lens {
+    position: fixed;
+    z-index: 5000;
+    top: 0;
+    left: 0;
+    width: var(--liquid-width, 0);
+    height: var(--liquid-height, 0);
+    border: 1px solid rgba(255, 255, 255, 0.58);
+    border-radius: var(--liquid-radius, 999px);
+    opacity: 0;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.18), rgba(224, 244, 255, 0.08));
+    box-shadow:
+        0 10px 26px rgba(28, 41, 73, 0.2),
+        inset 2px 3px 10px rgba(255, 255, 255, 0.44),
+        inset -3px -4px 12px rgba(89, 156, 211, 0.15);
     pointer-events: none;
-    transform: translateZ(0);
-    will-change: opacity;
-}
-
-.liquid-glass-base {
-    opacity: calc(1 - var(--liquid-presence, 0));
-}
-
-.liquid-glass-layer {
-    opacity: var(--liquid-presence, 0);
+    transform: translate3d(var(--liquid-x, -100vw), var(--liquid-y, -100vh), 0) scale(0.96);
+    transform-origin: center;
     backdrop-filter: var(--liquid-filter);
     -webkit-backdrop-filter: var(--liquid-filter);
+    transition: opacity 130ms ease-out, scale 180ms cubic-bezier(0.2, 0.85, 0.25, 1);
+    will-change: transform, width, height, border-radius;
 }
 
-.liquid-glass-content {
-    position: relative;
-    z-index: 1;
-    display: inherit;
-    width: 100%;
-    height: 100%;
-    min-width: 0;
-    min-height: 0;
-    align-content: inherit;
-    align-items: inherit;
-    justify-content: inherit;
-    justify-items: inherit;
-    flex-direction: inherit;
-    gap: inherit;
-    text-align: inherit;
+.liquid-glass-lens::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: inherit;
+    box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.72), inset -1px -1px 0 rgba(92, 145, 192, 0.2);
+}
+
+.liquid-glass-lens.is-visible {
+    opacity: 1;
+    transform: translate3d(var(--liquid-x), var(--liquid-y), 0) scale(1);
+}
+
+.liquid-glass-lens.is-bridging {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(190, 231, 255, 0.1));
+    box-shadow:
+        0 14px 32px rgba(28, 41, 73, 0.22),
+        inset 3px 4px 14px rgba(255, 255, 255, 0.52),
+        inset -4px -5px 15px rgba(83, 153, 211, 0.18);
+}
+
+.liquid-glass-lens.is-pressed {
+    scale: 0.97;
 }
 
 @media (hover: hover) and (pointer: fine) {
-    .liquid-glass-host:hover {
+    [data-liquid-item]:hover {
         border-color: rgba(255, 255, 255, 0.82);
     }
 }

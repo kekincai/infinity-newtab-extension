@@ -83,34 +83,30 @@ async function centerOf(locator) {
 }
 
 async function inspectArticleFilter(page, locator) {
-    await expect(locator).toHaveClass(/liquid-glass-host/);
-    const before = await locator.evaluate((element) => {
-        const filter = element.querySelector('filter');
-        return {
-            backdrop: getComputedStyle(element.querySelector('.liquid-glass-layer')).backdropFilter,
-            scale: Number(filter?.querySelector('feDisplacementMap')?.getAttribute('scale') || 0),
-            baseOpacity: Number(getComputedStyle(element.querySelector('.liquid-glass-base')).opacity),
-            layerOpacity: Number(getComputedStyle(element.querySelector('.liquid-glass-layer')).opacity),
-            state: element.dataset.liquidState
-        };
-    });
     await locator.hover();
-    await expect.poll(() => locator.evaluate((element) => Number(
-        getComputedStyle(element).getPropertyValue('--liquid-presence') || 0
-    ))).toBeGreaterThan(0.999);
-    const info = await locator.evaluate((element) => {
-        const id = element.dataset.liquidFilterId;
-        const filter = id ? element.querySelector(`#${id}`) : null;
+    const lens = page.locator('.liquid-glass-lens');
+    await expect(lens).toHaveClass(/is-visible/);
+    await expect.poll(() => lens.getAttribute('data-liquid-filter-id')).toBeTruthy();
+    const info = await page.evaluate(() => {
+        const lens = document.querySelector('.liquid-glass-lens');
+        const id = lens?.dataset.liquidFilterId;
+        const filter = id ? document.getElementById(id) : null;
+        const rect = lens?.getBoundingClientRect();
+        const magnifying = filter?.querySelector('feImage[data-optical-map="magnifying"]');
         const displacement = filter?.querySelector('feImage[data-optical-map="displacement"]');
         const specular = filter?.querySelector('feImage[data-optical-map="specular"]');
-        const scale = Number(filter?.querySelector('feDisplacementMap')?.getAttribute('scale') || 0);
+        const scales = [...(filter?.querySelectorAll('feDisplacementMap') || [])].map((node) => Number(node.getAttribute('scale')));
         const maximum = Number(filter?.dataset.maximumDisplacement || 0);
         return {
             id,
-            width: element.offsetWidth,
-            height: element.offsetHeight,
-            backdrop: getComputedStyle(element.querySelector('.liquid-glass-layer')).backdropFilter,
-            coLocated: filter?.closest('svg')?.parentElement === element,
+            width: Math.round(rect?.width || 0),
+            height: Math.round(rect?.height || 0),
+            backdrop: lens ? getComputedStyle(lens).backdropFilter : '',
+            lensText: lens?.textContent,
+            lensChildren: lens?.children.length,
+            magnifyingWidth: Number(magnifying?.getAttribute('width')),
+            magnifyingHeight: Number(magnifying?.getAttribute('height')),
+            magnifyingHref: magnifying?.getAttribute('href'),
             displacementWidth: Number(displacement?.getAttribute('width')),
             displacementHeight: Number(displacement?.getAttribute('height')),
             displacementHref: displacement?.getAttribute('href'),
@@ -126,18 +122,17 @@ async function inspectArticleFilter(page, locator) {
             blur: filter?.querySelector('feGaussianBlur')?.getAttribute('stdDeviation'),
             saturation: filter?.querySelector('feColorMatrix')?.getAttribute('values'),
             specularOpacity: filter?.querySelector('feFuncA')?.getAttribute('slope'),
-            scale,
+            scales,
             maximum
         };
     });
     expect(info.id).toBeTruthy();
-    expect(before.backdrop).toContain(info.id);
-    expect(before.scale).toBeGreaterThan(30);
-    expect(before.baseOpacity).toBeCloseTo(1, 2);
-    expect(before.layerOpacity).toBeCloseTo(0, 2);
-    expect(before.state).toBe('idle');
     expect(info.backdrop).toContain(info.id);
-    expect(info.coLocated).toBe(true);
+    expect(info.lensText).toBe('');
+    expect(info.lensChildren).toBe(0);
+    expect(info.magnifyingWidth).toBe(info.width);
+    expect(info.magnifyingHeight).toBe(info.height);
+    expect(info.magnifyingHref).toMatch(/^data:image\/png;base64,/);
     expect(info.displacementWidth).toBe(info.width);
     expect(info.displacementHeight).toBe(info.height);
     expect(info.specularWidth).toBe(info.width);
@@ -148,6 +143,8 @@ async function inspectArticleFilter(page, locator) {
     expect(info.transferCount).toBe(1);
     expect(info.blendCount).toBe(2);
     expect(info.nodeOrder).toEqual([
+        'feimage',
+        'fedisplacementmap',
         'fegaussianblur',
         'feimage',
         'fedisplacementmap',
@@ -160,30 +157,33 @@ async function inspectArticleFilter(page, locator) {
     ]);
     expect(info.xChannel).toBe('R');
     expect(info.yChannel).toBe('G');
-    expect(Number(info.blur)).toBeCloseTo(1, 2);
-    expect(Number(info.saturation)).toBeCloseTo(4, 2);
-    expect(Number(info.specularOpacity)).toBeCloseTo(0.2, 2);
+    expect(Number(info.blur)).toBeCloseTo(0.2, 2);
+    expect(Number(info.saturation)).toBeCloseTo(5, 2);
+    expect(Number(info.specularOpacity)).toBeCloseTo(0.42, 2);
     expect(info.maximum).toBeGreaterThan(30);
-    expect(info.scale / info.maximum).toBeCloseTo(0.7, 2);
-    await expect(locator.locator('.liquid-glass-base')).toHaveCSS('opacity', '0');
-    await expect(locator.locator('.liquid-glass-layer')).toHaveCSS('opacity', '1');
+    expect(info.scales[0]).toBe(26);
+    expect(info.scales[1] / info.maximum).toBeCloseTo(0.92, 2);
     return info;
 }
 
 async function expectRenderedRefraction(page, locator) {
     await locator.hover();
-    await expect.poll(() => locator.evaluate((element) => Number(
-        getComputedStyle(element).getPropertyValue('--liquid-presence') || 0
-    ))).toBeGreaterThan(0.999);
-    const displacement = locator.locator('feDisplacementMap');
-    const activeScale = await displacement.getAttribute('scale');
-    expect(Number(activeScale)).toBeGreaterThan(30);
-    const active = await locator.screenshot({ animations: 'disabled' });
-    await displacement.evaluate((node) => node.setAttribute('scale', '0'));
+    const lens = page.locator('.liquid-glass-lens');
+    await expect(lens).toHaveClass(/is-visible/);
+    await expect.poll(() => lens.getAttribute('data-liquid-filter-id')).toBeTruthy();
+    const displacement = page.locator('.liquid-filter-defs feDisplacementMap');
+    const activeScales = await displacement.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('scale')));
+    expect(activeScales.some((scale) => Number(scale) > 30)).toBe(true);
+    const clip = await lens.boundingBox();
+    expect(clip).not.toBeNull();
+    await page.waitForTimeout(180);
+    const active = await page.screenshot({ clip });
+    const activeFilter = await lens.evaluate((element) => getComputedStyle(element).backdropFilter);
+    await lens.evaluate((element) => element.style.setProperty('--liquid-filter', 'none'));
     await page.waitForTimeout(150);
-    const neutral = await locator.screenshot({ animations: 'disabled' });
+    const neutral = await page.screenshot({ clip });
     expect(active.equals(neutral), 'SVG displacement must change rendered pixels').toBe(false);
-    await displacement.evaluate((node, scale) => node.setAttribute('scale', scale), activeScale);
+    await lens.evaluate((element, filter) => element.style.setProperty('--liquid-filter', filter), activeFilter);
 }
 
 async function openSettings(page, tab = 'appearance') {
@@ -204,40 +204,37 @@ test('renders the TypeScript Web Component home screen', async ({ page }) => {
     await expect(page.locator('.cpu-chip')).toHaveText('CPU: 8 线程');
     await expect(page.locator('.battery-chip')).toContainText('82%');
     await expect(page.locator('liquid-glass-system')).toHaveCount(1);
-    await expect(page.locator('.bookmark-tile').first()).toHaveClass(/liquid-glass-host/);
     const coverage = await page.evaluate(() => {
         const items = [...document.querySelectorAll('[data-liquid-item]')];
         return {
             total: items.length,
             oldWrappers: document.querySelectorAll('liquid-surface, liquid-filter-bank').length,
-            withoutFilter: items.filter((item) => item.getClientRects().length && (!item.classList.contains('liquid-glass-host') || !item.dataset.liquidFilterId)).length,
-            withoutLocalFilter: items.filter((item) => item.getClientRects().length && !item.querySelector('svg.liquid-filter-defs filter')).length
+            movedChildren: items.filter((item) => item.querySelector('.liquid-glass-content')).length,
+            lenses: document.querySelectorAll('.liquid-glass-lens').length
         };
     });
     expect(coverage.total).toBeGreaterThan(10);
     expect(coverage.oldWrappers).toBe(0);
-    expect(coverage.withoutFilter).toBe(0);
-    expect(coverage.withoutLocalFilter).toBe(0);
+    expect(coverage.movedChildren).toBe(0);
+    expect(coverage.lenses).toBe(1);
     expect(errors).toEqual([]);
 });
 
-test('co-locates the article optical pipeline inside every real component', async ({ page }) => {
+test('uses one empty article precision lens over every real component', async ({ page }) => {
     const errors = await openExtension(page);
     const action = await inspectArticleFilter(page, page.locator('.anime-wallpaper'));
     const secondAction = await inspectArticleFilter(page, page.locator('.create-folder'));
-    expect(secondAction.id).not.toBe(action.id);
+    expect(secondAction.id).toBeTruthy();
 
     const folder = await inspectArticleFilter(page, page.locator('.folder-tile[data-folder="POM"]'));
     const bookmark = await inspectArticleFilter(page, page.locator('.bookmark-tile[data-bookmark-id="1"]'));
-    expect(bookmark.id).not.toBe(folder.id);
+    expect(bookmark.id).toBeTruthy();
 
     await inspectArticleFilter(page, page.locator('.recent-card').first());
     await inspectArticleFilter(page, page.locator('.search-shell'));
 
     await page.mouse.move(10, 10);
-    await expect.poll(() => page.locator('.anime-wallpaper').evaluate((element) => Number(
-        getComputedStyle(element).getPropertyValue('--liquid-presence') || 0
-    ))).toBeLessThan(0.01);
+    await expect(page.locator('.liquid-glass-lens')).not.toHaveClass(/is-visible/, { timeout: 1000 });
     expect(errors).toEqual([]);
 });
 
@@ -255,26 +252,43 @@ test('renders real refraction pixels on hover', async ({ page }) => {
     expect(errors).toEqual([]);
 });
 
-test('crossfades the real glass layers while moving between controls', async ({ page }) => {
+test('tracks the real pointer midway in both directions without flipping', async ({ page }) => {
     const errors = await openExtension(page);
     const first = page.locator('.anime-wallpaper');
     const second = page.locator('.create-folder');
-    await first.hover();
-    await expect.poll(() => first.evaluate((element) => Number(
-        getComputedStyle(element).getPropertyValue('--liquid-presence') || 0
-    ))).toBeGreaterThan(0.999);
-    await second.hover();
-    await page.waitForTimeout(80);
-    const transition = await page.evaluate(() => ({
-        outgoing: Number(getComputedStyle(document.querySelector('.anime-wallpaper')).getPropertyValue('--liquid-presence')),
-        incoming: Number(getComputedStyle(document.querySelector('.create-folder')).getPropertyValue('--liquid-presence')),
-        fakeLayers: document.querySelectorAll('liquid-surface, liquid-filter-bank, [data-liquid-cursor]').length
+    const from = await centerOf(first);
+    const to = await centerOf(second);
+    const midpoint = {
+        x: (from.box.x + from.box.width + to.box.x) / 2,
+        y: (from.y + to.y) / 2
+    };
+    const expectedProgress = (midpoint.x - from.x) / (to.x - from.x);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.move(midpoint.x, midpoint.y);
+    const leftToRight = await page.locator('.liquid-glass-lens').evaluate((lens) => ({
+        rect: lens.getBoundingClientRect().toJSON(),
+        progress: Number(lens.dataset.liquidProgress),
+        scaleX: new DOMMatrix(getComputedStyle(lens).transform).a,
+        bridging: lens.classList.contains('is-bridging')
     }));
-    expect(transition.outgoing).toBeGreaterThan(0.05);
-    expect(transition.outgoing).toBeLessThan(0.95);
-    expect(transition.incoming).toBeGreaterThan(0.05);
-    expect(transition.incoming).toBeLessThan(0.95);
-    expect(transition.fakeLayers).toBe(0);
+    await page.mouse.move(to.x, to.y);
+    await page.mouse.move(midpoint.x, midpoint.y);
+    const rightToLeft = await page.locator('.liquid-glass-lens').evaluate((lens) => ({
+        rect: lens.getBoundingClientRect().toJSON(),
+        progress: Number(lens.dataset.liquidProgress),
+        scaleX: new DOMMatrix(getComputedStyle(lens).transform).a,
+        bridging: lens.classList.contains('is-bridging')
+    }));
+    expect(leftToRight.progress).toBeCloseTo(expectedProgress, 2);
+    expect(rightToLeft.progress).toBeCloseTo(1 - expectedProgress, 2);
+    expect(leftToRight.bridging).toBe(true);
+    expect(rightToLeft.bridging).toBe(true);
+    expect(leftToRight.rect.x).toBeCloseTo(rightToLeft.rect.x, 0);
+    expect(leftToRight.rect.width).toBeCloseTo(rightToLeft.rect.width, 0);
+    expect(leftToRight.rect.width).toBeGreaterThan(Math.max(from.box.width, to.box.width) + 16);
+    expect(leftToRight.scaleX).toBeGreaterThan(0);
+    expect(rightToLeft.scaleX).toBeGreaterThan(0);
+    expect(await page.locator('.liquid-glass-lens').textContent()).toBe('');
     expect(errors).toEqual([]);
 });
 

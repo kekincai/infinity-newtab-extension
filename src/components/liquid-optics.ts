@@ -5,6 +5,7 @@ export type OpticalShape = {
 };
 
 export type OpticalMaps = {
+    magnifying: string;
     displacement: string;
     specular: string;
     maximumDisplacement: number;
@@ -65,6 +66,11 @@ export function createOpticalMaps(shape: OpticalShape): OpticalMaps {
     const maximumDisplacement = Math.max(...displacements.map(Math.abs));
 
     return {
+        magnifying: imageDataUrl(createMagnifyingMap(
+            shape.width,
+            shape.height,
+            pixelRatio
+        )),
         displacement: imageDataUrl(createDisplacementMap(
             shape.width,
             shape.height,
@@ -84,6 +90,28 @@ export function createOpticalMaps(shape: OpticalShape): OpticalMaps {
         )),
         maximumDisplacement
     };
+}
+
+/** The article's precision lens adds a central magnification field before the bezel bend. */
+function createMagnifyingMap(width: number, height: number, pixelRatio: number): ImageData {
+    const canvasWidth = Math.max(1, Math.round(width * pixelRatio));
+    const canvasHeight = Math.max(1, Math.round(height * pixelRatio));
+    const image = new ImageData(canvasWidth, canvasHeight);
+
+    for (let y = 0; y < canvasHeight; y += 1) {
+        for (let x = 0; x < canvasWidth; x += 1) {
+            const normalizedX = ((x + 0.5) / canvasWidth) * 2 - 1;
+            const normalizedY = ((y + 0.5) / canvasHeight) * 2 - 1;
+            const distance = Math.hypot(normalizedX, normalizedY);
+            const strength = distance < 1 ? 1 - smoothstep(0.08, 0.94, distance) : 0;
+            const index = (y * canvasWidth + x) * 4;
+            image.data[index] = 128 - normalizedX * strength * 112;
+            image.data[index + 1] = 128 - normalizedY * strength * 112;
+            image.data[index + 2] = 128;
+            image.data[index + 3] = 255;
+        }
+    }
+    return image;
 }
 
 /** Port of the article's RG displacement-map rasterizer. */
@@ -205,4 +233,9 @@ function imageDataUrl(image: ImageData): string {
 
 function clamp(value: number, minimum: number, maximum: number): number {
     return Math.min(maximum, Math.max(minimum, value));
+}
+
+function smoothstep(start: number, end: number, value: number): number {
+    const progress = clamp((value - start) / (end - start), 0, 1);
+    return progress * progress * (3 - 2 * progress);
 }
