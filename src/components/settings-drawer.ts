@@ -24,14 +24,20 @@ export class SettingsDrawer extends StoreElement {
         const settings = appStore.state.settings;
         this.innerHTML = `
             <aside class="settings-drawer glass-panel ${this.openState ? 'is-open' : ''}" aria-hidden="${!this.openState}" ${this.openState ? '' : 'inert'}>
-                <header class="settings-header"><div><span class="section-kicker">个性化控制台</span><h2>设置</h2></div><button class="settings-close" type="button" aria-label="关闭">×</button></header>
-                <div class="settings-tabs" role="tablist">
-                    ${tabButton('appearance', '外观', this.activeTab)}
-                    ${tabButton('wallpaper', '壁纸', this.activeTab)}
-                    ${tabButton('layout', '布局', this.activeTab)}
-                    ${tabButton('data', '数据', this.activeTab)}
+                <header class="settings-header">
+                    <span class="settings-brand" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                    <div><span class="section-kicker">Infinity 控制台</span><h2>设置</h2></div>
+                    <button class="settings-close" type="button" aria-label="关闭">×</button>
+                </header>
+                <div class="settings-workspace">
+                    <div class="settings-tabs" role="tablist">
+                        ${tabButton('appearance', '外观', '◌', this.activeTab)}
+                        ${tabButton('wallpaper', '壁纸', '◇', this.activeTab)}
+                        ${tabButton('layout', '布局', '⊞', this.activeTab)}
+                        ${tabButton('data', '数据', '⇄', this.activeTab)}
+                    </div>
+                    <div class="settings-pane">${this.paneTemplate(settings)}</div>
                 </div>
-                <div class="settings-pane">${this.paneTemplate(settings)}</div>
             </aside>
             <button class="settings-scrim ${this.openState ? 'is-open' : ''}" type="button" aria-label="关闭设置"></button>
         `;
@@ -40,34 +46,56 @@ export class SettingsDrawer extends StoreElement {
 
     private paneTemplate(settings: AppSettings): string {
         if (this.activeTab === 'appearance') return `
-            <label class="setting-field"><span>时钟格式</span><select data-setting="clockFormat"><option value="24h" ${settings.appearance.clockFormat === '24h' ? 'selected' : ''}>24 小时制</option><option value="12h" ${settings.appearance.clockFormat === '12h' ? 'selected' : ''}>12 小时制</option></select></label>
-            <label class="setting-field"><span>搜索引擎</span><select data-setting="searchEngine"><option value="google" ${settings.layout.searchEngine === 'google' ? 'selected' : ''}>Google</option><option value="bing" ${settings.layout.searchEngine === 'bing' ? 'selected' : ''}>Bing</option><option value="baidu" ${settings.layout.searchEngine === 'baidu' ? 'selected' : ''}>百度</option><option value="duckduckgo" ${settings.layout.searchEngine === 'duckduckgo' ? 'selected' : ''}>DuckDuckGo</option></select></label>
-            ${toggle('enhancedAnimations', '增强动画', settings.appearance.enhancedAnimations)}
-            ${toggle('darkText', '使用深色文字', settings.appearance.theme === 'light')}
+            ${paneHeader('外观', '决定时间、搜索和交互呈现方式。')}
+            <section class="settings-group">
+                <h3>基础偏好</h3>
+                <label class="setting-field"><span>时钟格式</span><select data-setting="clockFormat"><option value="24h" ${settings.appearance.clockFormat === '24h' ? 'selected' : ''}>24 小时制</option><option value="12h" ${settings.appearance.clockFormat === '12h' ? 'selected' : ''}>12 小时制</option></select></label>
+                <label class="setting-field"><span>搜索引擎</span><select data-setting="searchEngine"><option value="google" ${settings.layout.searchEngine === 'google' ? 'selected' : ''}>Google</option><option value="bing" ${settings.layout.searchEngine === 'bing' ? 'selected' : ''}>Bing</option><option value="baidu" ${settings.layout.searchEngine === 'baidu' ? 'selected' : ''}>百度</option><option value="duckduckgo" ${settings.layout.searchEngine === 'duckduckgo' ? 'selected' : ''}>DuckDuckGo</option></select></label>
+            </section>
+            <section class="settings-group settings-list">
+                <h3>视觉体验</h3>
+                ${toggle('enhancedAnimations', '增强动画', settings.appearance.enhancedAnimations, '启用进场动画与 Liquid Glass 形变')}
+                ${toggle('darkText', '使用深色文字', settings.appearance.theme === 'light', '浅色壁纸推荐开启，深色壁纸可关闭')}
+            </section>
         `;
         if (this.activeTab === 'wallpaper') return `
-            <div class="settings-button-stack">
-                <button class="settings-action random-wallpaper" type="button" data-liquid-item>✦ 二次元随机壁纸</button>
-                <label class="settings-action upload-wallpaper" data-liquid-item>↑ 上传本地图片或视频<input type="file" accept="image/*,video/*" hidden></label>
-                <button class="settings-action reset-wallpaper" type="button" data-liquid-item>↻ 重置默认壁纸</button>
-            </div>
-            ${range('blur', '模糊度', settings.wallpaper.blur, 0, 10, 'px')}
-            ${range('overlay', '暗度', settings.wallpaper.overlay, 0, 80, '%')}
+            ${paneHeader('壁纸', '让启动台适配图片、视频和不同明暗背景。')}
+            <section class="settings-group">
+                <h3>壁纸来源</h3>
+                <div class="settings-button-stack">
+                    <button class="settings-action settings-action-featured random-wallpaper" type="button" data-liquid-item><b>✦</b><span>换一张二次元壁纸<small>从在线图源随机获取</small></span></button>
+                    <label class="settings-action upload-wallpaper" data-liquid-item><b>↑</b><span>上传本地图片或视频<small>视频会自动静音循环播放</small></span><input type="file" accept="image/*,video/*" hidden></label>
+                    <button class="settings-action reset-wallpaper" type="button" data-liquid-item><b>↻</b><span>恢复默认背景</span></button>
+                </div>
+            </section>
+            <section class="settings-group">
+                <h3>画面调节</h3>
+                ${range('blur', '模糊度', settings.wallpaper.blur, 0, 10, 'px')}
+                ${range('overlay', '暗度', settings.wallpaper.overlay, 0, 80, '%')}
+            </section>
         `;
         if (this.activeTab === 'layout') return `
-            ${toggle('showClock', '显示时钟与日期', settings.layout.showClock)}
-            ${toggle('showSearch', '显示搜索框', settings.layout.showSearch)}
-            ${toggle('showBookmarks', '显示书签与文件夹', settings.layout.showBookmarks)}
-            ${toggle('showStatus', '显示活动与系统状态', settings.layout.showStatus)}
-            ${toggle('showRecent', '显示最近常访问', settings.layout.showRecent)}
+            ${paneHeader('布局', '只保留你每天真正会看的区域。')}
+            <section class="settings-group settings-list">
+                <h3>桌面组件</h3>
+                ${toggle('showClock', '时钟与日期', settings.layout.showClock, '显示在页面顶部左侧')}
+                ${toggle('showSearch', '搜索框', settings.layout.showSearch, '使用斜杠键可快速聚焦')}
+                ${toggle('showBookmarks', '书签与文件夹', settings.layout.showBookmarks, '启动台的主要工作区域')}
+                ${toggle('showStatus', '活动与系统状态', settings.layout.showStatus, '媒体、下载、电池和设备信息')}
+                ${toggle('showRecent', '最近常访问', settings.layout.showRecent, '根据本机浏览历史聚合网站')}
+            </section>
         `;
         return `
-            <div class="settings-button-stack">
-                <button class="settings-action export-data" type="button" data-liquid-item>↓ 导出数据</button>
-                <label class="settings-action import-data" data-liquid-item>↑ 导入数据<input type="file" accept="application/json,.json" hidden></label>
-                <button class="settings-action danger reset-data" type="button" data-liquid-item>↻ 重置所有设置</button>
-            </div>
-            <div class="data-note"><p>导出文件包含书签、设置和本地图片/视频壁纸。</p><p>兼容旧版 1.0 与 2.0 备份，导入会覆盖当前数据。</p></div>
+            ${paneHeader('数据', '备份、迁移或恢复当前启动台。')}
+            <section class="settings-group">
+                <h3>备份与恢复</h3>
+                <div class="settings-button-stack">
+                    <button class="settings-action export-data" type="button" data-liquid-item><b>↓</b><span>导出数据<small>保存书签、设置和本地壁纸</small></span></button>
+                    <label class="settings-action import-data" data-liquid-item><b>↑</b><span>导入数据<small>兼容旧版 1.0 与 2.0 备份</small></span><input type="file" accept="application/json,.json" hidden></label>
+                    <button class="settings-action danger reset-data" type="button" data-liquid-item><b>↻</b><span>重置所有设置<small>清空后无法撤销</small></span></button>
+                </div>
+            </section>
+            <div class="data-note"><strong>导入前建议先导出</strong><p>导入操作会覆盖当前书签、布局与壁纸设置。</p></div>
         `;
     }
 
@@ -159,12 +187,16 @@ export class SettingsDrawer extends StoreElement {
     }
 }
 
-function tabButton(tab: Tab, label: string, active: Tab): string {
-    return `<button type="button" role="tab" data-tab="${tab}" data-liquid-item class="settings-tab ${tab === active ? 'is-active' : ''}" aria-selected="${tab === active}">${label}</button>`;
+function tabButton(tab: Tab, label: string, icon: string, active: Tab): string {
+    return `<button type="button" role="tab" data-tab="${tab}" data-liquid-item class="settings-tab ${tab === active ? 'is-active' : ''}" aria-selected="${tab === active}"><i aria-hidden="true">${icon}</i><span>${label}</span></button>`;
 }
 
-function toggle(name: string, label: string, checked: boolean): string {
-    return `<label class="toggle-row"><span>${label}</span><input type="checkbox" data-toggle="${name}" ${checked ? 'checked' : ''}><i aria-hidden="true"></i></label>`;
+function paneHeader(title: string, description: string): string {
+    return `<header class="settings-pane-header"><h3>${title}</h3><p>${description}</p></header>`;
+}
+
+function toggle(name: string, label: string, checked: boolean, description = ''): string {
+    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ''}</span><input type="checkbox" data-toggle="${name}" ${checked ? 'checked' : ''}><i aria-hidden="true"></i></label>`;
 }
 
 function range(name: string, label: string, value: number, min: number, max: number, unit: string): string {

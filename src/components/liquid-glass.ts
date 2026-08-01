@@ -119,8 +119,11 @@ export class LiquidGlassSystem extends HTMLElement {
         const source = this.activeItem;
         if (!source) return;
         const candidates = this.groupItems().filter((item) => item !== source);
-        const destination = nearestItem(candidates, pointer);
-        if (!destination) return;
+        const destination = directionalItem(source, candidates, pointer);
+        if (!destination) {
+            this.scheduleHide(120);
+            return;
+        }
 
         const from = geometryFor(source);
         const to = geometryFor(destination);
@@ -295,12 +298,25 @@ function centerOf(geometry: LensGeometry): Point {
     return { x: geometry.x + geometry.width / 2, y: geometry.y + geometry.height / 2 };
 }
 
-function nearestItem(items: HTMLElement[], point: Point): HTMLElement | null {
+function directionalItem(source: HTMLElement, items: HTMLElement[], point: Point): HTMLElement | null {
+    const sourceRect = source.getBoundingClientRect();
+    const sourceCenter = { x: sourceRect.left + sourceRect.width / 2, y: sourceRect.top + sourceRect.height / 2 };
+    const pointerDelta = { x: point.x - sourceCenter.x, y: point.y - sourceCenter.y };
+    const horizontal = Math.abs(pointerDelta.x) >= Math.abs(pointerDelta.y);
     let nearest: HTMLElement | null = null;
     let distance = Number.POSITIVE_INFINITY;
     items.forEach((item) => {
         const rect = item.getBoundingClientRect();
-        const candidateDistance = Math.hypot(point.x - (rect.left + rect.width / 2), point.y - (rect.top + rect.height / 2));
+        const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        const candidateDelta = { x: center.x - sourceCenter.x, y: center.y - sourceCenter.y };
+        const sameLane = horizontal
+            ? Math.abs(candidateDelta.y) <= (sourceRect.height + rect.height) * 0.35
+            : Math.abs(candidateDelta.x) <= (sourceRect.width + rect.width) * 0.35;
+        const forward = horizontal
+            ? candidateDelta.x * pointerDelta.x > 0
+            : candidateDelta.y * pointerDelta.y > 0;
+        if (!sameLane || !forward) return;
+        const candidateDistance = Math.hypot(point.x - center.x, point.y - center.y);
         if (candidateDistance < distance) {
             nearest = item;
             distance = candidateDistance;

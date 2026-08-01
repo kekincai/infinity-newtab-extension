@@ -1402,12 +1402,21 @@
   function centerOf(geometry) {
     return { x: geometry.x + geometry.width / 2, y: geometry.y + geometry.height / 2 };
   }
-  function nearestItem(items, point) {
+  function directionalItem(source, items, point) {
+    const sourceRect = source.getBoundingClientRect();
+    const sourceCenter = { x: sourceRect.left + sourceRect.width / 2, y: sourceRect.top + sourceRect.height / 2 };
+    const pointerDelta = { x: point.x - sourceCenter.x, y: point.y - sourceCenter.y };
+    const horizontal = Math.abs(pointerDelta.x) >= Math.abs(pointerDelta.y);
     let nearest = null;
     let distance = Number.POSITIVE_INFINITY;
     items.forEach((item) => {
       const rect = item.getBoundingClientRect();
-      const candidateDistance = Math.hypot(point.x - (rect.left + rect.width / 2), point.y - (rect.top + rect.height / 2));
+      const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      const candidateDelta = { x: center.x - sourceCenter.x, y: center.y - sourceCenter.y };
+      const sameLane = horizontal ? Math.abs(candidateDelta.y) <= (sourceRect.height + rect.height) * 0.35 : Math.abs(candidateDelta.x) <= (sourceRect.width + rect.width) * 0.35;
+      const forward = horizontal ? candidateDelta.x * pointerDelta.x > 0 : candidateDelta.y * pointerDelta.y > 0;
+      if (!sameLane || !forward) return;
+      const candidateDistance = Math.hypot(point.x - center.x, point.y - center.y);
       if (candidateDistance < distance) {
         nearest = item;
         distance = candidateDistance;
@@ -1549,8 +1558,11 @@
           const source = this.activeItem;
           if (!source) return;
           const candidates = this.groupItems().filter((item) => item !== source);
-          const destination = nearestItem(candidates, pointer);
-          if (!destination) return;
+          const destination = directionalItem(source, candidates, pointer);
+          if (!destination) {
+            this.scheduleHide(120);
+            return;
+          }
           const from = geometryFor(source);
           const to = geometryFor(destination);
           const fromCenter = centerOf(from);
@@ -1829,11 +1841,14 @@
   });
 
   // src/components/settings-drawer.ts
-  function tabButton(tab, label, active) {
-    return `<button type="button" role="tab" data-tab="${tab}" data-liquid-item class="settings-tab ${tab === active ? "is-active" : ""}" aria-selected="${tab === active}">${label}</button>`;
+  function tabButton(tab, label, icon, active) {
+    return `<button type="button" role="tab" data-tab="${tab}" data-liquid-item class="settings-tab ${tab === active ? "is-active" : ""}" aria-selected="${tab === active}"><i aria-hidden="true">${icon}</i><span>${label}</span></button>`;
   }
-  function toggle(name, label, checked) {
-    return `<label class="toggle-row"><span>${label}</span><input type="checkbox" data-toggle="${name}" ${checked ? "checked" : ""}><i aria-hidden="true"></i></label>`;
+  function paneHeader(title, description) {
+    return `<header class="settings-pane-header"><h3>${title}</h3><p>${description}</p></header>`;
+  }
+  function toggle(name, label, checked, description = "") {
+    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ""}</span><input type="checkbox" data-toggle="${name}" ${checked ? "checked" : ""}><i aria-hidden="true"></i></label>`;
   }
   function range(name, label, value, min, max, unit) {
     return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}"></label>`;
@@ -1864,14 +1879,20 @@
           const settings = appStore.state.settings;
           this.innerHTML = `
             <aside class="settings-drawer glass-panel ${this.openState ? "is-open" : ""}" aria-hidden="${!this.openState}" ${this.openState ? "" : "inert"}>
-                <header class="settings-header"><div><span class="section-kicker">\u4E2A\u6027\u5316\u63A7\u5236\u53F0</span><h2>\u8BBE\u7F6E</h2></div><button class="settings-close" type="button" aria-label="\u5173\u95ED">\xD7</button></header>
-                <div class="settings-tabs" role="tablist">
-                    ${tabButton("appearance", "\u5916\u89C2", this.activeTab)}
-                    ${tabButton("wallpaper", "\u58C1\u7EB8", this.activeTab)}
-                    ${tabButton("layout", "\u5E03\u5C40", this.activeTab)}
-                    ${tabButton("data", "\u6570\u636E", this.activeTab)}
+                <header class="settings-header">
+                    <span class="settings-brand" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                    <div><span class="section-kicker">Infinity \u63A7\u5236\u53F0</span><h2>\u8BBE\u7F6E</h2></div>
+                    <button class="settings-close" type="button" aria-label="\u5173\u95ED">\xD7</button>
+                </header>
+                <div class="settings-workspace">
+                    <div class="settings-tabs" role="tablist">
+                        ${tabButton("appearance", "\u5916\u89C2", "\u25CC", this.activeTab)}
+                        ${tabButton("wallpaper", "\u58C1\u7EB8", "\u25C7", this.activeTab)}
+                        ${tabButton("layout", "\u5E03\u5C40", "\u229E", this.activeTab)}
+                        ${tabButton("data", "\u6570\u636E", "\u21C4", this.activeTab)}
+                    </div>
+                    <div class="settings-pane">${this.paneTemplate(settings)}</div>
                 </div>
-                <div class="settings-pane">${this.paneTemplate(settings)}</div>
             </aside>
             <button class="settings-scrim ${this.openState ? "is-open" : ""}" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E"></button>
         `;
@@ -1879,34 +1900,56 @@
         }
         paneTemplate(settings) {
           if (this.activeTab === "appearance") return `
-            <label class="setting-field"><span>\u65F6\u949F\u683C\u5F0F</span><select data-setting="clockFormat"><option value="24h" ${settings.appearance.clockFormat === "24h" ? "selected" : ""}>24 \u5C0F\u65F6\u5236</option><option value="12h" ${settings.appearance.clockFormat === "12h" ? "selected" : ""}>12 \u5C0F\u65F6\u5236</option></select></label>
-            <label class="setting-field"><span>\u641C\u7D22\u5F15\u64CE</span><select data-setting="searchEngine"><option value="google" ${settings.layout.searchEngine === "google" ? "selected" : ""}>Google</option><option value="bing" ${settings.layout.searchEngine === "bing" ? "selected" : ""}>Bing</option><option value="baidu" ${settings.layout.searchEngine === "baidu" ? "selected" : ""}>\u767E\u5EA6</option><option value="duckduckgo" ${settings.layout.searchEngine === "duckduckgo" ? "selected" : ""}>DuckDuckGo</option></select></label>
-            ${toggle("enhancedAnimations", "\u589E\u5F3A\u52A8\u753B", settings.appearance.enhancedAnimations)}
-            ${toggle("darkText", "\u4F7F\u7528\u6DF1\u8272\u6587\u5B57", settings.appearance.theme === "light")}
+            ${paneHeader("\u5916\u89C2", "\u51B3\u5B9A\u65F6\u95F4\u3001\u641C\u7D22\u548C\u4EA4\u4E92\u5448\u73B0\u65B9\u5F0F\u3002")}
+            <section class="settings-group">
+                <h3>\u57FA\u7840\u504F\u597D</h3>
+                <label class="setting-field"><span>\u65F6\u949F\u683C\u5F0F</span><select data-setting="clockFormat"><option value="24h" ${settings.appearance.clockFormat === "24h" ? "selected" : ""}>24 \u5C0F\u65F6\u5236</option><option value="12h" ${settings.appearance.clockFormat === "12h" ? "selected" : ""}>12 \u5C0F\u65F6\u5236</option></select></label>
+                <label class="setting-field"><span>\u641C\u7D22\u5F15\u64CE</span><select data-setting="searchEngine"><option value="google" ${settings.layout.searchEngine === "google" ? "selected" : ""}>Google</option><option value="bing" ${settings.layout.searchEngine === "bing" ? "selected" : ""}>Bing</option><option value="baidu" ${settings.layout.searchEngine === "baidu" ? "selected" : ""}>\u767E\u5EA6</option><option value="duckduckgo" ${settings.layout.searchEngine === "duckduckgo" ? "selected" : ""}>DuckDuckGo</option></select></label>
+            </section>
+            <section class="settings-group settings-list">
+                <h3>\u89C6\u89C9\u4F53\u9A8C</h3>
+                ${toggle("enhancedAnimations", "\u589E\u5F3A\u52A8\u753B", settings.appearance.enhancedAnimations, "\u542F\u7528\u8FDB\u573A\u52A8\u753B\u4E0E Liquid Glass \u5F62\u53D8")}
+                ${toggle("darkText", "\u4F7F\u7528\u6DF1\u8272\u6587\u5B57", settings.appearance.theme === "light", "\u6D45\u8272\u58C1\u7EB8\u63A8\u8350\u5F00\u542F\uFF0C\u6DF1\u8272\u58C1\u7EB8\u53EF\u5173\u95ED")}
+            </section>
         `;
           if (this.activeTab === "wallpaper") return `
-            <div class="settings-button-stack">
-                <button class="settings-action random-wallpaper" type="button" data-liquid-item>\u2726 \u4E8C\u6B21\u5143\u968F\u673A\u58C1\u7EB8</button>
-                <label class="settings-action upload-wallpaper" data-liquid-item>\u2191 \u4E0A\u4F20\u672C\u5730\u56FE\u7247\u6216\u89C6\u9891<input type="file" accept="image/*,video/*" hidden></label>
-                <button class="settings-action reset-wallpaper" type="button" data-liquid-item>\u21BB \u91CD\u7F6E\u9ED8\u8BA4\u58C1\u7EB8</button>
-            </div>
-            ${range("blur", "\u6A21\u7CCA\u5EA6", settings.wallpaper.blur, 0, 10, "px")}
-            ${range("overlay", "\u6697\u5EA6", settings.wallpaper.overlay, 0, 80, "%")}
+            ${paneHeader("\u58C1\u7EB8", "\u8BA9\u542F\u52A8\u53F0\u9002\u914D\u56FE\u7247\u3001\u89C6\u9891\u548C\u4E0D\u540C\u660E\u6697\u80CC\u666F\u3002")}
+            <section class="settings-group">
+                <h3>\u58C1\u7EB8\u6765\u6E90</h3>
+                <div class="settings-button-stack">
+                    <button class="settings-action settings-action-featured random-wallpaper" type="button" data-liquid-item><b>\u2726</b><span>\u6362\u4E00\u5F20\u4E8C\u6B21\u5143\u58C1\u7EB8<small>\u4ECE\u5728\u7EBF\u56FE\u6E90\u968F\u673A\u83B7\u53D6</small></span></button>
+                    <label class="settings-action upload-wallpaper" data-liquid-item><b>\u2191</b><span>\u4E0A\u4F20\u672C\u5730\u56FE\u7247\u6216\u89C6\u9891<small>\u89C6\u9891\u4F1A\u81EA\u52A8\u9759\u97F3\u5FAA\u73AF\u64AD\u653E</small></span><input type="file" accept="image/*,video/*" hidden></label>
+                    <button class="settings-action reset-wallpaper" type="button" data-liquid-item><b>\u21BB</b><span>\u6062\u590D\u9ED8\u8BA4\u80CC\u666F</span></button>
+                </div>
+            </section>
+            <section class="settings-group">
+                <h3>\u753B\u9762\u8C03\u8282</h3>
+                ${range("blur", "\u6A21\u7CCA\u5EA6", settings.wallpaper.blur, 0, 10, "px")}
+                ${range("overlay", "\u6697\u5EA6", settings.wallpaper.overlay, 0, 80, "%")}
+            </section>
         `;
           if (this.activeTab === "layout") return `
-            ${toggle("showClock", "\u663E\u793A\u65F6\u949F\u4E0E\u65E5\u671F", settings.layout.showClock)}
-            ${toggle("showSearch", "\u663E\u793A\u641C\u7D22\u6846", settings.layout.showSearch)}
-            ${toggle("showBookmarks", "\u663E\u793A\u4E66\u7B7E\u4E0E\u6587\u4EF6\u5939", settings.layout.showBookmarks)}
-            ${toggle("showStatus", "\u663E\u793A\u6D3B\u52A8\u4E0E\u7CFB\u7EDF\u72B6\u6001", settings.layout.showStatus)}
-            ${toggle("showRecent", "\u663E\u793A\u6700\u8FD1\u5E38\u8BBF\u95EE", settings.layout.showRecent)}
+            ${paneHeader("\u5E03\u5C40", "\u53EA\u4FDD\u7559\u4F60\u6BCF\u5929\u771F\u6B63\u4F1A\u770B\u7684\u533A\u57DF\u3002")}
+            <section class="settings-group settings-list">
+                <h3>\u684C\u9762\u7EC4\u4EF6</h3>
+                ${toggle("showClock", "\u65F6\u949F\u4E0E\u65E5\u671F", settings.layout.showClock, "\u663E\u793A\u5728\u9875\u9762\u9876\u90E8\u5DE6\u4FA7")}
+                ${toggle("showSearch", "\u641C\u7D22\u6846", settings.layout.showSearch, "\u4F7F\u7528\u659C\u6760\u952E\u53EF\u5FEB\u901F\u805A\u7126")}
+                ${toggle("showBookmarks", "\u4E66\u7B7E\u4E0E\u6587\u4EF6\u5939", settings.layout.showBookmarks, "\u542F\u52A8\u53F0\u7684\u4E3B\u8981\u5DE5\u4F5C\u533A\u57DF")}
+                ${toggle("showStatus", "\u6D3B\u52A8\u4E0E\u7CFB\u7EDF\u72B6\u6001", settings.layout.showStatus, "\u5A92\u4F53\u3001\u4E0B\u8F7D\u3001\u7535\u6C60\u548C\u8BBE\u5907\u4FE1\u606F")}
+                ${toggle("showRecent", "\u6700\u8FD1\u5E38\u8BBF\u95EE", settings.layout.showRecent, "\u6839\u636E\u672C\u673A\u6D4F\u89C8\u5386\u53F2\u805A\u5408\u7F51\u7AD9")}
+            </section>
         `;
           return `
-            <div class="settings-button-stack">
-                <button class="settings-action export-data" type="button" data-liquid-item>\u2193 \u5BFC\u51FA\u6570\u636E</button>
-                <label class="settings-action import-data" data-liquid-item>\u2191 \u5BFC\u5165\u6570\u636E<input type="file" accept="application/json,.json" hidden></label>
-                <button class="settings-action danger reset-data" type="button" data-liquid-item>\u21BB \u91CD\u7F6E\u6240\u6709\u8BBE\u7F6E</button>
-            </div>
-            <div class="data-note"><p>\u5BFC\u51FA\u6587\u4EF6\u5305\u542B\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u56FE\u7247/\u89C6\u9891\u58C1\u7EB8\u3002</p><p>\u517C\u5BB9\u65E7\u7248 1.0 \u4E0E 2.0 \u5907\u4EFD\uFF0C\u5BFC\u5165\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E\u3002</p></div>
+            ${paneHeader("\u6570\u636E", "\u5907\u4EFD\u3001\u8FC1\u79FB\u6216\u6062\u590D\u5F53\u524D\u542F\u52A8\u53F0\u3002")}
+            <section class="settings-group">
+                <h3>\u5907\u4EFD\u4E0E\u6062\u590D</h3>
+                <div class="settings-button-stack">
+                    <button class="settings-action export-data" type="button" data-liquid-item><b>\u2193</b><span>\u5BFC\u51FA\u6570\u636E<small>\u4FDD\u5B58\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8</small></span></button>
+                    <label class="settings-action import-data" data-liquid-item><b>\u2191</b><span>\u5BFC\u5165\u6570\u636E<small>\u517C\u5BB9\u65E7\u7248 1.0 \u4E0E 2.0 \u5907\u4EFD</small></span><input type="file" accept="application/json,.json" hidden></label>
+                    <button class="settings-action danger reset-data" type="button" data-liquid-item><b>\u21BB</b><span>\u91CD\u7F6E\u6240\u6709\u8BBE\u7F6E<small>\u6E05\u7A7A\u540E\u65E0\u6CD5\u64A4\u9500</small></span></button>
+                </div>
+            </section>
+            <div class="data-note"><strong>\u5BFC\u5165\u524D\u5EFA\u8BAE\u5148\u5BFC\u51FA</strong><p>\u5BFC\u5165\u64CD\u4F5C\u4F1A\u8986\u76D6\u5F53\u524D\u4E66\u7B7E\u3001\u5E03\u5C40\u4E0E\u58C1\u7EB8\u8BBE\u7F6E\u3002</p></div>
         `;
         }
         bind() {

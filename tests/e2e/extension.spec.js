@@ -72,7 +72,7 @@ async function openExtension(page, seed = initialData) {
     page.on('pageerror', (error) => errors.push(error.message));
     await installChromeMock(page, seed);
     await page.goto('/newtab.html');
-    await expect(page.locator('.bookmark-tile')).toHaveCount(2);
+    await expect(page.locator('.bookmark-tile')).toHaveCount(seed.bookmarks.filter((bookmark) => (bookmark.folder || '全部') === '全部').length);
     return errors;
 }
 
@@ -292,6 +292,50 @@ test('tracks the real pointer midway in both directions without flipping', async
     expect(errors).toEqual([]);
 });
 
+test('does not jump the glass lens to another row when the last row has no neighbour', async ({ page }) => {
+    const seed = structuredClone(initialData);
+    seed.bookmarks = [
+        ...Array.from({ length: 7 }, (_, index) => ({
+            id: index + 1,
+            name: `Site ${index + 1}`,
+            url: `https://site-${index + 1}.example.com/`,
+            icon: '',
+            folder: '全部',
+            order: index
+        })),
+        { id: 99, name: 'POM site', url: 'https://pom.example.com/', icon: '', folder: 'POM', order: 0 }
+    ];
+    const errors = await openExtension(page, seed);
+    const items = page.locator('.launchpad-grid > [data-liquid-item]');
+    const rows = await items.evaluateAll((elements) => {
+        const groups = [];
+        elements.forEach((element, index) => {
+            const top = element.getBoundingClientRect().top;
+            const row = groups.find(([rowTop]) => Math.abs(rowTop - top) < 10);
+            if (row) row[1].push(index);
+            else groups.push([top, [index]]);
+        });
+        return groups.sort((left, right) => left[0] - right[0]);
+    });
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows.at(-1)[1]).toHaveLength(1);
+
+    const source = items.nth(rows.at(-1)[1][0]);
+    const box = await source.boundingBox();
+    expect(box).not.toBeNull();
+    await source.hover();
+    await expect(page.locator('.liquid-glass-lens')).toHaveClass(/is-visible/);
+    await page.mouse.move(box.x + box.width + 80, box.y + box.height / 2);
+    await page.waitForTimeout(35);
+    const transient = await page.locator('.liquid-glass-lens').evaluate((lens) => ({
+        visible: lens.classList.contains('is-visible'),
+        top: lens.getBoundingClientRect().top
+    }));
+    if (transient.visible) expect(Math.abs(transient.top - (box.y - 8))).toBeLessThan(24);
+    await expect(page.locator('.liquid-glass-lens')).not.toHaveClass(/is-visible/, { timeout: 500 });
+    expect(errors).toEqual([]);
+});
+
 test('moves and reorders bookmarks without duplication', async ({ page }) => {
     const errors = await openExtension(page);
     await page.locator('.bookmark-tile[data-bookmark-id="1"]').dragTo(page.locator('.folder-tile[data-folder="POM"]'));
@@ -314,6 +358,18 @@ test('moves and reorders bookmarks without duplication', async ({ page }) => {
 test('persists layout, theme and local wallpaper controls', async ({ page }) => {
     const errors = await openExtension(page);
     await openSettings(page, 'layout');
+    const settingsLayout = await page.locator('.settings-drawer').evaluate((drawer) => {
+        const tabs = drawer.querySelector('.settings-tabs').getBoundingClientRect();
+        const pane = drawer.querySelector('.settings-pane').getBoundingClientRect();
+        return {
+            width: drawer.getBoundingClientRect().width,
+            navBeforePane: tabs.right < pane.left,
+            overflowFree: drawer.scrollWidth <= drawer.clientWidth
+        };
+    });
+    expect(settingsLayout.width).toBeGreaterThanOrEqual(600);
+    expect(settingsLayout.navBeforePane).toBe(true);
+    expect(settingsLayout.overflowFree).toBe(true);
     await page.locator('input[data-toggle="showStatus"]').uncheck();
     await expect(page.locator('.status-grid')).toBeHidden();
     await page.locator('[data-tab="appearance"]').click();
