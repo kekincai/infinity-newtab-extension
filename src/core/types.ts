@@ -22,6 +22,7 @@ export interface AppearanceSettings {
     clockFormat: '12h' | '24h';
     dateFormat: 'short' | 'long';
     enhancedAnimations: boolean;
+    hdrHighlights: boolean;
     theme: Theme;
 }
 

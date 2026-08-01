@@ -16,11 +16,19 @@ const ANIME_WALLPAPER = 'https://www.dmoe.cc/random.php';
 installChromeFallback();
 
 class InfinityNewTabApp extends HTMLElement {
+    private readonly hdrMedia = window.matchMedia('(dynamic-range: high)');
+
     private readonly updateClasses = () => {
         const { appearance } = appStore.state.settings;
+        const hdrDisplay = this.hasHdrDisplay();
+        const hdrCapable = hdrDisplay && this.supportsHdrHighlights();
         document.body.classList.toggle('theme-light', appearance.theme === 'light');
         document.body.classList.toggle('theme-dark', appearance.theme === 'dark');
         document.body.classList.toggle('enhanced-animations', appearance.enhancedAnimations);
+        document.body.classList.toggle('hdr-highlights', appearance.hdrHighlights);
+        document.body.classList.toggle('hdr-display', hdrDisplay);
+        document.body.classList.toggle('hdr-capable', hdrCapable);
+        document.body.dataset.hdrOutput = hdrDisplay ? 'high' : 'standard';
     };
 
     async connectedCallback(): Promise<void> {
@@ -29,6 +37,7 @@ class InfinityNewTabApp extends HTMLElement {
             await appStore.init();
             this.updateClasses();
             appStore.addEventListener('change', this.updateClasses);
+            this.hdrMedia.addEventListener('change', this.updateClasses);
             this.render();
             window.addEventListener('keydown', this.onKeyDown);
         } catch (error) {
@@ -38,7 +47,16 @@ class InfinityNewTabApp extends HTMLElement {
 
     disconnectedCallback(): void {
         appStore.removeEventListener('change', this.updateClasses);
+        this.hdrMedia.removeEventListener('change', this.updateClasses);
         window.removeEventListener('keydown', this.onKeyDown);
+    }
+
+    private hasHdrDisplay(): boolean {
+        return this.hdrMedia.matches && CSS.supports('dynamic-range-limit', 'no-limit');
+    }
+
+    private supportsHdrHighlights(): boolean {
+        return CSS.supports('color', 'color(rec2100-pq 0.64 0.64 0.64)');
     }
 
     private render(): void {

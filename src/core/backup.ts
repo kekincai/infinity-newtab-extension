@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
         clockFormat: '24h',
         dateFormat: 'long',
         enhancedAnimations: true,
+        hdrHighlights: true,
         theme: 'light'
     }
 };
@@ -131,6 +132,7 @@ export function sanitizeSettings(value: unknown): AppSettings {
             clockFormat: appearance.clockFormat === '12h' ? '12h' : '24h',
             dateFormat: appearance.dateFormat === 'short' ? 'short' : 'long',
             enhancedAnimations: booleanOr(appearance.enhancedAnimations, true),
+            hdrHighlights: booleanOr(appearance.hdrHighlights, true),
             theme: appearance.theme === 'dark' ? 'dark' : 'light'
         }
     };

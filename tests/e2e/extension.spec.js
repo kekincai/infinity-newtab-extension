@@ -373,6 +373,11 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     await page.locator('input[data-toggle="showStatus"]').uncheck();
     await expect(page.locator('.status-grid')).toBeHidden();
     await page.locator('[data-tab="appearance"]').click();
+    await expect(page.locator('input[data-toggle="hdrHighlights"]')).toBeChecked();
+    await page.locator('input[data-toggle="hdrHighlights"]').uncheck();
+    await expect(page.locator('body')).not.toHaveClass(/hdr-highlights/);
+    await page.locator('input[data-toggle="hdrHighlights"]').check();
+    await expect(page.locator('body')).toHaveClass(/hdr-highlights/);
     await page.locator('input[data-toggle="darkText"]').uncheck();
     await expect(page.locator('body')).toHaveClass(/theme-dark/);
     await page.locator('[data-tab="wallpaper"]').click();
@@ -387,6 +392,7 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     const stored = await page.evaluate(() => window.__readMockSync().settings);
     expect(stored.layout.showStatus).toBe(false);
     expect(stored.appearance.theme).toBe('dark');
+    expect(stored.appearance.hdrHighlights).toBe(true);
     expect(errors).toEqual([]);
 });
 

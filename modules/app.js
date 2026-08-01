@@ -162,6 +162,7 @@
         clockFormat: appearance.clockFormat === "12h" ? "12h" : "24h",
         dateFormat: appearance.dateFormat === "short" ? "short" : "long",
         enhancedAnimations: booleanOr(appearance.enhancedAnimations, true),
+        hdrHighlights: booleanOr(appearance.hdrHighlights, true),
         theme: appearance.theme === "dark" ? "dark" : "light"
       }
     };
@@ -222,6 +223,7 @@
           clockFormat: "24h",
           dateFormat: "long",
           enhancedAnimations: true,
+          hdrHighlights: true,
           theme: "light"
         }
       };
@@ -1850,6 +1852,11 @@
   function toggle(name, label, checked, description = "") {
     return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ""}</span><input type="checkbox" data-toggle="${name}" ${checked ? "checked" : ""}><i aria-hidden="true"></i></label>`;
   }
+  function hdrDescription() {
+    const hdrDisplay = window.matchMedia("(dynamic-range: high)").matches && CSS.supports("dynamic-range-limit", "no-limit");
+    if (!hdrDisplay) return "\u5F53\u524D\u4E3A SDR\uFF0C\u8FDE\u63A5 HDR \u5C4F\u5E55\u540E\u81EA\u52A8\u542F\u7528";
+    return CSS.supports("color", "color(rec2100-pq 0.64 0.64 0.64)") ? "HDR \u5A92\u4F53\u4E0E Rec.2100 PQ \u73BB\u7483\u9AD8\u5149\u5747\u5DF2\u542F\u7528" : "HDR \u5A92\u4F53\u5DF2\u542F\u7528\uFF0C\u73BB\u7483\u9AD8\u5149\u4F7F\u7528\u6D4F\u89C8\u5668\u517C\u5BB9\u8272";
+  }
   function range(name, label, value, min, max, unit) {
     return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}"></label>`;
   }
@@ -1909,6 +1916,7 @@
             <section class="settings-group settings-list">
                 <h3>\u89C6\u89C9\u4F53\u9A8C</h3>
                 ${toggle("enhancedAnimations", "\u589E\u5F3A\u52A8\u753B", settings.appearance.enhancedAnimations, "\u542F\u7528\u8FDB\u573A\u52A8\u753B\u4E0E Liquid Glass \u5F62\u53D8")}
+                ${toggle("hdrHighlights", "HDR \u9AD8\u5149", settings.appearance.hdrHighlights, hdrDescription())}
                 ${toggle("darkText", "\u4F7F\u7528\u6DF1\u8272\u6587\u5B57", settings.appearance.theme === "light", "\u6D45\u8272\u58C1\u7EB8\u63A8\u8350\u5F00\u542F\uFF0C\u6DF1\u8272\u58C1\u7EB8\u53EF\u5173\u95ED")}
             </section>
         `;
@@ -1993,7 +2001,7 @@
           this.querySelector(".reset-data")?.addEventListener("click", () => void this.resetData());
         }
         async applyToggle(name, checked) {
-          const appearance = ["enhancedAnimations", "darkText"];
+          const appearance = ["enhancedAnimations", "hdrHighlights", "darkText"];
           try {
             if (name === "darkText") await appStore.updateSettings("appearance", { theme: checked ? "light" : "dark" });
             else if (appearance.includes(name)) await appStore.updateSettings("appearance", { [name]: checked });
@@ -2132,11 +2140,18 @@
       var ANIME_WALLPAPER = "https://www.dmoe.cc/random.php";
       installChromeFallback();
       var InfinityNewTabApp = class extends HTMLElement {
+        hdrMedia = window.matchMedia("(dynamic-range: high)");
         updateClasses = () => {
           const { appearance } = appStore.state.settings;
+          const hdrDisplay = this.hasHdrDisplay();
+          const hdrCapable = hdrDisplay && this.supportsHdrHighlights();
           document.body.classList.toggle("theme-light", appearance.theme === "light");
           document.body.classList.toggle("theme-dark", appearance.theme === "dark");
           document.body.classList.toggle("enhanced-animations", appearance.enhancedAnimations);
+          document.body.classList.toggle("hdr-highlights", appearance.hdrHighlights);
+          document.body.classList.toggle("hdr-display", hdrDisplay);
+          document.body.classList.toggle("hdr-capable", hdrCapable);
+          document.body.dataset.hdrOutput = hdrDisplay ? "high" : "standard";
         };
         async connectedCallback() {
           this.innerHTML = '<div class="app-loading"><span></span><p>\u6B63\u5728\u6574\u7406\u4F60\u7684\u542F\u52A8\u53F0\u2026</p></div>';
@@ -2144,6 +2159,7 @@
             await appStore.init();
             this.updateClasses();
             appStore.addEventListener("change", this.updateClasses);
+            this.hdrMedia.addEventListener("change", this.updateClasses);
             this.render();
             window.addEventListener("keydown", this.onKeyDown);
           } catch (error) {
@@ -2152,7 +2168,14 @@
         }
         disconnectedCallback() {
           appStore.removeEventListener("change", this.updateClasses);
+          this.hdrMedia.removeEventListener("change", this.updateClasses);
           window.removeEventListener("keydown", this.onKeyDown);
+        }
+        hasHdrDisplay() {
+          return this.hdrMedia.matches && CSS.supports("dynamic-range-limit", "no-limit");
+        }
+        supportsHdrHighlights() {
+          return CSS.supports("color", "color(rec2100-pq 0.64 0.64 0.64)");
         }
         render() {
           this.innerHTML = `

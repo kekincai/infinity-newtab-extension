@@ -55,6 +55,7 @@ export class SettingsDrawer extends StoreElement {
             <section class="settings-group settings-list">
                 <h3>视觉体验</h3>
                 ${toggle('enhancedAnimations', '增强动画', settings.appearance.enhancedAnimations, '启用进场动画与 Liquid Glass 形变')}
+                ${toggle('hdrHighlights', 'HDR 高光', settings.appearance.hdrHighlights, hdrDescription())}
                 ${toggle('darkText', '使用深色文字', settings.appearance.theme === 'light', '浅色壁纸推荐开启，深色壁纸可关闭')}
             </section>
         `;
@@ -141,7 +142,7 @@ export class SettingsDrawer extends StoreElement {
     }
 
     private async applyToggle(name: string, checked: boolean): Promise<void> {
-        const appearance = ['enhancedAnimations', 'darkText'];
+        const appearance = ['enhancedAnimations', 'hdrHighlights', 'darkText'];
         try {
             if (name === 'darkText') await appStore.updateSettings('appearance', { theme: checked ? 'light' : 'dark' });
             else if (appearance.includes(name)) await appStore.updateSettings('appearance', { [name]: checked });
@@ -197,6 +198,15 @@ function paneHeader(title: string, description: string): string {
 
 function toggle(name: string, label: string, checked: boolean, description = ''): string {
     return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ''}</span><input type="checkbox" data-toggle="${name}" ${checked ? 'checked' : ''}><i aria-hidden="true"></i></label>`;
+}
+
+function hdrDescription(): string {
+    const hdrDisplay = window.matchMedia('(dynamic-range: high)').matches
+        && CSS.supports('dynamic-range-limit', 'no-limit');
+    if (!hdrDisplay) return '当前为 SDR，连接 HDR 屏幕后自动启用';
+    return CSS.supports('color', 'color(rec2100-pq 0.64 0.64 0.64)')
+        ? 'HDR 媒体与 Rec.2100 PQ 玻璃高光均已启用'
+        : 'HDR 媒体已启用，玻璃高光使用浏览器兼容色';
 }
 
 function range(name: string, label: string, value: number, min: number, max: number, unit: string): string {

@@ -54,6 +54,7 @@ assert.equal((oldBackup.bookmarks as any[]).length, 2, '旧备份中的重复书
 assert.equal((oldBackup.bookmarks as any[])[0].folder, '全部');
 assert.equal((oldBackup.settings as any).layout.showStatus, true);
 assert.equal((oldBackup.settings as any).layout.showRecent, true);
+assert.equal((oldBackup.settings as any).appearance.hdrHighlights, true);
 assert.equal('showTodo' in (oldBackup.settings as any).layout, false);
 
 const unsafe = sanitizeImportedData({

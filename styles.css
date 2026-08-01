@@ -15,6 +15,8 @@
     --glass-fill-strong: rgba(255, 255, 255, 0.36);
     --glass-line: rgba(255, 255, 255, 0.55);
     --soft-line: rgba(255, 155, 207, 0.38);
+    --specular-line: rgba(255, 255, 255, 0.72);
+    --specular-bloom: rgba(255, 255, 255, 0.52);
     --panel-shadow: 0 24px 60px rgba(47, 68, 116, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.66);
     --font: "Hiragino Maru Gothic ProN", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
@@ -27,6 +29,8 @@ body.theme-dark {
     --glass-fill-strong: rgba(22, 32, 55, 0.36);
     --glass-line: rgba(255, 255, 255, 0.4);
     --soft-line: rgba(255, 255, 255, 0.26);
+    --specular-line: rgba(255, 255, 255, 0.68);
+    --specular-bloom: rgba(255, 255, 255, 0.48);
     --panel-shadow: 0 24px 60px rgba(8, 13, 28, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.42);
 }
 
@@ -45,6 +49,34 @@ body {
     font-size: 16px;
     font-weight: 500;
     -webkit-font-smoothing: antialiased;
+}
+
+/* HDR media keeps its native headroom; unsupported browsers simply ignore this. */
+body.hdr-highlights,
+body.hdr-highlights wallpaper-surface,
+body.hdr-highlights .wallpaper-media,
+body.hdr-highlights .wallpaper-media video {
+    dynamic-range-limit: no-limit;
+}
+
+@media (dynamic-range: high) {
+    @supports (color: color(rec2100-pq 0.64 0.64 0.64)) {
+        body.hdr-highlights.hdr-capable {
+            --glass-line: color(rec2100-pq 0.635 0.635 0.635 / 0.68);
+            --soft-line: color(rec2100-pq 0.615 0.48 0.555 / 0.48);
+            --specular-line: color(rec2100-pq 0.69 0.69 0.69 / 0.86);
+            --specular-bloom: color(rec2100-pq 0.66 0.66 0.66 / 0.58);
+        }
+
+        body.hdr-highlights.hdr-capable .section-kicker {
+            color: color(rec2100-pq 0.47 0.61 0.67);
+            text-shadow: 0 0 12px color(rec2100-pq 0.43 0.58 0.65 / 0.34);
+        }
+
+        body.hdr-highlights.hdr-capable [data-liquid-item] {
+            dynamic-range-limit: no-limit;
+        }
+    }
 }
 
 button,
@@ -1233,13 +1265,13 @@ liquid-glass-system {
     left: 0;
     width: var(--liquid-width, 0);
     height: var(--liquid-height, 0);
-    border: 1px solid rgba(255, 255, 255, 0.58);
+    border: 1px solid var(--specular-line);
     border-radius: var(--liquid-radius, 999px);
     opacity: 0;
     background: linear-gradient(145deg, rgba(255, 255, 255, 0.18), rgba(224, 244, 255, 0.08));
     box-shadow:
         0 10px 26px rgba(28, 41, 73, 0.2),
-        inset 2px 3px 10px rgba(255, 255, 255, 0.44),
+        inset 2px 3px 10px var(--specular-bloom),
         inset -3px -4px 12px rgba(89, 156, 211, 0.15);
     pointer-events: none;
     transform: translate3d(var(--liquid-x, -100vw), var(--liquid-y, -100vh), 0) scale(0.96);
@@ -1255,7 +1287,7 @@ liquid-glass-system {
     position: absolute;
     inset: 3px;
     border-radius: inherit;
-    box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.72), inset -1px -1px 0 rgba(92, 145, 192, 0.2);
+    box-shadow: inset 1px 1px 0 var(--specular-line), inset -1px -1px 0 rgba(92, 145, 192, 0.2);
 }
 
 .liquid-glass-lens.is-visible {
@@ -1267,7 +1299,7 @@ liquid-glass-system {
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(190, 231, 255, 0.1));
     box-shadow:
         0 14px 32px rgba(28, 41, 73, 0.22),
-        inset 3px 4px 14px rgba(255, 255, 255, 0.52),
+        inset 3px 4px 14px var(--specular-bloom),
         inset -4px -5px 15px rgba(83, 153, 211, 0.18);
 }
 
