@@ -245,9 +245,12 @@ dashboard-header {
 }
 
 .status-panel {
+    --liquid-glass-shadow: 0 20px 48px rgba(38, 57, 101, 0.13);
     min-height: 86px;
     padding: 14px 17px;
+    border: 0;
     border-radius: 24px;
+    box-shadow: 0 20px 48px rgba(38, 57, 101, 0.13);
 }
 
 .status-pills {
@@ -436,6 +439,25 @@ search-command {
     box-shadow: 0 22px 42px rgba(34, 49, 88, 0.17), inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
+/* Regular links float like launchpad icons; only folders keep the glass card. */
+.bookmark-tile {
+    --liquid-glass-background: transparent;
+    --liquid-glass-shadow: none;
+    overflow: visible;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+}
+
+.bookmark-tile:hover,
+.bookmark-tile:focus-visible {
+    --liquid-glass-shadow: none;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    transform: translateY(-4px);
+}
+
 .bookmark-tile.is-dragging {
     opacity: 0.35;
 }
@@ -448,24 +470,25 @@ search-command {
 
 .bookmark-icon {
     display: grid;
-    width: 58px;
-    height: 58px;
-    margin-bottom: 12px;
+    width: 96px;
+    height: 96px;
+    margin-bottom: 8px;
     place-items: center;
     border: 1px solid rgba(255, 255, 255, 0.42);
-    border-radius: 18px;
+    border-radius: 28px;
     background: linear-gradient(145deg, rgba(255, 255, 255, 0.25), rgba(142, 208, 255, 0.14));
+    box-shadow: 0 12px 24px rgba(31, 46, 82, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 
 .bookmark-icon img {
-    width: 37px;
-    height: 37px;
+    width: 68px;
+    height: 68px;
     object-fit: contain;
 }
 
 .bookmark-name {
     display: -webkit-box;
-    max-width: 112px;
+    max-width: 128px;
     overflow: hidden;
     color: inherit;
     font-size: 14px;
@@ -655,9 +678,12 @@ search-command {
 }
 
 .recent-panel {
+    --liquid-glass-shadow: 0 22px 54px rgba(38, 57, 101, 0.13);
     overflow: hidden;
     padding: 27px 30px 31px;
+    border: 0;
     border-radius: 32px;
+    box-shadow: 0 22px 54px rgba(38, 57, 101, 0.13);
 }
 
 .recent-header {
@@ -1408,6 +1434,10 @@ liquid-glass-system {
 @media (hover: hover) and (pointer: fine) {
     [data-liquid-item]:hover {
         border-color: rgba(255, 255, 255, 0.82);
+    }
+
+    .bookmark-tile[data-liquid-item]:hover {
+        border-color: transparent;
     }
 }
 

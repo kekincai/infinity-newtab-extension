@@ -61,7 +61,7 @@ export function faviconUrl(pageUrl: string): string {
     try {
         const favicon = new URL(chrome.runtime.getURL('/_favicon/'));
         favicon.searchParams.set('pageUrl', new URL(pageUrl).href);
-        favicon.searchParams.set('size', '64');
+        favicon.searchParams.set('size', '128');
         return favicon.toString();
     } catch {
         return DEFAULT_ICON;
