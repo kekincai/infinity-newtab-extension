@@ -21,7 +21,7 @@ class InfinityNewTabApp extends HTMLElement {
     private readonly updateClasses = () => {
         const { appearance } = appStore.state.settings;
         const hdrDisplay = this.hasHdrDisplay();
-        const hdrCapable = hdrDisplay && this.supportsHdrHighlights();
+        const hdrCapable = hdrDisplay && 'gpu' in navigator;
         document.body.classList.toggle('theme-light', appearance.theme === 'light');
         document.body.classList.toggle('theme-dark', appearance.theme === 'dark');
         document.body.classList.toggle('enhanced-animations', appearance.enhancedAnimations);
@@ -53,10 +53,6 @@ class InfinityNewTabApp extends HTMLElement {
 
     private hasHdrDisplay(): boolean {
         return this.hdrMedia.matches && CSS.supports('dynamic-range-limit', 'no-limit');
-    }
-
-    private supportsHdrHighlights(): boolean {
-        return CSS.supports('color', 'color(rec2100-pq 0.64 0.64 0.64)');
     }
 
     private render(): void {

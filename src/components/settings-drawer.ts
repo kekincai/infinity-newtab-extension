@@ -204,9 +204,9 @@ function hdrDescription(): string {
     const hdrDisplay = window.matchMedia('(dynamic-range: high)').matches
         && CSS.supports('dynamic-range-limit', 'no-limit');
     if (!hdrDisplay) return '当前为 SDR，连接 HDR 屏幕后自动启用';
-    return CSS.supports('color', 'color(rec2100-pq 0.64 0.64 0.64)')
-        ? 'HDR 媒体与 Rec.2100 PQ 玻璃高光均已启用'
-        : 'HDR 媒体已启用，玻璃高光使用浏览器兼容色';
+    return 'gpu' in navigator
+        ? 'HDR 媒体与 WebGPU 玻璃高光均已启用'
+        : 'HDR 媒体已启用，当前浏览器未开放动态 HDR 高光';
 }
 
 function range(name: string, label: string, value: number, min: number, max: number, unit: string): string {

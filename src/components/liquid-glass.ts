@@ -4,6 +4,7 @@ import {
     createOpticalMaps,
     opticalShapeKey
 } from './liquid-optics';
+import { HdrGlassRenderer } from './hdr-glass';
 
 type LensGeometry = OpticalShape & { x: number; y: number };
 type Point = { x: number; y: number };
@@ -25,6 +26,7 @@ export class LiquidGlassSystem extends HTMLElement {
     private readonly lens = document.createElement('span');
     private readonly defs = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     private readonly filterContainer = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    private readonly hdrGlass = new HdrGlassRenderer();
     private activeItem: HTMLElement | null = null;
     private activeGroup: HTMLElement | null = null;
     private filter: SVGFilterElement | null = null;
@@ -39,7 +41,8 @@ export class LiquidGlassSystem extends HTMLElement {
         this.defs.classList.add('liquid-filter-defs');
         this.defs.setAttribute('aria-hidden', 'true');
         this.defs.append(this.filterContainer);
-        this.append(this.defs, this.lens);
+        this.append(this.defs, this.lens, this.hdrGlass.canvas);
+        this.hdrGlass.connect();
         document.addEventListener('pointerover', this.onPointerOver, true);
         document.addEventListener('pointermove', this.onPointerMove, { passive: true, capture: true });
         document.addEventListener('pointerdown', this.onPointerDown, true);
@@ -58,6 +61,7 @@ export class LiquidGlassSystem extends HTMLElement {
         window.removeEventListener('resize', this.onViewportChange);
         window.removeEventListener('scroll', this.onViewportChange, true);
         window.clearTimeout(this.hideTimer);
+        this.hdrGlass.disconnect();
     }
 
     private readonly onPointerOver = (event: PointerEvent): void => {
@@ -112,6 +116,7 @@ export class LiquidGlassSystem extends HTMLElement {
         this.activeGroup = item.parentElement;
         this.lens.dataset.liquidTarget = targetName(item);
         this.lens.classList.add('is-visible');
+        this.hdrGlass.show();
         this.render(geometryFor(item));
     }
 
@@ -170,6 +175,8 @@ export class LiquidGlassSystem extends HTMLElement {
         this.lens.style.setProperty('--liquid-width', `${geometry.width}px`);
         this.lens.style.setProperty('--liquid-height', `${geometry.height}px`);
         this.lens.style.setProperty('--liquid-radius', `${geometry.radius}px`);
+        const progress = Number(this.lens.dataset.liquidProgress ?? 0);
+        this.hdrGlass.render(geometry, this.lens.classList.contains('is-bridging') ? Math.sin(Math.PI * progress) : 0);
         this.sizeFilter(geometry);
         if (refreshMaps) void this.ensureFilter(geometry);
     }
@@ -250,6 +257,7 @@ export class LiquidGlassSystem extends HTMLElement {
         this.activeItem = null;
         this.activeGroup = null;
         this.lens.classList.remove('is-visible', 'is-bridging', 'is-pressed');
+        this.hdrGlass.hide();
         delete this.lens.dataset.liquidProgress;
         delete this.lens.dataset.liquidTarget;
     }

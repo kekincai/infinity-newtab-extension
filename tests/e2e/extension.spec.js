@@ -210,13 +210,15 @@ test('renders the TypeScript Web Component home screen', async ({ page }) => {
             total: items.length,
             oldWrappers: document.querySelectorAll('liquid-surface, liquid-filter-bank').length,
             movedChildren: items.filter((item) => item.querySelector('.liquid-glass-content')).length,
-            lenses: document.querySelectorAll('.liquid-glass-lens').length
+            lenses: document.querySelectorAll('.liquid-glass-lens').length,
+            hdrLayers: document.querySelectorAll('.hdr-glass-layer').length
         };
     });
     expect(coverage.total).toBeGreaterThan(10);
     expect(coverage.oldWrappers).toBe(0);
     expect(coverage.movedChildren).toBe(0);
     expect(coverage.lenses).toBe(1);
+    expect(coverage.hdrLayers).toBe(1);
     expect(errors).toEqual([]);
 });
 
@@ -271,6 +273,12 @@ test('tracks the real pointer midway in both directions without flipping', async
         scaleX: new DOMMatrix(getComputedStyle(lens).transform).a,
         bridging: lens.classList.contains('is-bridging')
     }));
+    const hdrGeometry = await page.locator('.hdr-glass-layer').evaluate((layer) => ({
+        x: Number.parseFloat(layer.style.getPropertyValue('--hdr-glass-x')),
+        y: Number.parseFloat(layer.style.getPropertyValue('--hdr-glass-y')),
+        width: Number.parseFloat(layer.style.getPropertyValue('--hdr-glass-width')),
+        height: Number.parseFloat(layer.style.getPropertyValue('--hdr-glass-height'))
+    }));
     await page.mouse.move(to.x, to.y);
     await page.mouse.move(midpoint.x, midpoint.y);
     const rightToLeft = await page.locator('.liquid-glass-lens').evaluate((lens) => ({
@@ -286,6 +294,10 @@ test('tracks the real pointer midway in both directions without flipping', async
     expect(leftToRight.rect.x).toBeCloseTo(rightToLeft.rect.x, 0);
     expect(leftToRight.rect.width).toBeCloseTo(rightToLeft.rect.width, 0);
     expect(leftToRight.rect.width).toBeGreaterThan(Math.max(from.box.width, to.box.width) + 16);
+    expect(hdrGeometry.x).toBeCloseTo(leftToRight.rect.x, 0);
+    expect(hdrGeometry.y).toBeCloseTo(leftToRight.rect.y, 0);
+    expect(hdrGeometry.width).toBeCloseTo(leftToRight.rect.width, 0);
+    expect(hdrGeometry.height).toBeCloseTo(leftToRight.rect.height, 0);
     expect(leftToRight.scaleX).toBeGreaterThan(0);
     expect(rightToLeft.scaleX).toBeGreaterThan(0);
     expect(await page.locator('.liquid-glass-lens').textContent()).toBe('');

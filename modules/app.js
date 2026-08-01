@@ -1365,6 +1365,204 @@
     }
   });
 
+  // src/components/hdr-glass.ts
+  var HDR_CANVAS_SIZE, HDR_SHADER, HdrGlassRenderer;
+  var init_hdr_glass = __esm({
+    "src/components/hdr-glass.ts"() {
+      "use strict";
+      HDR_CANVAS_SIZE = 512;
+      HDR_SHADER = `
+struct GlassUniforms {
+    size: vec2f,
+    radius: f32,
+    bridge: f32,
+}
+
+@group(0) @binding(0) var<uniform> glass: GlassUniforms;
+
+@vertex
+fn vertexMain(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
+    var positions = array<vec2f, 3>(
+        vec2f(-1.0, -1.0),
+        vec2f(3.0, -1.0),
+        vec2f(-1.0, 3.0)
+    );
+    return vec4f(positions[index], 0.0, 1.0);
+}
+
+fn roundedRectDistance(point: vec2f, halfSize: vec2f, radius: f32) -> f32 {
+    let corner = abs(point) - (halfSize - vec2f(radius));
+    return length(max(corner, vec2f(0.0))) + min(max(corner.x, corner.y), 0.0) - radius;
+}
+
+@fragment
+fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
+    let uv = position.xy / vec2f(${HDR_CANVAS_SIZE}.0);
+    let point = (uv - vec2f(0.5)) * glass.size;
+    let halfSize = max(glass.size * 0.5 - vec2f(2.0), vec2f(1.0));
+    let radius = min(glass.radius, min(halfSize.x, halfSize.y));
+    let sdf = roundedRectDistance(point, halfSize, radius);
+    let inside = 1.0 - smoothstep(0.0, 2.0, sdf);
+    let rim = exp(-abs(sdf) * 0.58) * inside;
+
+    let keyLight = pow(max(0.0, 1.0 - distance(uv, vec2f(0.18, 0.13)) / 0.72), 4.0);
+    let diagonal = pow(max(0.0, 1.0 - abs(uv.x + uv.y - 0.46) / 0.2), 4.0);
+    let lowerGlow = pow(max(0.0, 1.0 - distance(uv, vec2f(0.82, 0.88)) / 0.56), 5.0);
+    let motionGain = 1.0 + glass.bridge * 0.5;
+
+    let whiteSpecular = vec3f(3.4, 3.4, 3.4) * rim * (0.24 + keyLight * 1.18);
+    let skyDispersion = vec3f(0.22, 1.15, 2.75) * rim * diagonal * 0.72;
+    let pinkDispersion = vec3f(2.25, 0.28, 0.92) * rim * lowerGlow * 0.48;
+    let radiance = (whiteSpecular + skyDispersion + pinkDispersion) * motionGain;
+    let alpha = clamp(rim * (0.28 + keyLight * 0.66 + diagonal * 0.2), 0.0, 0.96);
+
+    return vec4f(radiance * alpha, alpha);
+}`;
+      HdrGlassRenderer = class {
+        canvas = document.createElement("canvas");
+        device = null;
+        context = null;
+        pipeline = null;
+        uniformBuffer = null;
+        bindGroup = null;
+        geometry = null;
+        bridge = 0;
+        wantsVisible = false;
+        initializing = false;
+        hdrMedia = window.matchMedia("(dynamic-range: high)");
+        classObserver = new MutationObserver(() => this.syncVisibility());
+        constructor() {
+          this.canvas.className = "hdr-glass-layer";
+          this.canvas.width = HDR_CANVAS_SIZE;
+          this.canvas.height = HDR_CANVAS_SIZE;
+          this.canvas.setAttribute("aria-hidden", "true");
+        }
+        connect() {
+          this.classObserver.observe(document.body, { attributeFilter: ["class"] });
+          this.hdrMedia.addEventListener("change", this.onDisplayChange);
+          void this.initialize();
+        }
+        disconnect() {
+          this.classObserver.disconnect();
+          this.hdrMedia.removeEventListener("change", this.onDisplayChange);
+          this.device?.destroy?.();
+          this.device = null;
+          this.canvas.classList.remove("is-visible");
+        }
+        show() {
+          this.wantsVisible = true;
+          this.syncVisibility();
+        }
+        hide() {
+          this.wantsVisible = false;
+          this.canvas.classList.remove("is-visible");
+        }
+        render(geometry, bridge) {
+          this.geometry = geometry;
+          this.bridge = bridge;
+          this.canvas.style.setProperty("--hdr-glass-x", `${geometry.x}px`);
+          this.canvas.style.setProperty("--hdr-glass-y", `${geometry.y}px`);
+          this.canvas.style.setProperty("--hdr-glass-width", `${geometry.width}px`);
+          this.canvas.style.setProperty("--hdr-glass-height", `${geometry.height}px`);
+          this.canvas.style.setProperty("--hdr-glass-radius", `${geometry.radius}px`);
+          this.draw();
+        }
+        onDisplayChange = () => {
+          if (this.hdrMedia.matches) void this.initialize();
+          this.syncVisibility();
+        };
+        async initialize() {
+          if (this.device || this.initializing || !this.hdrMedia.matches || !("gpu" in navigator)) return;
+          this.initializing = true;
+          try {
+            const gpu = navigator.gpu;
+            const adapter = await gpu?.requestAdapter();
+            if (!adapter) return;
+            const device = await adapter.requestDevice();
+            const context = this.canvas.getContext("webgpu");
+            if (!context) return;
+            context.configure({
+              device,
+              format: "rgba16float",
+              alphaMode: "premultiplied",
+              toneMapping: { mode: "extended" }
+            });
+            const shader = device.createShaderModule({ code: HDR_SHADER });
+            const pipeline = device.createRenderPipeline({
+              layout: "auto",
+              vertex: { module: shader, entryPoint: "vertexMain" },
+              fragment: {
+                module: shader,
+                entryPoint: "fragmentMain",
+                targets: [{
+                  format: "rgba16float",
+                  blend: {
+                    color: { srcFactor: "one", dstFactor: "one-minus-src-alpha" },
+                    alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" }
+                  }
+                }]
+              },
+              primitive: { topology: "triangle-list" }
+            });
+            const uniformBuffer = device.createBuffer({
+              size: 16,
+              usage: 64 | 8
+            });
+            const bindGroup = device.createBindGroup({
+              layout: pipeline.getBindGroupLayout(0),
+              entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
+            });
+            this.device = device;
+            this.context = context;
+            this.pipeline = pipeline;
+            this.uniformBuffer = uniformBuffer;
+            this.bindGroup = bindGroup;
+            this.canvas.dataset.hdrRenderer = "webgpu";
+            void device.lost.then(() => {
+              this.device = null;
+              this.canvas.classList.remove("is-visible");
+              this.canvas.dataset.hdrRenderer = "lost";
+            });
+            this.draw();
+            this.syncVisibility();
+          } catch {
+            this.canvas.dataset.hdrRenderer = "unavailable";
+          } finally {
+            this.initializing = false;
+          }
+        }
+        syncVisibility() {
+          const enabled = this.wantsVisible && Boolean(this.device) && this.hdrMedia.matches && document.body.classList.contains("hdr-highlights");
+          this.canvas.classList.toggle("is-visible", enabled);
+        }
+        draw() {
+          if (!this.device || !this.context || !this.pipeline || !this.uniformBuffer || !this.bindGroup || !this.geometry) return;
+          const values = new Float32Array([
+            this.geometry.width,
+            this.geometry.height,
+            this.geometry.radius,
+            this.bridge
+          ]);
+          this.device.queue.writeBuffer(this.uniformBuffer, 0, values);
+          const encoder = this.device.createCommandEncoder();
+          const pass = encoder.beginRenderPass({
+            colorAttachments: [{
+              view: this.context.getCurrentTexture().createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: "clear",
+              storeOp: "store"
+            }]
+          });
+          pass.setPipeline(this.pipeline);
+          pass.setBindGroup(0, this.bindGroup);
+          pass.draw(3);
+          pass.end();
+          this.device.queue.submit([encoder.finish()]);
+        }
+      };
+    }
+  });
+
   // src/components/liquid-glass.ts
   function findItem(target) {
     const item = target instanceof Element ? target.closest(ITEM_SELECTOR) : null;
@@ -1465,6 +1663,7 @@
     "src/components/liquid-glass.ts"() {
       "use strict";
       init_liquid_optics();
+      init_hdr_glass();
       ITEM_SELECTOR = "[data-liquid-item]";
       LENS_PADDING = 8;
       GROUP_MARGIN = 20;
@@ -1477,6 +1676,7 @@
         lens = document.createElement("span");
         defs = document.createElementNS("http://www.w3.org/2000/svg", "svg");
         filterContainer = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+        hdrGlass = new HdrGlassRenderer();
         activeItem = null;
         activeGroup = null;
         filter = null;
@@ -1490,7 +1690,8 @@
           this.defs.classList.add("liquid-filter-defs");
           this.defs.setAttribute("aria-hidden", "true");
           this.defs.append(this.filterContainer);
-          this.append(this.defs, this.lens);
+          this.append(this.defs, this.lens, this.hdrGlass.canvas);
+          this.hdrGlass.connect();
           document.addEventListener("pointerover", this.onPointerOver, true);
           document.addEventListener("pointermove", this.onPointerMove, { passive: true, capture: true });
           document.addEventListener("pointerdown", this.onPointerDown, true);
@@ -1508,6 +1709,7 @@
           window.removeEventListener("resize", this.onViewportChange);
           window.removeEventListener("scroll", this.onViewportChange, true);
           window.clearTimeout(this.hideTimer);
+          this.hdrGlass.disconnect();
         }
         onPointerOver = (event) => {
           const item = findItem(event.target);
@@ -1554,6 +1756,7 @@
           this.activeGroup = item.parentElement;
           this.lens.dataset.liquidTarget = targetName(item);
           this.lens.classList.add("is-visible");
+          this.hdrGlass.show();
           this.render(geometryFor(item));
         }
         renderBetween(pointer) {
@@ -1609,6 +1812,8 @@
           this.lens.style.setProperty("--liquid-width", `${geometry.width}px`);
           this.lens.style.setProperty("--liquid-height", `${geometry.height}px`);
           this.lens.style.setProperty("--liquid-radius", `${geometry.radius}px`);
+          const progress = Number(this.lens.dataset.liquidProgress ?? 0);
+          this.hdrGlass.render(geometry, this.lens.classList.contains("is-bridging") ? Math.sin(Math.PI * progress) : 0);
           this.sizeFilter(geometry);
           if (refreshMaps) void this.ensureFilter(geometry);
         }
@@ -1682,6 +1887,7 @@
           this.activeItem = null;
           this.activeGroup = null;
           this.lens.classList.remove("is-visible", "is-bridging", "is-pressed");
+          this.hdrGlass.hide();
           delete this.lens.dataset.liquidProgress;
           delete this.lens.dataset.liquidTarget;
         }
@@ -1855,7 +2061,7 @@
   function hdrDescription() {
     const hdrDisplay = window.matchMedia("(dynamic-range: high)").matches && CSS.supports("dynamic-range-limit", "no-limit");
     if (!hdrDisplay) return "\u5F53\u524D\u4E3A SDR\uFF0C\u8FDE\u63A5 HDR \u5C4F\u5E55\u540E\u81EA\u52A8\u542F\u7528";
-    return CSS.supports("color", "color(rec2100-pq 0.64 0.64 0.64)") ? "HDR \u5A92\u4F53\u4E0E Rec.2100 PQ \u73BB\u7483\u9AD8\u5149\u5747\u5DF2\u542F\u7528" : "HDR \u5A92\u4F53\u5DF2\u542F\u7528\uFF0C\u73BB\u7483\u9AD8\u5149\u4F7F\u7528\u6D4F\u89C8\u5668\u517C\u5BB9\u8272";
+    return "gpu" in navigator ? "HDR \u5A92\u4F53\u4E0E WebGPU \u73BB\u7483\u9AD8\u5149\u5747\u5DF2\u542F\u7528" : "HDR \u5A92\u4F53\u5DF2\u542F\u7528\uFF0C\u5F53\u524D\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u52A8\u6001 HDR \u9AD8\u5149";
   }
   function range(name, label, value, min, max, unit) {
     return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}"></label>`;
@@ -2144,7 +2350,7 @@
         updateClasses = () => {
           const { appearance } = appStore.state.settings;
           const hdrDisplay = this.hasHdrDisplay();
-          const hdrCapable = hdrDisplay && this.supportsHdrHighlights();
+          const hdrCapable = hdrDisplay && "gpu" in navigator;
           document.body.classList.toggle("theme-light", appearance.theme === "light");
           document.body.classList.toggle("theme-dark", appearance.theme === "dark");
           document.body.classList.toggle("enhanced-animations", appearance.enhancedAnimations);
@@ -2173,9 +2379,6 @@
         }
         hasHdrDisplay() {
           return this.hdrMedia.matches && CSS.supports("dynamic-range-limit", "no-limit");
-        }
-        supportsHdrHighlights() {
-          return CSS.supports("color", "color(rec2100-pq 0.64 0.64 0.64)");
         }
         render() {
           this.innerHTML = `

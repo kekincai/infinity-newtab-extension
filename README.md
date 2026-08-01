@@ -16,7 +16,7 @@
 ## HDR 显示
 
 - “设置 → 外观 → HDR 高光”默认开启，并显示当前屏幕是否支持真实 HDR 输出。
-- 在 HDR 屏幕与兼容 Chrome 上，界面使用 Rec.2100 PQ 绘制小面积玻璃边缘和镜面高光，本地 HDR 图片或视频保持原始动态范围。
+- 在 HDR 屏幕与兼容 Chrome 上，Liquid Glass 叠加一个透明 WebGPU 镜面层，以 `rgba16float` 和 `extended` 色调映射绘制亮度超过 SDR 白色的动态高光；本地 HDR 图片或视频保持原始动态范围。
 - 普通 SDR 壁纸不会被伪装成 HDR；不支持 HDR 的屏幕或浏览器会自动使用原有 SDR 配色。
 
 ## Liquid Glass
@@ -58,7 +58,7 @@ Liquid Glass 按 [Liquid Glass in the Browser: Refraction with CSS and SVG](http
 3. 点击“加载已解压的扩展程序”，选择本项目目录。
 4. 已经加载过时，点击扩展卡片上的“重新加载”，再打开新标签页。
 
-当前版本应显示为 `2.3.0`。
+当前版本应显示为 `2.3.1`。
 
 ## 项目结构
 
@@ -113,11 +113,18 @@ npm test
 
 ## 更新日志
 
+### 2.3.1 - 2026-08-01
+
+- 修复 Chrome 尚未解析 CSS Rec.2100 PQ，导致上一版玻璃 HDR 高光实际没有启用的问题。
+- 新增与共享折射镜片同步移动、缩放和变形的 WebGPU HDR 镜面层；使用 `rgba16float` 与 `toneMapping: extended` 输出真正高于 SDR 白色的亮度。
+- HDR 高光仅覆盖玻璃边缘和色散，不复制按钮内容，也不改变原有 SVG 折射管线；移动到组件之间时，高光强度随形变连续变化。
+- WebGPU 或 HDR 不可用时自动隐藏 HDR 镜面层，保留原有 Liquid Glass 和 SDR 外观。
+
 ### 2.3.0 - 2026-08-01
 
 - 新增 HDR 高光开关与实时显示能力检测，连接支持 HDR 的屏幕后自动切换。
 - 使用 CSS `dynamic-range-limit: no-limit` 保留本地 HDR 图片与视频的亮度余量。
-- 在兼容环境中使用 Rec.2100 PQ 增强 Liquid Glass 镜面高光、玻璃边缘与小面积蓝色状态高光；SDR 环境保持原样。
+- 初步加入 HDR 显示检测与 CSS HDR 高光实验；动态玻璃高光在 2.3.1 改由 WebGPU 输出。
 - 旧版备份缺少 HDR 字段时自动补齐，不影响现有书签、文件夹、壁纸与设置导入。
 
 ### 2.2.1 - 2026-08-01
