@@ -6,13 +6,16 @@ type GlassGeometry = {
     radius: number;
 };
 
-const HDR_CANVAS_SIZE = 512;
+const HDR_MAX_EDGE = 512;
+const HDR_RESOLUTION_STEP = 32;
 
 const HDR_SHADER = `
 struct GlassUniforms {
     size: vec2f,
     radius: f32,
     bridge: f32,
+    resolution: vec2f,
+    padding: vec2f,
 }
 
 @group(0) @binding(0) var<uniform> glass: GlassUniforms;
@@ -34,7 +37,7 @@ fn roundedRectDistance(point: vec2f, halfSize: vec2f, radius: f32) -> f32 {
 
 @fragment
 fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
-    let uv = position.xy / vec2f(${HDR_CANVAS_SIZE}.0);
+    let uv = position.xy / glass.resolution;
     let point = (uv - vec2f(0.5)) * glass.size;
     let halfSize = max(glass.size * 0.5 - vec2f(2.0), vec2f(1.0));
     let radius = min(glass.radius, min(halfSize.x, halfSize.y));
@@ -75,13 +78,14 @@ export class HdrGlassRenderer {
     private bridge = 0;
     private wantsVisible = false;
     private initializing = false;
+    private drawFrame = 0;
     private readonly hdrMedia = window.matchMedia('(dynamic-range: high)');
     private readonly classObserver = new MutationObserver(() => this.syncVisibility());
 
     constructor() {
         this.canvas.className = 'hdr-glass-layer';
-        this.canvas.width = HDR_CANVAS_SIZE;
-        this.canvas.height = HDR_CANVAS_SIZE;
+        this.canvas.width = HDR_MAX_EDGE;
+        this.canvas.height = HDR_MAX_EDGE;
         this.canvas.setAttribute('aria-hidden', 'true');
     }
 
@@ -97,6 +101,8 @@ export class HdrGlassRenderer {
         this.device?.destroy?.();
         this.device = null;
         this.canvas.classList.remove('is-visible');
+        cancelAnimationFrame(this.drawFrame);
+        this.drawFrame = 0;
     }
 
     show(): void {
@@ -112,12 +118,13 @@ export class HdrGlassRenderer {
     render(geometry: GlassGeometry, bridge: number): void {
         this.geometry = geometry;
         this.bridge = bridge;
+        this.resizeRenderTarget(geometry);
         this.canvas.style.setProperty('--hdr-glass-x', `${geometry.x}px`);
         this.canvas.style.setProperty('--hdr-glass-y', `${geometry.y}px`);
         this.canvas.style.setProperty('--hdr-glass-width', `${geometry.width}px`);
         this.canvas.style.setProperty('--hdr-glass-height', `${geometry.height}px`);
         this.canvas.style.setProperty('--hdr-glass-radius', `${geometry.radius}px`);
-        this.draw();
+        this.scheduleDraw();
     }
 
     private readonly onDisplayChange = (): void => {
@@ -159,7 +166,7 @@ export class HdrGlassRenderer {
                 primitive: { topology: 'triangle-list' }
             });
             const uniformBuffer = device.createBuffer({
-                size: 16,
+                size: 32,
                 usage: 0x40 | 0x08
             });
             const bindGroup = device.createBindGroup({
@@ -177,7 +184,7 @@ export class HdrGlassRenderer {
                 this.canvas.classList.remove('is-visible');
                 this.canvas.dataset.hdrRenderer = 'lost';
             });
-            this.draw();
+            this.scheduleDraw();
             this.syncVisibility();
         } catch {
             this.canvas.dataset.hdrRenderer = 'unavailable';
@@ -200,7 +207,11 @@ export class HdrGlassRenderer {
             this.geometry.width,
             this.geometry.height,
             this.geometry.radius,
-            this.bridge
+            this.bridge,
+            this.canvas.width,
+            this.canvas.height,
+            0,
+            0
         ]);
         this.device.queue.writeBuffer(this.uniformBuffer, 0, values);
         const encoder = this.device.createCommandEncoder();
@@ -218,4 +229,27 @@ export class HdrGlassRenderer {
         pass.end();
         this.device.queue.submit([encoder.finish()]);
     }
+
+    private scheduleDraw(): void {
+        if (this.drawFrame) return;
+        this.drawFrame = requestAnimationFrame(() => {
+            this.drawFrame = 0;
+            this.draw();
+        });
+    }
+
+    private resizeRenderTarget(geometry: GlassGeometry): void {
+        const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+        const longestEdge = Math.max(geometry.width, geometry.height) * pixelRatio;
+        const scale = Math.min(1, HDR_MAX_EDGE / Math.max(1, longestEdge));
+        const width = quantizeResolution(geometry.width * pixelRatio * scale);
+        const height = quantizeResolution(geometry.height * pixelRatio * scale);
+        if (this.canvas.width === width && this.canvas.height === height) return;
+        this.canvas.width = width;
+        this.canvas.height = height;
+    }
+}
+
+function quantizeResolution(value: number): number {
+    return Math.max(1, Math.min(HDR_MAX_EDGE, Math.ceil(value / HDR_RESOLUTION_STEP) * HDR_RESOLUTION_STEP));
 }

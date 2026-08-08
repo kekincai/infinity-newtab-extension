@@ -38,6 +38,8 @@ export class LiquidGlassSystem extends HTMLElement {
     private hideTimer = 0;
     private controlFrame = 0;
     private controlTrackUntil = 0;
+    private pointerFrame = 0;
+    private pendingPointer: Point | null = null;
 
     connectedCallback(): void {
         this.lens.className = 'liquid-glass-lens';
@@ -68,6 +70,7 @@ export class LiquidGlassSystem extends HTMLElement {
         window.removeEventListener('scroll', this.onViewportChange, true);
         window.clearTimeout(this.hideTimer);
         cancelAnimationFrame(this.controlFrame);
+        cancelAnimationFrame(this.pointerFrame);
         this.hdrGlass.disconnect();
     }
 
@@ -84,24 +87,21 @@ export class LiquidGlassSystem extends HTMLElement {
     private readonly onPointerMove = (event: PointerEvent): void => {
         const control = findControl(event.target);
         if (control) {
+            this.pendingPointer = null;
             if (control !== this.activeControl) this.activateControl(control);
-            else this.renderControl(control);
+            else this.trackControl(control, 220);
             return;
         }
         if (this.activeControl) this.deactivateControl();
         const item = findItem(event.target);
         if (item) {
             if (item !== this.activeItem) this.activate(item);
+            else this.pendingPointer = null;
             return;
         }
         if (!this.activeItem || !this.activeGroup) return;
-        const point = { x: event.clientX, y: event.clientY };
-        if (!containsPoint(groupBounds(this.groupItems()), point, GROUP_MARGIN)) {
-            this.scheduleHide();
-            return;
-        }
-        this.cancelHide();
-        this.renderBetween(point);
+        this.pendingPointer = { x: event.clientX, y: event.clientY };
+        this.schedulePointerRender();
     };
 
     private readonly onPointerDown = (event: PointerEvent): void => {
@@ -151,6 +151,7 @@ export class LiquidGlassSystem extends HTMLElement {
 
     private activate(item: HTMLElement): void {
         this.cancelHide();
+        this.pendingPointer = null;
         this.activeControl = null;
         this.controlTrackUntil = 0;
         delete this.hdrGlass.canvas.dataset.hdrTarget;
@@ -182,9 +183,24 @@ export class LiquidGlassSystem extends HTMLElement {
         this.hdrGlass.hide();
     }
 
+    private schedulePointerRender(): void {
+        if (this.pointerFrame) return;
+        this.pointerFrame = requestAnimationFrame(() => {
+            this.pointerFrame = 0;
+            const point = this.pendingPointer;
+            this.pendingPointer = null;
+            if (!point || !this.activeItem || !this.activeGroup) return;
+            if (!containsPoint(groupBounds(this.groupItems()), point, GROUP_MARGIN)) {
+                this.scheduleHide();
+                return;
+            }
+            this.cancelHide();
+            this.renderBetween(point);
+        });
+    }
+
     private trackControl(control: HTMLElement, duration: number): void {
         this.controlTrackUntil = Math.max(this.controlTrackUntil, performance.now() + duration);
-        this.renderControl(control);
         if (this.controlFrame) return;
         const tick = (time: number): void => {
             this.controlFrame = 0;
@@ -341,6 +357,9 @@ export class LiquidGlassSystem extends HTMLElement {
         this.controlTrackUntil = 0;
         cancelAnimationFrame(this.controlFrame);
         this.controlFrame = 0;
+        cancelAnimationFrame(this.pointerFrame);
+        this.pointerFrame = 0;
+        this.pendingPointer = null;
         this.lens.classList.remove('is-visible', 'is-bridging', 'is-pressed');
         delete this.hdrGlass.canvas.dataset.hdrTarget;
         this.hdrGlass.hide();

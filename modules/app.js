@@ -1401,16 +1401,22 @@
   });
 
   // src/components/hdr-glass.ts
-  var HDR_CANVAS_SIZE, HDR_SHADER, HdrGlassRenderer;
+  function quantizeResolution(value) {
+    return Math.max(1, Math.min(HDR_MAX_EDGE, Math.ceil(value / HDR_RESOLUTION_STEP) * HDR_RESOLUTION_STEP));
+  }
+  var HDR_MAX_EDGE, HDR_RESOLUTION_STEP, HDR_SHADER, HdrGlassRenderer;
   var init_hdr_glass = __esm({
     "src/components/hdr-glass.ts"() {
       "use strict";
-      HDR_CANVAS_SIZE = 512;
+      HDR_MAX_EDGE = 512;
+      HDR_RESOLUTION_STEP = 32;
       HDR_SHADER = `
 struct GlassUniforms {
     size: vec2f,
     radius: f32,
     bridge: f32,
+    resolution: vec2f,
+    padding: vec2f,
 }
 
 @group(0) @binding(0) var<uniform> glass: GlassUniforms;
@@ -1432,7 +1438,7 @@ fn roundedRectDistance(point: vec2f, halfSize: vec2f, radius: f32) -> f32 {
 
 @fragment
 fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
-    let uv = position.xy / vec2f(${HDR_CANVAS_SIZE}.0);
+    let uv = position.xy / glass.resolution;
     let point = (uv - vec2f(0.5)) * glass.size;
     let halfSize = max(glass.size * 0.5 - vec2f(2.0), vec2f(1.0));
     let radius = min(glass.radius, min(halfSize.x, halfSize.y));
@@ -1472,12 +1478,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         bridge = 0;
         wantsVisible = false;
         initializing = false;
+        drawFrame = 0;
         hdrMedia = window.matchMedia("(dynamic-range: high)");
         classObserver = new MutationObserver(() => this.syncVisibility());
         constructor() {
           this.canvas.className = "hdr-glass-layer";
-          this.canvas.width = HDR_CANVAS_SIZE;
-          this.canvas.height = HDR_CANVAS_SIZE;
+          this.canvas.width = HDR_MAX_EDGE;
+          this.canvas.height = HDR_MAX_EDGE;
           this.canvas.setAttribute("aria-hidden", "true");
         }
         connect() {
@@ -1491,6 +1498,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.device?.destroy?.();
           this.device = null;
           this.canvas.classList.remove("is-visible");
+          cancelAnimationFrame(this.drawFrame);
+          this.drawFrame = 0;
         }
         show() {
           this.wantsVisible = true;
@@ -1503,12 +1512,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         render(geometry, bridge) {
           this.geometry = geometry;
           this.bridge = bridge;
+          this.resizeRenderTarget(geometry);
           this.canvas.style.setProperty("--hdr-glass-x", `${geometry.x}px`);
           this.canvas.style.setProperty("--hdr-glass-y", `${geometry.y}px`);
           this.canvas.style.setProperty("--hdr-glass-width", `${geometry.width}px`);
           this.canvas.style.setProperty("--hdr-glass-height", `${geometry.height}px`);
           this.canvas.style.setProperty("--hdr-glass-radius", `${geometry.radius}px`);
-          this.draw();
+          this.scheduleDraw();
         }
         onDisplayChange = () => {
           if (this.hdrMedia.matches) void this.initialize();
@@ -1548,7 +1558,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               primitive: { topology: "triangle-list" }
             });
             const uniformBuffer = device.createBuffer({
-              size: 16,
+              size: 32,
               usage: 64 | 8
             });
             const bindGroup = device.createBindGroup({
@@ -1566,7 +1576,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               this.canvas.classList.remove("is-visible");
               this.canvas.dataset.hdrRenderer = "lost";
             });
-            this.draw();
+            this.scheduleDraw();
             this.syncVisibility();
           } catch {
             this.canvas.dataset.hdrRenderer = "unavailable";
@@ -1584,7 +1594,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.geometry.width,
             this.geometry.height,
             this.geometry.radius,
-            this.bridge
+            this.bridge,
+            this.canvas.width,
+            this.canvas.height,
+            0,
+            0
           ]);
           this.device.queue.writeBuffer(this.uniformBuffer, 0, values);
           const encoder = this.device.createCommandEncoder();
@@ -1601,6 +1615,23 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           pass.draw(3);
           pass.end();
           this.device.queue.submit([encoder.finish()]);
+        }
+        scheduleDraw() {
+          if (this.drawFrame) return;
+          this.drawFrame = requestAnimationFrame(() => {
+            this.drawFrame = 0;
+            this.draw();
+          });
+        }
+        resizeRenderTarget(geometry) {
+          const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+          const longestEdge = Math.max(geometry.width, geometry.height) * pixelRatio;
+          const scale = Math.min(1, HDR_MAX_EDGE / Math.max(1, longestEdge));
+          const width = quantizeResolution(geometry.width * pixelRatio * scale);
+          const height = quantizeResolution(geometry.height * pixelRatio * scale);
+          if (this.canvas.width === width && this.canvas.height === height) return;
+          this.canvas.width = width;
+          this.canvas.height = height;
         }
       };
     }
@@ -1751,6 +1782,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         hideTimer = 0;
         controlFrame = 0;
         controlTrackUntil = 0;
+        pointerFrame = 0;
+        pendingPointer = null;
         connectedCallback() {
           this.lens.className = "liquid-glass-lens";
           this.lens.setAttribute("aria-hidden", "true");
@@ -1779,6 +1812,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           window.removeEventListener("scroll", this.onViewportChange, true);
           window.clearTimeout(this.hideTimer);
           cancelAnimationFrame(this.controlFrame);
+          cancelAnimationFrame(this.pointerFrame);
           this.hdrGlass.disconnect();
         }
         onPointerOver = (event) => {
@@ -1793,24 +1827,21 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         onPointerMove = (event) => {
           const control = findControl(event.target);
           if (control) {
+            this.pendingPointer = null;
             if (control !== this.activeControl) this.activateControl(control);
-            else this.renderControl(control);
+            else this.trackControl(control, 220);
             return;
           }
           if (this.activeControl) this.deactivateControl();
           const item = findItem(event.target);
           if (item) {
             if (item !== this.activeItem) this.activate(item);
+            else this.pendingPointer = null;
             return;
           }
           if (!this.activeItem || !this.activeGroup) return;
-          const point = { x: event.clientX, y: event.clientY };
-          if (!containsPoint(groupBounds(this.groupItems()), point, GROUP_MARGIN)) {
-            this.scheduleHide();
-            return;
-          }
-          this.cancelHide();
-          this.renderBetween(point);
+          this.pendingPointer = { x: event.clientX, y: event.clientY };
+          this.schedulePointerRender();
         };
         onPointerDown = (event) => {
           const control = findControl(event.target);
@@ -1853,6 +1884,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         };
         activate(item) {
           this.cancelHide();
+          this.pendingPointer = null;
           this.activeControl = null;
           this.controlTrackUntil = 0;
           delete this.hdrGlass.canvas.dataset.hdrTarget;
@@ -1881,9 +1913,23 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           delete this.hdrGlass.canvas.dataset.hdrTarget;
           this.hdrGlass.hide();
         }
+        schedulePointerRender() {
+          if (this.pointerFrame) return;
+          this.pointerFrame = requestAnimationFrame(() => {
+            this.pointerFrame = 0;
+            const point = this.pendingPointer;
+            this.pendingPointer = null;
+            if (!point || !this.activeItem || !this.activeGroup) return;
+            if (!containsPoint(groupBounds(this.groupItems()), point, GROUP_MARGIN)) {
+              this.scheduleHide();
+              return;
+            }
+            this.cancelHide();
+            this.renderBetween(point);
+          });
+        }
         trackControl(control, duration) {
           this.controlTrackUntil = Math.max(this.controlTrackUntil, performance.now() + duration);
-          this.renderControl(control);
           if (this.controlFrame) return;
           const tick = (time) => {
             this.controlFrame = 0;
@@ -2029,6 +2075,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.controlTrackUntil = 0;
           cancelAnimationFrame(this.controlFrame);
           this.controlFrame = 0;
+          cancelAnimationFrame(this.pointerFrame);
+          this.pointerFrame = 0;
+          this.pendingPointer = null;
           this.lens.classList.remove("is-visible", "is-bridging", "is-pressed");
           delete this.hdrGlass.canvas.dataset.hdrTarget;
           this.hdrGlass.hide();
