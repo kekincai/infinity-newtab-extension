@@ -1,6 +1,6 @@
 import { appStore } from '../core/store';
 import type { Bookmark } from '../core/types';
-import { bookmarkIcon, cleanDisplayName, escapeHtml } from '../core/utils';
+import { bookmarkIcon, bookmarkIconCanUpgrade, bookmarkIconFallback, bookmarkIconIsRaster, bookmarkIconSrcSet, cleanDisplayName, escapeHtml } from '../core/utils';
 import { StoreElement } from './base';
 
 const FOLDER_COLORS = ['#ff92c8', '#80d8ff', '#ffd27d', '#9be7c4', '#b8a6ff'];
@@ -50,7 +50,7 @@ export class BookmarkLaunchpad extends StoreElement {
                     <button class="tile-action edit-bookmark" type="button" aria-label="编辑书签" title="编辑">✎</button>
                     <button class="tile-action delete-bookmark" type="button" aria-label="删除书签" title="删除">×</button>
                 </span>
-                <span class="bookmark-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" alt=""></span>
+                <span class="bookmark-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="80px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" data-icon-raster="${bookmarkIconIsRaster(bookmark)}" alt="" loading="eager" decoding="async"></span>
                 <span class="bookmark-name">${escapeHtml(name)}</span>
             </a>
         `;
@@ -59,7 +59,7 @@ export class BookmarkLaunchpad extends StoreElement {
     private folderTemplate(folder: string, index: number): string {
         const bookmarks = appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks);
         const previews = bookmarks.slice(0, 4).map((bookmark) => (
-            `<span class="folder-preview-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" alt=""></span>`
+            `<span class="folder-preview-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="32px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" alt="" loading="lazy" decoding="async"></span>`
         )).join('');
         return `
             <article class="folder-tile" tabindex="0" role="button" data-folder="${escapeHtml(folder)}" data-liquid-item style="--folder-color:${FOLDER_COLORS[index % FOLDER_COLORS.length]}">
@@ -136,9 +136,7 @@ export class BookmarkLaunchpad extends StoreElement {
 
         this.querySelectorAll<HTMLAnchorElement>('.bookmark-tile').forEach((card) => {
             const id = card.dataset.bookmarkId ?? '';
-            card.querySelector('img')?.addEventListener('error', (event) => {
-                (event.currentTarget as HTMLImageElement).style.opacity = '0.35';
-            });
+            card.querySelectorAll<HTMLImageElement>('img').forEach((image) => this.bindIconFallback(image));
             card.addEventListener('dragstart', (event) => {
                 this.draggingId = id;
                 event.dataTransfer?.setData('text/plain', id);
@@ -171,6 +169,8 @@ export class BookmarkLaunchpad extends StoreElement {
                 if (confirm('删除这个书签？')) void appStore.deleteBookmark(id).catch(showError);
             });
         });
+
+        this.querySelectorAll<HTMLImageElement>('.folder-tile img').forEach((image) => this.bindIconFallback(image));
 
         this.querySelector('.launchpad-grid')?.addEventListener('dragover', (event) => event.preventDefault());
         this.querySelector('.launchpad-grid')?.addEventListener('drop', (event) => {
@@ -216,6 +216,30 @@ export class BookmarkLaunchpad extends StoreElement {
 
     private dragId(event: DragEvent): Bookmark['id'] | null {
         return event.dataTransfer?.getData('text/plain') || this.draggingId;
+    }
+
+    private bindIconFallback(image: HTMLImageElement): void {
+        const fallback = image.dataset.iconFallback;
+        if (!fallback) return;
+        const useFallback = () => {
+            if (image.dataset.fallbackUsed === 'true') {
+                image.classList.add('icon-unavailable');
+                return;
+            }
+            image.dataset.fallbackUsed = 'true';
+            image.removeAttribute('srcset');
+            image.src = fallback;
+        };
+        image.addEventListener('load', () => {
+            if (image.dataset.iconRaster === 'true') image.classList.add('icon-raster');
+            if (image.dataset.iconCanUpgrade === 'true'
+                && image.dataset.fallbackUsed !== 'true'
+                && image.naturalWidth > 0
+                && image.naturalWidth < 64) {
+                useFallback();
+            }
+        });
+        image.addEventListener('error', useFallback);
     }
 }
 

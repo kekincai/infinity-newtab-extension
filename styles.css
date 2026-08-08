@@ -484,6 +484,16 @@ search-command {
     width: 68px;
     height: 68px;
     object-fit: contain;
+    image-rendering: auto;
+}
+
+.bookmark-icon img.icon-raster {
+    width: 80px;
+    height: 80px;
+}
+
+.bookmark-icon img.icon-unavailable {
+    opacity: 0.35;
 }
 
 .bookmark-name {
@@ -579,6 +589,7 @@ search-command {
     width: 21px;
     height: 21px;
     object-fit: contain;
+    image-rendering: auto;
 }
 
 .folder-empty-dot {

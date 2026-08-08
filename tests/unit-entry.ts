@@ -3,12 +3,16 @@ import { sanitizeImportedData, sanitizeSettings } from '../src/core/backup';
 import { rankSites } from '../src/core/history';
 import { AppStore } from '../src/core/store';
 import { convexSquircle, lipSquircle, precalculateDisplacements } from '../src/components/liquid-optics';
+import { bookmarkIcon, bookmarkIconCanUpgrade, bookmarkIconFallback, bookmarkIconIsRaster, bookmarkIconSrcSet, faviconUrl } from '../src/core/utils';
 
 const syncData: Record<string, unknown> = {};
 const localData: Record<string, unknown> = {};
 let failWrites = false;
 
-const runtime = { lastError: null as { message: string } | null };
+const runtime = {
+    lastError: null as { message: string } | null,
+    getURL: (path: string) => `chrome-extension://unit-test${path}`
+};
 function area(data: Record<string, unknown>) {
     return {
         get(keys: string[] | string | null, callback: (value: Record<string, unknown>) => void) {
@@ -73,6 +77,20 @@ assert.equal((unsafe.settings as any).wallpaper.value, '');
 assert.equal((unsafe.settings as any).wallpaper.blur, 10);
 assert.equal((unsafe.settings as any).wallpaper.overlay, 0);
 assert.equal('unknown' in unsafe, false);
+
+const managedBookmark = { id: 10, name: 'Google', url: 'https://www.google.com/', icon: 'https://www.google.com/s2/favicons?domain=google.com&sz=64', folder: '全部', order: 0 };
+assert.ok(bookmarkIcon(managedBookmark).includes('size=128'), '旧 Google favicon 地址应切换到 Chrome 的高尺寸接口');
+assert.ok(bookmarkIconSrcSet(managedBookmark).includes('size=256'), '高 DPI 显示应准备更高尺寸的 favicon');
+assert.ok(bookmarkIconFallback(managedBookmark).startsWith('data:image/svg+xml;base64,PHN2Zy'), '托管 favicon 失败时应使用安全的本地占位图');
+assert.ok(faviconUrl(managedBookmark.url, 64).includes('size=64'));
+
+const customBookmark = { ...managedBookmark, icon: 'https://assets.example/icon.png' };
+assert.equal(bookmarkIcon(customBookmark), customBookmark.icon, '自定义图标不能被导入流程覆盖');
+assert.equal(bookmarkIconCanUpgrade(customBookmark), true, '自定义图标应允许检查实际分辨率');
+assert.equal(bookmarkIconCanUpgrade(managedBookmark), false, 'Chrome 管理的 favicon 不需要重复升级');
+assert.equal(bookmarkIconIsRaster(managedBookmark), true, 'Chrome favicon 应按位图显示策略处理');
+assert.equal(bookmarkIconIsRaster({ ...managedBookmark, icon: 'data:image/svg+xml;base64,PHN2Zy' }), false, 'SVG 图标不应套用位图放大策略');
+assert.ok(bookmarkIconFallback(customBookmark).includes('size=128'), '自定义图标失败时应回退到本地 favicon');
 
 const ranked = rankSites([
     { url: 'https://www.youtube.com/watch?v=1', visitCount: 8, lastVisitTime: 200 },

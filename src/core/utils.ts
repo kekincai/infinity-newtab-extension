@@ -57,21 +57,48 @@ export function isManagedFavicon(value: unknown): boolean {
         || /^chrome-extension:\/\/[^/]+\/_favicon\//i.test(icon);
 }
 
-export function faviconUrl(pageUrl: string): string {
+export function faviconUrl(pageUrl: string, size = 128): string {
     try {
         const favicon = new URL(chrome.runtime.getURL('/_favicon/'));
         favicon.searchParams.set('pageUrl', new URL(pageUrl).href);
-        favicon.searchParams.set('size', '128');
+        favicon.searchParams.set('size', String(size));
         return favicon.toString();
     } catch {
         return DEFAULT_ICON;
     }
 }
 
+export function faviconSrcSet(pageUrl: string): string {
+    return [64, 128, 256]
+        .map((size) => `${faviconUrl(pageUrl, size)} ${size}w`)
+        .join(', ');
+}
+
 export function bookmarkIcon(bookmark: Bookmark): string {
     return !bookmark.icon || isManagedFavicon(bookmark.icon)
         ? faviconUrl(bookmark.url)
         : bookmark.icon;
+}
+
+export function bookmarkIconSrcSet(bookmark: Bookmark): string {
+    return !bookmark.icon || isManagedFavicon(bookmark.icon)
+        ? faviconSrcSet(bookmark.url)
+        : '';
+}
+
+export function bookmarkIconCanUpgrade(bookmark: Bookmark): boolean {
+    return Boolean(bookmark.icon && !isManagedFavicon(bookmark.icon));
+}
+
+export function bookmarkIconIsRaster(bookmark: Bookmark): boolean {
+    const icon = bookmarkIcon(bookmark);
+    return !/^data:image\/svg\+xml/i.test(icon) && !/\.svg(?:$|[?#])/i.test(icon);
+}
+
+export function bookmarkIconFallback(bookmark: Bookmark): string {
+    return bookmark.icon && !isManagedFavicon(bookmark.icon)
+        ? faviconUrl(bookmark.url)
+        : DEFAULT_ICON;
 }
 
 export function debounce<T extends (...args: any[]) => void>(callback: T, wait: number): T {

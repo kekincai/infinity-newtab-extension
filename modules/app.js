@@ -55,18 +55,34 @@
     const icon = String(value ?? "");
     return /^https:\/\/www\.google\.com\/s2\/favicons/i.test(icon) || /^chrome-extension:\/\/[^/]+\/_favicon\//i.test(icon);
   }
-  function faviconUrl(pageUrl) {
+  function faviconUrl(pageUrl, size = 128) {
     try {
       const favicon = new URL(chrome.runtime.getURL("/_favicon/"));
       favicon.searchParams.set("pageUrl", new URL(pageUrl).href);
-      favicon.searchParams.set("size", "128");
+      favicon.searchParams.set("size", String(size));
       return favicon.toString();
     } catch {
       return DEFAULT_ICON;
     }
   }
+  function faviconSrcSet(pageUrl) {
+    return [64, 128, 256].map((size) => `${faviconUrl(pageUrl, size)} ${size}w`).join(", ");
+  }
   function bookmarkIcon(bookmark) {
     return !bookmark.icon || isManagedFavicon(bookmark.icon) ? faviconUrl(bookmark.url) : bookmark.icon;
+  }
+  function bookmarkIconSrcSet(bookmark) {
+    return !bookmark.icon || isManagedFavicon(bookmark.icon) ? faviconSrcSet(bookmark.url) : "";
+  }
+  function bookmarkIconCanUpgrade(bookmark) {
+    return Boolean(bookmark.icon && !isManagedFavicon(bookmark.icon));
+  }
+  function bookmarkIconIsRaster(bookmark) {
+    const icon = bookmarkIcon(bookmark);
+    return !/^data:image\/svg\+xml/i.test(icon) && !/\.svg(?:$|[?#])/i.test(icon);
+  }
+  function bookmarkIconFallback(bookmark) {
+    return bookmark.icon && !isManagedFavicon(bookmark.icon) ? faviconUrl(bookmark.url) : DEFAULT_ICON;
   }
   var DEFAULT_ICON;
   var init_utils = __esm({
@@ -901,14 +917,14 @@
                     <button class="tile-action edit-bookmark" type="button" aria-label="\u7F16\u8F91\u4E66\u7B7E" title="\u7F16\u8F91">\u270E</button>
                     <button class="tile-action delete-bookmark" type="button" aria-label="\u5220\u9664\u4E66\u7B7E" title="\u5220\u9664">\xD7</button>
                 </span>
-                <span class="bookmark-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" alt=""></span>
+                <span class="bookmark-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="80px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" data-icon-raster="${bookmarkIconIsRaster(bookmark)}" alt="" loading="eager" decoding="async"></span>
                 <span class="bookmark-name">${escapeHtml(name)}</span>
             </a>
         `;
         }
         folderTemplate(folder, index) {
           const bookmarks = appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks2);
-          const previews = bookmarks.slice(0, 4).map((bookmark) => `<span class="folder-preview-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" alt=""></span>`).join("");
+          const previews = bookmarks.slice(0, 4).map((bookmark) => `<span class="folder-preview-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="32px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" alt="" loading="lazy" decoding="async"></span>`).join("");
           return `
             <article class="folder-tile" tabindex="0" role="button" data-folder="${escapeHtml(folder)}" data-liquid-item style="--folder-color:${FOLDER_COLORS[index % FOLDER_COLORS.length]}">
                 <span class="tile-actions folder-actions">
@@ -988,9 +1004,7 @@
           });
           this.querySelectorAll(".bookmark-tile").forEach((card) => {
             const id = card.dataset.bookmarkId ?? "";
-            card.querySelector("img")?.addEventListener("error", (event) => {
-              event.currentTarget.style.opacity = "0.35";
-            });
+            card.querySelectorAll("img").forEach((image) => this.bindIconFallback(image));
             card.addEventListener("dragstart", (event) => {
               this.draggingId = id;
               event.dataTransfer?.setData("text/plain", id);
@@ -1026,6 +1040,7 @@
               if (confirm("\u5220\u9664\u8FD9\u4E2A\u4E66\u7B7E\uFF1F")) void appStore.deleteBookmark(id).catch(showError);
             });
           });
+          this.querySelectorAll(".folder-tile img").forEach((image) => this.bindIconFallback(image));
           this.querySelector(".launchpad-grid")?.addEventListener("dragover", (event) => event.preventDefault());
           this.querySelector(".launchpad-grid")?.addEventListener("drop", (event) => {
             if (event.target.closest(".bookmark-tile, .folder-tile[data-folder]")) return;
@@ -1076,6 +1091,26 @@
         }
         dragId(event) {
           return event.dataTransfer?.getData("text/plain") || this.draggingId;
+        }
+        bindIconFallback(image) {
+          const fallback = image.dataset.iconFallback;
+          if (!fallback) return;
+          const useFallback = () => {
+            if (image.dataset.fallbackUsed === "true") {
+              image.classList.add("icon-unavailable");
+              return;
+            }
+            image.dataset.fallbackUsed = "true";
+            image.removeAttribute("srcset");
+            image.src = fallback;
+          };
+          image.addEventListener("load", () => {
+            if (image.dataset.iconRaster === "true") image.classList.add("icon-raster");
+            if (image.dataset.iconCanUpgrade === "true" && image.dataset.fallbackUsed !== "true" && image.naturalWidth > 0 && image.naturalWidth < 64) {
+              useFallback();
+            }
+          });
+          image.addEventListener("error", useFallback);
         }
       };
     }
@@ -2288,7 +2323,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (!this.sites.length) return '<div class="recent-message">\u6682\u65E0\u53EF\u5C55\u793A\u7684\u5386\u53F2\u8BB0\u5F55</div>';
           return this.sites.map((site) => `
             <a class="recent-card" href="${escapeHtml(site.url)}" data-liquid-item rel="noreferrer">
-                <span class="recent-icon"><img src="${escapeHtml(faviconUrl(site.url))}" alt=""></span>
+                <span class="recent-icon"><img src="${escapeHtml(faviconUrl(site.url))}" srcset="${escapeHtml(faviconSrcSet(site.url))}" sizes="34px" alt="" loading="lazy" decoding="async"></span>
                 <span class="recent-copy"><strong>${escapeHtml(truncate(site.title, 20))}</strong><small>${escapeHtml(site.host)}</small></span>
             </a>
         `).join("");

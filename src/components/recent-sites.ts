@@ -1,7 +1,7 @@
 import { appStore } from '../core/store';
 import { rankSites } from '../core/history';
 import type { RecentSite } from '../core/types';
-import { escapeHtml, faviconUrl, truncate } from '../core/utils';
+import { escapeHtml, faviconSrcSet, faviconUrl, truncate } from '../core/utils';
 import { StoreElement } from './base';
 
 export class RecentSites extends StoreElement {
@@ -43,7 +43,7 @@ export class RecentSites extends StoreElement {
         if (!this.sites.length) return '<div class="recent-message">暂无可展示的历史记录</div>';
         return this.sites.map((site) => `
             <a class="recent-card" href="${escapeHtml(site.url)}" data-liquid-item rel="noreferrer">
-                <span class="recent-icon"><img src="${escapeHtml(faviconUrl(site.url))}" alt=""></span>
+                <span class="recent-icon"><img src="${escapeHtml(faviconUrl(site.url))}" srcset="${escapeHtml(faviconSrcSet(site.url))}" sizes="34px" alt="" loading="lazy" decoding="async"></span>
                 <span class="recent-copy"><strong>${escapeHtml(truncate(site.title, 20))}</strong><small>${escapeHtml(site.host)}</small></span>
             </a>
         `).join('');
