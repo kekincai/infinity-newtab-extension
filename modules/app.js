@@ -26,7 +26,7 @@
     const candidate = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(value.trim()) ? value.trim() : `https://${value.trim()}`;
     try {
       const url = new URL(candidate);
-      return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+      return BOOKMARK_PROTOCOLS.has(url.protocol) && url.hostname ? url.href : "";
     } catch {
       return "";
     }
@@ -84,11 +84,12 @@
   function bookmarkIconFallback(bookmark) {
     return bookmark.icon && !isManagedFavicon(bookmark.icon) ? faviconUrl(bookmark.url) : DEFAULT_ICON;
   }
-  var DEFAULT_ICON;
+  var DEFAULT_ICON, BOOKMARK_PROTOCOLS;
   var init_utils = __esm({
     "src/core/utils.ts"() {
       "use strict";
       DEFAULT_ICON = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI4IiBmaWxsPSIjNjM2NmYxIi8+PHBhdGggZD0iTTE2IDhWMjRNOCAxNkgyNCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=";
+      BOOKMARK_PROTOCOLS = /* @__PURE__ */ new Set(["http:", "https:", "chrome-extension:"]);
     }
   });
 
@@ -544,7 +545,11 @@
     globalThis.chrome = {
       runtime: { id: "preview", lastError: null, getURL: (path) => new URL(path, location.href).href },
       storage: { sync: makeArea("infinity-preview-sync"), local: makeArea("infinity-preview-local") },
-      tabs: { query: (_query, done) => done([]), update: () => void 0 },
+      tabs: {
+        query: (_query, done) => done([]),
+        update: () => void 0,
+        create: ({ url }) => url ? window.open(url, "_blank", "noopener") : void 0
+      },
       downloads: { search: (_query, done) => done([]), show: () => void 0 },
       history: { search: (_query, done) => done([]) }
     };
@@ -556,9 +561,6 @@
   });
 
   // src/core/media-store.ts
-  function fallbackKey(kind) {
-    return kind === "image" ? "localImageWallpaper" : "localVideoWallpaper";
-  }
   function blobToDataUrl(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -572,49 +574,48 @@
     "src/core/media-store.ts"() {
       "use strict";
       init_backup();
-      init_storage();
       DATABASE = "infinity-wallpaper";
       STORE = "wallpapers";
       MediaStore = class {
         async get(kind) {
+          const database = await this.open();
           try {
-            const database = await this.open();
-            return await new Promise((resolve) => {
+            return await new Promise((resolve, reject) => {
               const request = database.transaction(STORE, "readonly").objectStore(STORE).get(kind);
               request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
-              request.onerror = () => resolve(null);
+              request.onerror = () => reject(request.error ?? new Error("\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u58C1\u7EB8"));
             });
-          } catch {
-            const key = fallbackKey(kind);
-            const result = await storageGet([key], "local");
-            return result[key] instanceof Blob ? result[key] : null;
+          } finally {
+            database.close();
           }
         }
         async set(kind, value) {
+          const database = await this.open();
           try {
-            const database = await this.open();
             await new Promise((resolve, reject) => {
               const transaction = database.transaction(STORE, "readwrite");
               transaction.objectStore(STORE).put(value, kind);
               transaction.oncomplete = () => resolve();
               transaction.onerror = () => reject(transaction.error ?? new Error("\u65E0\u6CD5\u4FDD\u5B58\u672C\u5730\u58C1\u7EB8"));
+              transaction.onabort = () => reject(transaction.error ?? new Error("\u672C\u5730\u58C1\u7EB8\u5B58\u50A8\u5DF2\u4E2D\u6B62"));
             });
-          } catch {
-            await storageSet({ [fallbackKey(kind)]: value }, "local");
+          } finally {
+            database.close();
           }
         }
         async clear(kind) {
+          const database = await this.open();
           try {
-            const database = await this.open();
-            await new Promise((resolve) => {
+            await new Promise((resolve, reject) => {
               const transaction = database.transaction(STORE, "readwrite");
               transaction.objectStore(STORE).delete(kind);
               transaction.oncomplete = () => resolve();
-              transaction.onerror = () => resolve();
+              transaction.onerror = () => reject(transaction.error ?? new Error("\u65E0\u6CD5\u5220\u9664\u672C\u5730\u58C1\u7EB8"));
+              transaction.onabort = () => reject(transaction.error ?? new Error("\u672C\u5730\u58C1\u7EB8\u5220\u9664\u5DF2\u4E2D\u6B62"));
             });
-          } catch {
+          } finally {
+            database.close();
           }
-          await storageRemove([fallbackKey(kind)], "local");
         }
         async clearAll() {
           await Promise.all([this.clear("image"), this.clear("video")]);
@@ -809,7 +810,7 @@
             <div class="dialog-backdrop ${open ? "is-open" : ""}" role="presentation">
                 <form class="bookmark-dialog glass-panel" role="dialog" aria-modal="true" aria-label="${bookmark ? "\u7F16\u8F91\u4E66\u7B7E" : "\u6DFB\u52A0\u4E66\u7B7E"}">
                     <header><div><span class="section-kicker">\u5FEB\u6377\u5165\u53E3</span><h2>${bookmark ? "\u7F16\u8F91\u4E66\u7B7E" : "\u6DFB\u52A0\u4E66\u7B7E"}</h2></div><button class="dialog-close" type="button" aria-label="\u5173\u95ED">\xD7</button></header>
-                    <label>\u7F51\u5740<input name="url" type="url" required placeholder="https://example.com" value="${escapeHtml(bookmark?.url ?? "")}"></label>
+                    <label>\u7F51\u5740<input name="url" type="url" required placeholder="https://example.com \u6216 chrome-extension://..." value="${escapeHtml(bookmark?.url ?? "")}"></label>
                     <label>\u540D\u79F0<input name="name" type="text" maxlength="160" placeholder="\u81EA\u52A8\u4F7F\u7528\u7F51\u7AD9\u540D\u79F0" value="${escapeHtml(bookmark?.name ?? "")}"></label>
                     <label>\u6587\u4EF6\u5939<select name="folder">${appStore.state.folders.map((folder) => `<option value="${escapeHtml(folder)}" ${folder === selected ? "selected" : ""}>${escapeHtml(folder)}</option>`).join("")}</select></label>
                     <label>\u56FE\u6807\u5730\u5740\uFF08\u53EF\u9009\uFF09<input name="icon" type="url" placeholder="https://example.com/favicon.ico" value="${escapeHtml(bookmark?.icon ?? "")}"></label>
@@ -1004,7 +1005,13 @@
           });
           this.querySelectorAll(".bookmark-tile").forEach((card) => {
             const id = card.dataset.bookmarkId ?? "";
+            const bookmark = appStore.state.bookmarks.find((item) => String(item.id) === String(id));
             card.querySelectorAll("img").forEach((image) => this.bindIconFallback(image));
+            card.addEventListener("click", (event) => {
+              if (!bookmark || new URL(bookmark.url).protocol !== "chrome-extension:" || event.defaultPrevented) return;
+              event.preventDefault();
+              void Promise.resolve(chrome.tabs.create({ url: bookmark.url })).catch(showError);
+            });
             card.addEventListener("dragstart", (event) => {
               this.draggingId = id;
               event.dataTransfer?.setData("text/plain", id);
@@ -1031,7 +1038,6 @@
             card.querySelector(".edit-bookmark")?.addEventListener("click", (event) => {
               event.preventDefault();
               event.stopPropagation();
-              const bookmark = appStore.state.bookmarks.find((item) => String(item.id) === String(id));
               if (bookmark) this.openDialog(bookmark);
             });
             card.querySelector(".delete-bookmark")?.addEventListener("click", (event) => {
@@ -2422,7 +2428,58 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}"></liquid-range></label>`;
   }
   function showError2(error) {
-    alert(error instanceof Error ? error.message : "\u64CD\u4F5C\u5931\u8D25");
+    alert(errorMessage(error));
+  }
+  function errorMessage(error) {
+    return error instanceof Error ? error.message : "\u64CD\u4F5C\u5931\u8D25";
+  }
+  async function validateLocalMedia(file, kind) {
+    const url = URL.createObjectURL(file);
+    let video = null;
+    try {
+      if (kind === "image") {
+        const image = new Image();
+        image.src = url;
+        await image.decode().catch(() => {
+          throw new Error("\u56FE\u7247\u6587\u4EF6\u65E0\u6CD5\u89E3\u7801\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539");
+        });
+        return;
+      }
+      video = document.createElement("video");
+      video.preload = "auto";
+      video.muted = true;
+      video.playsInline = true;
+      video.src = url;
+      await waitForVideo(video);
+      await video.play().catch(() => {
+        throw new Error("\u89C6\u9891\u65E0\u6CD5\u64AD\u653E\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539");
+      });
+    } finally {
+      if (video) {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      }
+      URL.revokeObjectURL(url);
+    }
+  }
+  function waitForVideo(video) {
+    return new Promise((resolve, reject) => {
+      let timeout = 0;
+      const finish = (error) => {
+        window.clearTimeout(timeout);
+        video.removeEventListener("canplay", onReady);
+        video.removeEventListener("error", onError);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onReady = () => finish();
+      const onError = () => finish(new Error("\u89C6\u9891\u6587\u4EF6\u65E0\u6CD5\u89E3\u7801\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539"));
+      video.addEventListener("canplay", onReady, { once: true });
+      video.addEventListener("error", onError, { once: true });
+      timeout = window.setTimeout(() => finish(new Error("\u8BFB\u53D6\u89C6\u9891\u8D85\u65F6\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539")), 1e4);
+      video.load();
+    });
   }
   var SettingsDrawer;
   var init_settings_drawer = __esm({
@@ -2439,8 +2496,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         open() {
           this.openState = true;
           this.syncOpenState();
+          window.requestAnimationFrame(() => this.querySelector(".settings-close")?.focus());
         }
         close() {
+          if (this.contains(document.activeElement)) {
+            document.querySelector(".settings-trigger")?.focus();
+          }
           this.openState = false;
           this.syncOpenState();
         }
@@ -2621,17 +2682,31 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             alert("\u8BF7\u9009\u62E9\u56FE\u7247\u6216\u89C6\u9891\u6587\u4EF6\u3002");
             return;
           }
+          let previous = null;
+          let stored = false;
           try {
+            await validateLocalMedia(file, kind);
+            previous = await mediaStore.get(kind);
             await mediaStore.set(kind, file);
+            stored = true;
             await appStore.updateSettings("wallpaper", { type: kind === "video" ? "video" : "local", value: "local" });
           } catch (error) {
+            if (stored) {
+              try {
+                if (previous) await mediaStore.set(kind, previous);
+                else await mediaStore.clear(kind);
+              } catch (rollbackError) {
+                showError2(new Error(`${errorMessage(error)}\uFF1B\u6062\u590D\u539F\u80CC\u666F\u4E5F\u5931\u8D25\uFF1A${errorMessage(rollbackError)}`));
+                return;
+              }
+            }
             showError2(error);
           }
         }
         async resetWallpaper() {
           try {
-            await mediaStore.clearAll();
             await appStore.updateSettings("wallpaper", { type: "gradient", value: "", blur: 0, overlay: 30 });
+            await mediaStore.clearAll();
           } catch (error) {
             showError2(error);
           }
@@ -2677,51 +2752,95 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         observedChanges = ["settings.wallpaper"];
         objectUrl = "";
         renderToken = 0;
+        appliedMediaKey = "";
+        pendingMediaKey = "";
         disconnectedCallback() {
           super.disconnectedCallback();
           this.releaseObjectUrl();
         }
         render() {
-          const token = ++this.renderToken;
           const wallpaper = appStore.state.settings.wallpaper;
-          this.innerHTML = '<div class="wallpaper-media"></div><div class="wallpaper-tint"></div>';
+          if (!this.querySelector(".wallpaper-media")) {
+            this.innerHTML = '<div class="wallpaper-media"></div><div class="wallpaper-tint"></div>';
+          }
           this.style.setProperty("--wallpaper-blur", `${wallpaper.blur}px`);
           this.style.setProperty("--wallpaper-overlay", String(wallpaper.overlay / 100));
-          void this.applyMedia(token);
+          const mediaKey = `${wallpaper.type}:${wallpaper.value}`;
+          if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey) return;
+          this.pendingMediaKey = mediaKey;
+          void this.applyMedia(++this.renderToken, mediaKey);
         }
-        async applyMedia(token) {
+        async applyMedia(token, mediaKey) {
           const wallpaper = appStore.state.settings.wallpaper;
           const host = this.querySelector(".wallpaper-media");
           if (!host) return;
-          this.releaseObjectUrl();
-          if (wallpaper.type === "video") {
-            const blob = await mediaStore.get("video");
-            if (!blob || token !== this.renderToken) return;
-            this.objectUrl = URL.createObjectURL(blob);
-            const video = document.createElement("video");
-            video.src = this.objectUrl;
-            video.autoplay = true;
-            video.loop = true;
-            video.muted = true;
-            video.playsInline = true;
-            host.appendChild(video);
-            void video.play().catch(() => void 0);
-            return;
-          }
-          if (wallpaper.type === "local") {
-            const blob = await mediaStore.get("image");
-            if (!blob || token !== this.renderToken) return;
-            this.objectUrl = URL.createObjectURL(blob);
-            host.style.backgroundImage = `url("${this.objectUrl}")`;
-            return;
-          }
-          if (wallpaper.type === "preset" && wallpaper.value) {
-            host.style.backgroundImage = `url("${wallpaper.value.replaceAll('"', "%22")}")`;
+          let candidateUrl = "";
+          let candidateVideo = null;
+          try {
+            if (wallpaper.type === "video") {
+              const blob = await mediaStore.get("video");
+              if (!blob) throw new Error("\u627E\u4E0D\u5230\u5DF2\u4FDD\u5B58\u7684\u89C6\u9891\u80CC\u666F");
+              candidateUrl = URL.createObjectURL(blob);
+              candidateVideo = document.createElement("video");
+              candidateVideo.src = candidateUrl;
+              candidateVideo.autoplay = true;
+              candidateVideo.loop = true;
+              candidateVideo.muted = true;
+              candidateVideo.defaultMuted = true;
+              candidateVideo.playsInline = true;
+              candidateVideo.style.visibility = "hidden";
+              host.appendChild(candidateVideo);
+              await candidateVideo.play();
+              if (token !== this.renderToken) return;
+              candidateVideo.style.removeProperty("visibility");
+              this.commitMedia(host, candidateVideo, candidateUrl, "");
+              candidateUrl = "";
+              candidateVideo = null;
+            } else if (wallpaper.type === "local") {
+              const blob = await mediaStore.get("image");
+              if (!blob) throw new Error("\u627E\u4E0D\u5230\u5DF2\u4FDD\u5B58\u7684\u56FE\u7247\u80CC\u666F");
+              candidateUrl = URL.createObjectURL(blob);
+              if (token !== this.renderToken) return;
+              this.commitMedia(host, null, candidateUrl, `url("${candidateUrl}")`);
+              candidateUrl = "";
+            } else {
+              if (token !== this.renderToken) return;
+              const background = wallpaper.type === "preset" && wallpaper.value ? `url("${wallpaper.value.replaceAll('"', "%22")}")` : "";
+              this.commitMedia(host, null, "", background);
+            }
+            this.appliedMediaKey = mediaKey;
+          } catch (error) {
+            if (token === this.renderToken) this.reportError(error);
+          } finally {
+            if (candidateVideo) this.disposeVideo(candidateVideo);
+            if (candidateUrl) URL.revokeObjectURL(candidateUrl);
+            if (this.pendingMediaKey === mediaKey) this.pendingMediaKey = "";
           }
         }
+        commitMedia(host, video, objectUrl, background) {
+          const previousUrl = this.objectUrl;
+          host.replaceChildren(...video ? [video] : []);
+          host.style.backgroundImage = background;
+          this.objectUrl = objectUrl;
+          if (previousUrl && previousUrl !== objectUrl) URL.revokeObjectURL(previousUrl);
+        }
+        reportError(error) {
+          this.dispatchEvent(new CustomEvent("wallpaper-error", {
+            bubbles: true,
+            composed: true,
+            detail: { message: error instanceof Error ? error.message : "\u80CC\u666F\u5A92\u4F53\u52A0\u8F7D\u5931\u8D25" }
+          }));
+        }
         releaseObjectUrl() {
+          this.querySelectorAll(".wallpaper-media video").forEach((video) => this.disposeVideo(video));
           if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
           this.objectUrl = "";
+        }
+        disposeVideo(video) {
+          video.pause();
+          video.removeAttribute("src");
+          video.load();
+          video.remove();
         }
       };
     }
@@ -2747,6 +2866,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       installChromeFallback();
       var InfinityNewTabApp = class extends HTMLElement {
         hdrMedia = window.matchMedia("(dynamic-range: high)");
+        noticeTimer = 0;
         updateClasses = () => {
           const { appearance } = appStore.state.settings;
           const hdrDisplay = this.hasHdrDisplay();
@@ -2780,6 +2900,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           appStore.removeEventListener("change", this.onStoreChange);
           this.hdrMedia.removeEventListener("change", this.updateClasses);
           window.removeEventListener("keydown", this.onKeyDown);
+          window.clearTimeout(this.noticeTimer);
         }
         hasHdrDisplay() {
           return this.hdrMedia.matches && CSS.supports("dynamic-range-limit", "no-limit");
@@ -2798,6 +2919,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             <settings-drawer></settings-drawer>
             <bookmark-dialog></bookmark-dialog>
             <backup-toast></backup-toast>
+            <div class="app-notice" role="status" hidden></div>
             <liquid-glass-system></liquid-glass-system>
         `;
           this.querySelector(".settings-trigger")?.addEventListener("click", () => {
@@ -2807,7 +2929,18 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             type: "preset",
             value: `${ANIME_WALLPAPER}?t=${Date.now()}`
           }));
+          this.addEventListener("wallpaper-error", this.onWallpaperError);
         }
+        onWallpaperError = (event) => {
+          const notice = this.querySelector(".app-notice");
+          if (!notice) return;
+          notice.textContent = `\u80CC\u666F\u52A0\u8F7D\u5931\u8D25\uFF1A${event.detail?.message || "\u672A\u77E5\u9519\u8BEF"}\u3002\u5DF2\u4FDD\u7559\u539F\u80CC\u666F\u3002`;
+          notice.hidden = false;
+          window.clearTimeout(this.noticeTimer);
+          this.noticeTimer = window.setTimeout(() => {
+            notice.hidden = true;
+          }, 8e3);
+        };
         onKeyDown = (event) => {
           if (event.key === "/" && !isTypingTarget(event.target)) {
             event.preventDefault();

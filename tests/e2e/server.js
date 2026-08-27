@@ -13,7 +13,10 @@ const mimeTypes = {
 
 http.createServer((request, response) => {
     const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
-    const requestedPath = path.resolve(root, `.${pathname === '/' ? '/newtab.html' : pathname}`);
+    const resourcePath = pathname === '/'
+        ? '/newtab.html'
+        : pathname.startsWith('/_favicon/') ? '/icons/icon-48.png' : pathname;
+    const requestedPath = path.resolve(root, `.${resourcePath}`);
     if (!requestedPath.startsWith(`${root}${path.sep}`)) {
         response.writeHead(403).end('Forbidden');
         return;

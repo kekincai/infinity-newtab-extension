@@ -18,6 +18,7 @@ installChromeFallback();
 
 class InfinityNewTabApp extends HTMLElement {
     private readonly hdrMedia = window.matchMedia('(dynamic-range: high)');
+    private noticeTimer = 0;
 
     private readonly updateClasses = () => {
         const { appearance } = appStore.state.settings;
@@ -55,6 +56,7 @@ class InfinityNewTabApp extends HTMLElement {
         appStore.removeEventListener('change', this.onStoreChange);
         this.hdrMedia.removeEventListener('change', this.updateClasses);
         window.removeEventListener('keydown', this.onKeyDown);
+        window.clearTimeout(this.noticeTimer);
     }
 
     private hasHdrDisplay(): boolean {
@@ -75,6 +77,7 @@ class InfinityNewTabApp extends HTMLElement {
             <settings-drawer></settings-drawer>
             <bookmark-dialog></bookmark-dialog>
             <backup-toast></backup-toast>
+            <div class="app-notice" role="status" hidden></div>
             <liquid-glass-system></liquid-glass-system>
         `;
         this.querySelector('.settings-trigger')?.addEventListener('click', () => {
@@ -84,7 +87,17 @@ class InfinityNewTabApp extends HTMLElement {
             type: 'preset',
             value: `${ANIME_WALLPAPER}?t=${Date.now()}`
         }));
+        this.addEventListener('wallpaper-error', this.onWallpaperError as EventListener);
     }
+
+    private readonly onWallpaperError = (event: CustomEvent<{ message?: string }>): void => {
+        const notice = this.querySelector<HTMLElement>('.app-notice');
+        if (!notice) return;
+        notice.textContent = `背景加载失败：${event.detail?.message || '未知错误'}。已保留原背景。`;
+        notice.hidden = false;
+        window.clearTimeout(this.noticeTimer);
+        this.noticeTimer = window.setTimeout(() => { notice.hidden = true; }, 8000);
+    };
 
     private readonly onKeyDown = (event: KeyboardEvent): void => {
         if (event.key === '/' && !isTypingTarget(event.target)) {

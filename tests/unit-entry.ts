@@ -3,7 +3,7 @@ import { sanitizeImportedData, sanitizeSettings } from '../src/core/backup';
 import { rankSites } from '../src/core/history';
 import { AppStore } from '../src/core/store';
 import { convexSquircle, lipSquircle, precalculateDisplacements } from '../src/components/liquid-optics';
-import { bookmarkIcon, bookmarkIconCanUpgrade, bookmarkIconFallback, bookmarkIconIsRaster, bookmarkIconSrcSet, faviconUrl } from '../src/core/utils';
+import { bookmarkIcon, bookmarkIconCanUpgrade, bookmarkIconFallback, bookmarkIconIsRaster, bookmarkIconSrcSet, faviconUrl, normalizeUrl } from '../src/core/utils';
 
 const syncData: Record<string, unknown> = {};
 const localData: Record<string, unknown> = {};
@@ -78,6 +78,17 @@ assert.equal((unsafe.settings as any).wallpaper.blur, 10);
 assert.equal((unsafe.settings as any).wallpaper.overlay, 0);
 assert.equal('unknown' in unsafe, false);
 
+const extensionPage = 'chrome-extension://hjekpdhdabgkokjbklegnfkogcpjhhhg/index.html';
+assert.equal(normalizeUrl(extensionPage), extensionPage, '其他扩展的页面应能作为书签地址');
+assert.equal(normalizeUrl('chrome-extension:///index.html'), '', '缺少扩展 ID 的地址必须拒绝');
+assert.equal(normalizeUrl('javascript:alert(1)'), '', '危险协议必须继续拒绝');
+
+const extensionBackup = sanitizeImportedData({
+    bookmarks: [{ id: 'extension-page', name: '扩展页面', url: extensionPage }],
+    folders: ['全部']
+});
+assert.equal((extensionBackup.bookmarks as any[])[0].url, extensionPage, '导入备份时应保留扩展页面书签');
+
 const managedBookmark = { id: 10, name: 'Google', url: 'https://www.google.com/', icon: 'https://www.google.com/s2/favicons?domain=google.com&sz=64', folder: '全部', order: 0 };
 assert.ok(bookmarkIcon(managedBookmark).includes('size=128'), '旧 Google favicon 地址应切换到 Chrome 的高尺寸接口');
 assert.ok(bookmarkIconSrcSet(managedBookmark).includes('size=256'), '高 DPI 显示应准备更高尺寸的 favicon');
@@ -140,6 +151,9 @@ async function testTransactions(): Promise<void> {
         ['a', 'c'],
         '同文件夹排序不能复制数据'
     );
+
+    const extensionBookmark = await store.addBookmark({ name: '扩展页面', url: extensionPage, icon: '', folder: '全部' });
+    assert.equal(extensionBookmark.url, extensionPage, '新增书签应接受 chrome-extension 页面');
 
     const countBeforeFailure = store.state.bookmarks.length;
     failWrites = true;

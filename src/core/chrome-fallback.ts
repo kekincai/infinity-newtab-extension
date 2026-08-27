@@ -28,7 +28,11 @@ export function installChromeFallback(): void {
     (globalThis as any).chrome = {
         runtime: { id: 'preview', lastError: null, getURL: (path: string) => new URL(path, location.href).href },
         storage: { sync: makeArea('infinity-preview-sync'), local: makeArea('infinity-preview-local') },
-        tabs: { query: (_query: unknown, done: (value: unknown[]) => void) => done([]), update: () => undefined },
+        tabs: {
+            query: (_query: unknown, done: (value: unknown[]) => void) => done([]),
+            update: () => undefined,
+            create: ({ url }: { url?: string }) => url ? window.open(url, '_blank', 'noopener') : undefined
+        },
         downloads: { search: (_query: unknown, done: (value: unknown[]) => void) => done([]), show: () => undefined },
         history: { search: (_query: unknown, done: (value: unknown[]) => void) => done([]) }
     };

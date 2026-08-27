@@ -1,6 +1,7 @@
 import type { Bookmark } from './types';
 
 export const DEFAULT_ICON = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI4IiBmaWxsPSIjNjM2NmYxIi8+PHBhdGggZD0iTTE2IDhWMjRNOCAxNkgyNCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=';
+const BOOKMARK_PROTOCOLS = new Set(['http:', 'https:', 'chrome-extension:']);
 
 export function escapeHtml(value: unknown): string {
     return String(value ?? '')
@@ -18,7 +19,7 @@ export function normalizeUrl(value: unknown): string {
         : `https://${value.trim()}`;
     try {
         const url = new URL(candidate);
-        return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+        return BOOKMARK_PROTOCOLS.has(url.protocol) && url.hostname ? url.href : '';
     } catch {
         return '';
     }

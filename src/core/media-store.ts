@@ -1,5 +1,4 @@
 import { dataUrlToBlob, isRecord } from './backup';
-import { storageGet, storageRemove, storageSet } from './storage';
 import type { LocalMediaBackup } from './types';
 
 export type MediaKind = 'image' | 'video';
@@ -9,47 +8,46 @@ const STORE = 'wallpapers';
 
 class MediaStore {
     async get(kind: MediaKind): Promise<Blob | null> {
+        const database = await this.open();
         try {
-            const database = await this.open();
-            return await new Promise((resolve) => {
+            return await new Promise((resolve, reject) => {
                 const request = database.transaction(STORE, 'readonly').objectStore(STORE).get(kind);
                 request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
-                request.onerror = () => resolve(null);
+                request.onerror = () => reject(request.error ?? new Error('无法读取本地壁纸'));
             });
-        } catch {
-            const key = fallbackKey(kind);
-            const result = await storageGet<Record<string, unknown>>([key], 'local');
-            return result[key] instanceof Blob ? result[key] as Blob : null;
+        } finally {
+            database.close();
         }
     }
 
     async set(kind: MediaKind, value: Blob): Promise<void> {
+        const database = await this.open();
         try {
-            const database = await this.open();
             await new Promise<void>((resolve, reject) => {
                 const transaction = database.transaction(STORE, 'readwrite');
                 transaction.objectStore(STORE).put(value, kind);
                 transaction.oncomplete = () => resolve();
                 transaction.onerror = () => reject(transaction.error ?? new Error('无法保存本地壁纸'));
+                transaction.onabort = () => reject(transaction.error ?? new Error('本地壁纸存储已中止'));
             });
-        } catch {
-            await storageSet({ [fallbackKey(kind)]: value }, 'local');
+        } finally {
+            database.close();
         }
     }
 
     async clear(kind: MediaKind): Promise<void> {
+        const database = await this.open();
         try {
-            const database = await this.open();
-            await new Promise<void>((resolve) => {
+            await new Promise<void>((resolve, reject) => {
                 const transaction = database.transaction(STORE, 'readwrite');
                 transaction.objectStore(STORE).delete(kind);
                 transaction.oncomplete = () => resolve();
-                transaction.onerror = () => resolve();
+                transaction.onerror = () => reject(transaction.error ?? new Error('无法删除本地壁纸'));
+                transaction.onabort = () => reject(transaction.error ?? new Error('本地壁纸删除已中止'));
             });
-        } catch {
-            // The fallback is cleared below regardless of IndexedDB availability.
+        } finally {
+            database.close();
         }
-        await storageRemove([fallbackKey(kind)], 'local');
     }
 
     async clearAll(): Promise<void> {
@@ -86,10 +84,6 @@ class MediaStore {
             request.onerror = () => reject(request.error ?? new Error('无法打开壁纸数据库'));
         });
     }
-}
-
-function fallbackKey(kind: MediaKind): string {
-    return kind === 'image' ? 'localImageWallpaper' : 'localVideoWallpaper';
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {

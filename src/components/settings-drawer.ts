@@ -14,9 +14,13 @@ export class SettingsDrawer extends StoreElement {
     open(): void {
         this.openState = true;
         this.syncOpenState();
+        window.requestAnimationFrame(() => this.querySelector<HTMLButtonElement>('.settings-close')?.focus());
     }
 
     close(): void {
+        if (this.contains(document.activeElement)) {
+            document.querySelector<HTMLButtonElement>('.settings-trigger')?.focus();
+        }
         this.openState = false;
         this.syncOpenState();
     }
@@ -202,16 +206,32 @@ export class SettingsDrawer extends StoreElement {
         if (!file) return;
         const kind = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : null;
         if (!kind) { alert('请选择图片或视频文件。'); return; }
+        let previous: Blob | null = null;
+        let stored = false;
         try {
+            await validateLocalMedia(file, kind);
+            previous = await mediaStore.get(kind);
             await mediaStore.set(kind, file);
+            stored = true;
             await appStore.updateSettings('wallpaper', { type: kind === 'video' ? 'video' : 'local', value: 'local' });
-        } catch (error) { showError(error); }
+        } catch (error) {
+            if (stored) {
+                try {
+                    if (previous) await mediaStore.set(kind, previous);
+                    else await mediaStore.clear(kind);
+                } catch (rollbackError) {
+                    showError(new Error(`${errorMessage(error)}；恢复原背景也失败：${errorMessage(rollbackError)}`));
+                    return;
+                }
+            }
+            showError(error);
+        }
     }
 
     private async resetWallpaper(): Promise<void> {
         try {
-            await mediaStore.clearAll();
             await appStore.updateSettings('wallpaper', { type: 'gradient', value: '', blur: 0, overlay: 30 });
+            await mediaStore.clearAll();
         } catch (error) { showError(error); }
     }
 
@@ -262,5 +282,56 @@ function range(name: string, label: string, value: number, min: number, max: num
 }
 
 function showError(error: unknown): void {
-    alert(error instanceof Error ? error.message : '操作失败');
+    alert(errorMessage(error));
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : '操作失败';
+}
+
+async function validateLocalMedia(file: File, kind: 'image' | 'video'): Promise<void> {
+    const url = URL.createObjectURL(file);
+    let video: HTMLVideoElement | null = null;
+    try {
+        if (kind === 'image') {
+            const image = new Image();
+            image.src = url;
+            await image.decode().catch(() => { throw new Error('图片文件无法解码，背景没有更改'); });
+            return;
+        }
+
+        video = document.createElement('video');
+        video.preload = 'auto';
+        video.muted = true;
+        video.playsInline = true;
+        video.src = url;
+        await waitForVideo(video);
+        await video.play().catch(() => { throw new Error('视频无法播放，背景没有更改'); });
+    } finally {
+        if (video) {
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+        }
+        URL.revokeObjectURL(url);
+    }
+}
+
+function waitForVideo(video: HTMLVideoElement): Promise<void> {
+    return new Promise((resolve, reject) => {
+        let timeout = 0;
+        const finish = (error?: Error) => {
+            window.clearTimeout(timeout);
+            video.removeEventListener('canplay', onReady);
+            video.removeEventListener('error', onError);
+            if (error) reject(error);
+            else resolve();
+        };
+        const onReady = () => finish();
+        const onError = () => finish(new Error('视频文件无法解码，背景没有更改'));
+        video.addEventListener('canplay', onReady, { once: true });
+        video.addEventListener('error', onError, { once: true });
+        timeout = window.setTimeout(() => finish(new Error('读取视频超时，背景没有更改')), 10000);
+        video.load();
+    });
 }

@@ -24,8 +24,8 @@ const historyItems = [
     { url: 'https://www.google.com/search?q=noise', visitCount: 99, lastVisitTime: 400 }
 ];
 
-async function installChromeMock(page, seed = initialData) {
-    await page.addInitScript(({ seed, history }) => {
+async function installChromeMock(page, seed = initialData, options = {}) {
+    await page.addInitScript(({ seed, history, options }) => {
         const syncKey = 'infinity-e2e-sync';
         const localKey = 'infinity-e2e-local';
         if (!sessionStorage.getItem('infinity-e2e-ready')) {
@@ -55,22 +55,35 @@ async function installChromeMock(page, seed = initialData) {
         Object.defineProperty(navigator, 'hardwareConcurrency', { configurable: true, value: 8 });
         Object.defineProperty(navigator, 'deviceMemory', { configurable: true, value: 8 });
         navigator.getBattery = async () => ({ level: 0.82, charging: false });
+        if (options.failIndexedDB) {
+            Object.defineProperty(indexedDB, 'open', {
+                configurable: true,
+                value() { throw new DOMException('模拟 IndexedDB 失败', 'InvalidStateError'); }
+            });
+        }
+        const openedTabs = [];
         window.chrome = {
             runtime: { id: 'e2e-infinity-newtab', lastError: null, getURL: () => `${location.origin}/icons/icon-48.png` },
             storage: { sync: storageArea(syncKey), local: storageArea(localKey) },
-            tabs: { query(_query, callback) { callback([]); }, update() {} },
+            tabs: {
+                query(_query, callback) { callback([]); },
+                update() {},
+                create(properties) { openedTabs.push(properties); return Promise.resolve({ id: openedTabs.length, ...properties }); }
+            },
             downloads: { search(_query, callback) { callback([]); }, show() {} },
             history: { search(_query, callback) { callback(history); } }
         };
         window.__readMockSync = () => readArea(syncKey);
-    }, { seed, history: historyItems });
+        window.__readMockLocal = () => readArea(localKey);
+        window.__readOpenedTabs = () => [...openedTabs];
+    }, { seed, history: historyItems, options });
 }
 
-async function openExtension(page, seed = initialData) {
+async function openExtension(page, seed = initialData, options = {}) {
     const errors = [];
     page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
     page.on('pageerror', (error) => errors.push(error.message));
-    await installChromeMock(page, seed);
+    await installChromeMock(page, seed, options);
     await page.goto('/newtab.html');
     await expect(page.locator('.bookmark-tile')).toHaveCount(seed.bookmarks.filter((bookmark) => (bookmark.folder || '全部') === '全部').length);
     return errors;
@@ -219,6 +232,27 @@ test('renders the TypeScript Web Component home screen', async ({ page }) => {
     expect(coverage.movedChildren).toBe(0);
     expect(coverage.lenses).toBe(1);
     expect(coverage.hdrLayers).toBe(1);
+    expect(await page.locator('.app-shell').evaluate((element) => getComputedStyle(element).textShadow)).not.toBe('none');
+    expect(errors).toEqual([]);
+});
+
+test('adds another extension page as a bookmark', async ({ page }) => {
+    const errors = await openExtension(page);
+    const extensionPage = 'chrome-extension://hjekpdhdabgkokjbklegnfkogcpjhhhg/index.html';
+    await page.locator('.add-bookmark-fab').click();
+    const dialog = page.getByRole('dialog', { name: '添加书签' });
+    await expect(dialog).toBeVisible();
+    await dialog.locator('input[name="url"]').fill(extensionPage);
+    await dialog.locator('input[name="name"]').fill('扩展工具');
+    await dialog.getByRole('button', { name: '保存' }).click();
+    const tile = page.locator('.bookmark-tile', { hasText: '扩展工具' });
+    await expect(tile).toHaveAttribute('href', extensionPage);
+    await tile.click();
+    const openedTabs = await page.evaluate(() => window.__readOpenedTabs());
+    expect(openedTabs).toEqual([{ url: extensionPage }]);
+    await expect(page).toHaveURL(/\/newtab\.html$/);
+    const stored = await page.evaluate(() => window.__readMockSync().bookmarks);
+    expect(stored.some((bookmark) => bookmark.url === extensionPage)).toBe(true);
     expect(errors).toEqual([]);
 });
 
@@ -450,6 +484,63 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     expect(stored.layout.showStatus).toBe(false);
     expect(stored.appearance.theme).toBe('dark');
     expect(stored.appearance.hdrHighlights).toBe(true);
+    expect(errors).toEqual([]);
+});
+
+test('keeps the previous wallpaper when IndexedDB storage fails', async ({ page }) => {
+    const errors = await openExtension(page, initialData, { failIndexedDB: true });
+    await openSettings(page, 'wallpaper');
+    const alertPromise = page.waitForEvent('dialog');
+    await page.locator('.upload-wallpaper input').setInputFiles({
+        name: 'wallpaper.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+    });
+    const alert = await alertPromise;
+    expect(alert.message()).toContain('IndexedDB');
+    await alert.dismiss();
+    const state = await page.evaluate(() => ({ sync: window.__readMockSync(), local: window.__readMockLocal() }));
+    expect(state.sync.settings.wallpaper).toEqual(initialData.settings.wallpaper);
+    expect(state.local).not.toHaveProperty('localImageWallpaper');
+    expect(state.local).not.toHaveProperty('localVideoWallpaper');
+    expect(errors).toEqual([]);
+});
+
+test('reports native video playback failures instead of swallowing them', async ({ page }) => {
+    const videoBase64 = fs.readFileSync(require.resolve('../fixtures/wallpaper.webm')).toString('base64');
+    await page.addInitScript(() => {
+        Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+            configurable: true,
+            value() { return Promise.reject(new DOMException('模拟播放失败', 'NotSupportedError')); }
+        });
+    });
+    const errors = await openExtension(page);
+    await page.evaluate(async (encodedVideo) => {
+        const database = await new Promise((resolve, reject) => {
+            const request = indexedDB.open('infinity-wallpaper', 1);
+            request.onupgradeneeded = () => {
+                if (!request.result.objectStoreNames.contains('wallpapers')) request.result.createObjectStore('wallpapers');
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        const bytes = Uint8Array.from(atob(encodedVideo), (character) => character.charCodeAt(0));
+        await new Promise((resolve, reject) => {
+            const transaction = database.transaction('wallpapers', 'readwrite');
+            transaction.objectStore('wallpapers').put(new Blob([bytes], { type: 'video/webm' }), 'video');
+            transaction.oncomplete = resolve;
+            transaction.onerror = () => reject(transaction.error);
+        });
+        database.close();
+        const stored = window.__readMockSync();
+        stored.settings.wallpaper = { ...stored.settings.wallpaper, type: 'video', value: 'local' };
+        await new Promise((resolve) => chrome.storage.sync.set({ settings: stored.settings }, resolve));
+    }, videoBase64);
+    await page.reload();
+    await expect(page.locator('.app-notice')).toBeVisible();
+    await expect(page.locator('.app-notice')).toContainText('背景加载失败');
+    await expect(page.locator('.app-notice')).toContainText('已保留原背景');
+    await expect(page.locator('.wallpaper-media video')).toHaveCount(0);
     expect(errors).toEqual([]);
 });
 

@@ -136,7 +136,13 @@ export class BookmarkLaunchpad extends StoreElement {
 
         this.querySelectorAll<HTMLAnchorElement>('.bookmark-tile').forEach((card) => {
             const id = card.dataset.bookmarkId ?? '';
+            const bookmark = appStore.state.bookmarks.find((item) => String(item.id) === String(id));
             card.querySelectorAll<HTMLImageElement>('img').forEach((image) => this.bindIconFallback(image));
+            card.addEventListener('click', (event) => {
+                if (!bookmark || new URL(bookmark.url).protocol !== 'chrome-extension:' || event.defaultPrevented) return;
+                event.preventDefault();
+                void Promise.resolve(chrome.tabs.create({ url: bookmark.url })).catch(showError);
+            });
             card.addEventListener('dragstart', (event) => {
                 this.draggingId = id;
                 event.dataTransfer?.setData('text/plain', id);
@@ -160,7 +166,6 @@ export class BookmarkLaunchpad extends StoreElement {
             card.querySelector('.edit-bookmark')?.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                const bookmark = appStore.state.bookmarks.find((item) => String(item.id) === String(id));
                 if (bookmark) this.openDialog(bookmark);
             });
             card.querySelector('.delete-bookmark')?.addEventListener('click', (event) => {
