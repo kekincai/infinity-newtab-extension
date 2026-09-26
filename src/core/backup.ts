@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
         showBookmarks: true,
         showStatus: true,
         showRecent: true,
+        openInNewTab: false,
         searchEngine: 'google'
     },
     wallpaper: {
@@ -26,7 +27,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
         dateFormat: 'long',
         enhancedAnimations: true,
         hdrHighlights: true,
-        theme: 'light'
+        theme: 'auto'
     }
 };
 
@@ -76,7 +77,7 @@ export function sanitizeBookmarks(values: unknown[]): Bookmark[] {
         const id = typeof raw.id === 'number' || typeof raw.id === 'string'
             ? raw.id
             : Date.now() + index;
-        const icon = sanitizeRemoteUrl(raw.icon, true);
+        const icon = sanitizeBookmarkIcon(raw.icon);
         const order = Number(raw.order);
         merged.set(key, {
             id,
@@ -116,6 +117,7 @@ export function sanitizeSettings(value: unknown): AppSettings {
             showBookmarks: booleanOr(layout.showBookmarks, true),
             showStatus: booleanOr(layout.showStatus, true),
             showRecent: booleanOr(layout.showRecent, true),
+            openInNewTab: booleanOr(layout.openInNewTab, false),
             searchEngine: searchEngines.includes(String(layout.searchEngine))
                 ? layout.searchEngine as LayoutSettings['searchEngine']
                 : 'google'
@@ -133,7 +135,7 @@ export function sanitizeSettings(value: unknown): AppSettings {
             dateFormat: appearance.dateFormat === 'short' ? 'short' : 'long',
             enhancedAnimations: booleanOr(appearance.enhancedAnimations, true),
             hdrHighlights: booleanOr(appearance.hdrHighlights, true),
-            theme: appearance.theme === 'dark' ? 'dark' : 'light'
+            theme: sanitizeTheme(appearance.theme, layout)
         }
     };
 }
@@ -158,8 +160,27 @@ function canonicalUrl(value: string): string {
     return `${url.origin}${url.pathname}`.toLowerCase();
 }
 
+/**
+ * Before 2.5 `light` was the default everyone had, so it moves to `auto` (which
+ * still picks dark text on bright wallpapers). 2.5 settings are recognised by
+ * the `openInNewTab` flag introduced alongside the automatic theme.
+ */
+function sanitizeTheme(theme: unknown, layout: Record<string, unknown>): AppSettings['appearance']['theme'] {
+    if (theme === 'dark') return 'dark';
+    if (theme === 'light') return typeof layout.openInNewTab === 'boolean' ? 'light' : 'auto';
+    return 'auto';
+}
+
+/** Inline icons live in sync storage, so oversized data URLs are dropped instead of breaking the quota. */
+export const MAX_INLINE_ICON_LENGTH = 4096;
+
+export function sanitizeBookmarkIcon(value: unknown): string {
+    const icon = sanitizeRemoteUrl(value, true);
+    return icon.startsWith('data:') && icon.length > MAX_INLINE_ICON_LENGTH ? '' : icon;
+}
+
 function sanitizeWallpaperValue(value: unknown): string {
-    if (value === 'local' || value === '') return value;
+    if (typeof value === 'string' && (value === '' || /^(local|online)(-\d+)?$/.test(value))) return value;
     return sanitizeRemoteUrl(value, true);
 }
 

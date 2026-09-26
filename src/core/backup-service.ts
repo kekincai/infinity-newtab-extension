@@ -9,8 +9,17 @@ export class BackupService {
         return {
             version: '2.0',
             exportDate: new Date().toISOString(),
-            data: await storageGet<Record<string, unknown>>(null),
+            data: await this.collectData(),
             localMedia: await mediaStore.export()
+        };
+    }
+
+    /** Backups keep the flat 2.0 layout even though sync storage now chunks bookmarks. */
+    private async collectData(): Promise<Record<string, unknown>> {
+        const { todos } = await storageGet<Record<string, unknown>>(['todos']);
+        return {
+            ...structuredClone(appStore.state),
+            ...(Array.isArray(todos) ? { todos } : {})
         };
     }
 

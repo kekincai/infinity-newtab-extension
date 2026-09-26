@@ -1,5 +1,7 @@
 import { mediaStore } from '../core/media-store';
 import { appStore } from '../core/store';
+import type { ResolvedTheme } from '../core/types';
+import { toneOf, toneOfBlob } from '../core/wallpaper-service';
 import { StoreElement } from './base';
 
 export class WallpaperSurface extends StoreElement {
@@ -33,6 +35,7 @@ export class WallpaperSurface extends StoreElement {
         if (!host) return;
         let candidateUrl = '';
         let candidateVideo: HTMLVideoElement | null = null;
+        let tone: Promise<ResolvedTheme> = Promise.resolve('light');
         try {
             if (wallpaper.type === 'video') {
                 const blob = await mediaStore.get('video');
@@ -50,6 +53,7 @@ export class WallpaperSurface extends StoreElement {
                 await candidateVideo.play();
                 if (token !== this.renderToken) return;
                 candidateVideo.style.removeProperty('visibility');
+                tone = Promise.resolve(safeTone(() => toneOf(candidateVideo!)));
                 this.commitMedia(host, candidateVideo, candidateUrl, '');
                 candidateUrl = '';
                 candidateVideo = null;
@@ -58,16 +62,20 @@ export class WallpaperSurface extends StoreElement {
                 if (!blob) throw new Error('找不到已保存的图片背景');
                 candidateUrl = URL.createObjectURL(blob);
                 if (token !== this.renderToken) return;
+                tone = toneOfBlob(blob).catch(() => 'dark' as const);
                 this.commitMedia(host, null, candidateUrl, `url("${candidateUrl}")`);
                 candidateUrl = '';
             } else {
                 if (token !== this.renderToken) return;
-                const background = wallpaper.type === 'preset' && wallpaper.value
-                    ? `url("${wallpaper.value.replaceAll('"', '%22')}")`
-                    : '';
+                const preset = wallpaper.type === 'preset' && wallpaper.value;
+                const background = preset ? `url("${wallpaper.value.replaceAll('"', '%22')}")` : '';
+                // Remote presets from old versions cannot be sampled cross-origin; assume a busy, dark image.
+                if (preset) tone = Promise.resolve('dark');
                 this.commitMedia(host, null, '', background);
             }
             this.appliedMediaKey = mediaKey;
+            const resolved = await tone;
+            if (token === this.renderToken) this.reportTone(resolved);
         } catch (error) {
             if (token === this.renderToken) this.reportError(error);
         } finally {
@@ -83,6 +91,10 @@ export class WallpaperSurface extends StoreElement {
         host.style.backgroundImage = background;
         this.objectUrl = objectUrl;
         if (previousUrl && previousUrl !== objectUrl) URL.revokeObjectURL(previousUrl);
+    }
+
+    private reportTone(tone: ResolvedTheme): void {
+        this.dispatchEvent(new CustomEvent('wallpaper-tone', { bubbles: true, composed: true, detail: { tone } }));
     }
 
     private reportError(error: unknown): void {
@@ -104,5 +116,13 @@ export class WallpaperSurface extends StoreElement {
         video.removeAttribute('src');
         video.load();
         video.remove();
+    }
+}
+
+function safeTone(sample: () => ResolvedTheme): ResolvedTheme {
+    try {
+        return sample();
+    } catch {
+        return 'dark';
     }
 }

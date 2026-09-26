@@ -2,27 +2,51 @@ import { backupService } from '../core/backup-service';
 import { mediaStore } from '../core/media-store';
 import { appStore } from '../core/store';
 import type { AppSettings } from '../core/types';
+import { resetWallpaper, useLocalWallpaper, useOnlineWallpaper, wallpaperLabel } from '../core/wallpaper-service';
 import { StoreElement } from './base';
+import { ICONS } from './icons';
+import { ENGINES } from './search-command';
+import { CLOSE_ICON, confirmAction, notify, notifyError, pushLayer } from './ui-layer';
 
-type Tab = 'appearance' | 'wallpaper' | 'layout' | 'data';
+type Tab = 'appearance' | 'widgets' | 'wallpaper' | 'data';
+type Option = [value: string, label: string];
+
+const TABS: Array<[Tab, string, string]> = [
+    ['appearance', '外观', ICONS.palette],
+    ['widgets', '组件', ICONS.widgets],
+    ['wallpaper', '壁纸', ICONS.image],
+    ['data', '数据', ICONS.database]
+];
 
 export class SettingsDrawer extends StoreElement {
     protected readonly observedChanges = ['settings.appearance', 'settings.wallpaper', 'settings.layout'] as const;
     private openState = false;
     private activeTab: Tab = 'appearance';
+    private releaseLayer: (() => void) | null = null;
+    private previewUrl = '';
+    private previewToken = 0;
 
     open(): void {
+        if (this.openState) return;
         this.openState = true;
         this.syncOpenState();
-        window.requestAnimationFrame(() => this.querySelector<HTMLButtonElement>('.settings-close')?.focus());
+        this.releaseLayer = pushLayer(this.querySelector<HTMLElement>('.settings-drawer')!, () => this.close());
+        void this.refreshPreview();
+        window.requestAnimationFrame(() => this.querySelector<HTMLButtonElement>('.settings-tab.is-active')?.focus());
     }
 
     close(): void {
-        if (this.contains(document.activeElement)) {
-            document.querySelector<HTMLButtonElement>('.settings-trigger')?.focus();
-        }
+        if (!this.openState) return;
         this.openState = false;
         this.syncOpenState();
+        const release = this.releaseLayer;
+        this.releaseLayer = null;
+        release?.();
+    }
+
+    disconnectedCallback(): void {
+        super.disconnectedCallback();
+        if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
     }
 
     protected handleStoreChange(): void {
@@ -30,308 +54,359 @@ export class SettingsDrawer extends StoreElement {
     }
 
     protected render(): void {
-        const settings = appStore.state.settings;
         this.innerHTML = `
-            <aside class="settings-drawer glass-panel ${this.openState ? 'is-open' : ''}" aria-hidden="${!this.openState}" ${this.openState ? '' : 'inert'}>
+            <aside class="settings-drawer glass-panel" aria-label="设置" aria-hidden="true" inert>
                 <header class="settings-header">
-                    <span class="settings-brand" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-                    <div><span class="section-kicker">Infinity 控制台</span><h2>设置</h2></div>
-                    <button class="settings-close" type="button" aria-label="关闭">×</button>
+                    <h2>设置</h2>
+                    <button class="icon-close settings-close" type="button" aria-label="关闭设置">${CLOSE_ICON}</button>
                 </header>
-                <div class="settings-workspace">
-                    <div class="settings-tabs" role="tablist">
-                        ${tabButton('appearance', '外观', '◌', this.activeTab)}
-                        ${tabButton('wallpaper', '壁纸', '◇', this.activeTab)}
-                        ${tabButton('layout', '布局', '⊞', this.activeTab)}
-                        ${tabButton('data', '数据', '⇄', this.activeTab)}
-                    </div>
-                    <div class="settings-pane">${this.paneTemplate(settings)}</div>
-                </div>
+                <nav class="settings-tabs" role="tablist" aria-label="设置分类">
+                    ${TABS.map(([tab, label, icon]) => `<button type="button" role="tab" id="settings-tab-${tab}" aria-controls="settings-pane" data-tab="${tab}" data-liquid-item class="settings-tab">${icon}<span>${label}</span></button>`).join('')}
+                </nav>
+                <div class="settings-pane" id="settings-pane" role="tabpanel"></div>
             </aside>
-            <button class="settings-scrim ${this.openState ? 'is-open' : ''}" type="button" aria-label="关闭设置"></button>
+            <div class="settings-scrim" aria-hidden="true"></div>
         `;
-        this.bind();
+        this.querySelector('.settings-close')?.addEventListener('click', () => this.close());
+        this.querySelector('.settings-scrim')?.addEventListener('click', () => this.close());
+        this.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((button) => {
+            button.addEventListener('click', () => this.selectTab(button.dataset.tab as Tab));
+        });
+        this.querySelector('.settings-tabs')?.addEventListener('keydown', (event) => {
+            const key = (event as KeyboardEvent).key;
+            if (key !== 'ArrowLeft' && key !== 'ArrowRight') return;
+            const index = TABS.findIndex(([tab]) => tab === this.activeTab);
+            const next = TABS[(index + (key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length][0];
+            this.selectTab(next);
+            this.querySelector<HTMLButtonElement>(`[data-tab="${next}"]`)?.focus();
+        });
+        this.renderPane();
         this.syncOpenState();
+    }
+
+    /** Only the pane is rebuilt; the drawer shell and its listeners stay put. */
+    private selectTab(tab: Tab): void {
+        if (tab === this.activeTab) return;
+        this.activeTab = tab;
+        this.renderPane();
+    }
+
+    private renderPane(): void {
+        const pane = this.querySelector<HTMLElement>('.settings-pane');
+        if (!pane) return;
+        this.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((button) => {
+            const active = button.dataset.tab === this.activeTab;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-selected', String(active));
+            button.tabIndex = active ? 0 : -1;
+        });
+        pane.setAttribute('aria-labelledby', `settings-tab-${this.activeTab}`);
+        pane.innerHTML = this.paneTemplate(appStore.state.settings);
+        pane.scrollTop = 0;
+        this.bindPane(pane);
+        if (this.activeTab === 'wallpaper') void this.refreshPreview();
     }
 
     private syncOpenState(): void {
         const drawer = this.querySelector<HTMLElement>('.settings-drawer');
-        const scrim = this.querySelector<HTMLElement>('.settings-scrim');
         drawer?.classList.toggle('is-open', this.openState);
         drawer?.setAttribute('aria-hidden', String(!this.openState));
         drawer?.toggleAttribute('inert', !this.openState);
-        scrim?.classList.toggle('is-open', this.openState);
+        this.querySelector('.settings-scrim')?.classList.toggle('is-open', this.openState);
+        document.body.classList.toggle('settings-open', this.openState);
     }
 
     private syncControls(settings: AppSettings): void {
-        const clockFormat = this.querySelector<HTMLSelectElement>('[data-setting="clockFormat"]');
-        const searchEngine = this.querySelector<HTMLSelectElement>('[data-setting="searchEngine"]');
-        if (clockFormat) clockFormat.value = settings.appearance.clockFormat;
-        if (searchEngine) searchEngine.value = settings.layout.searchEngine;
+        const segments: Record<string, string> = {
+            theme: settings.appearance.theme,
+            clockFormat: settings.appearance.clockFormat,
+            dateFormat: settings.appearance.dateFormat,
+            searchEngine: settings.layout.searchEngine
+        };
+        this.querySelectorAll<HTMLElement>('[data-segment]').forEach((group) => {
+            const value = segments[group.dataset.segment ?? ''];
+            group.querySelectorAll<HTMLButtonElement>('[data-value]').forEach((button) => {
+                const checked = button.dataset.value === value;
+                button.classList.toggle('is-active', checked);
+                button.setAttribute('aria-checked', String(checked));
+                button.tabIndex = checked ? 0 : -1;
+            });
+        });
 
         const toggles: Record<string, boolean> = {
             enhancedAnimations: settings.appearance.enhancedAnimations,
             hdrHighlights: settings.appearance.hdrHighlights,
-            darkText: settings.appearance.theme === 'light',
             showClock: settings.layout.showClock,
             showSearch: settings.layout.showSearch,
             showBookmarks: settings.layout.showBookmarks,
             showStatus: settings.layout.showStatus,
-            showRecent: settings.layout.showRecent
+            showRecent: settings.layout.showRecent,
+            openInNewTab: settings.layout.openInNewTab
         };
         this.querySelectorAll<HTMLInputElement>('input[data-toggle]').forEach((input) => {
             input.checked = toggles[input.dataset.toggle ?? ''] ?? input.checked;
             input.closest('liquid-toggle')?.classList.toggle('is-checked', input.checked);
         });
+        this.querySelectorAll<HTMLElement>('[data-depends]').forEach((row) => {
+            row.classList.toggle('is-disabled', !toggles[row.dataset.depends ?? '']);
+        });
 
-        const ranges: Record<string, number> = {
-            blur: settings.wallpaper.blur,
-            overlay: settings.wallpaper.overlay
-        };
+        const ranges: Record<string, number> = { blur: settings.wallpaper.blur, overlay: settings.wallpaper.overlay };
         this.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach((input) => {
             const value = ranges[input.name];
-            if (!Number.isFinite(value)) return;
+            if (!Number.isFinite(value) || Number(input.value) === value) return;
             input.value = String(value);
             input.dispatchEvent(new Event('input', { bubbles: false }));
         });
+        const label = this.querySelector('.wallpaper-kind');
+        if (label) label.textContent = wallpaperLabel(settings.wallpaper);
+        if (this.activeTab === 'wallpaper') void this.refreshPreview();
     }
 
     private paneTemplate(settings: AppSettings): string {
+        const { appearance, layout, wallpaper } = settings;
         if (this.activeTab === 'appearance') return `
-            ${paneHeader('外观', '决定时间、搜索和交互呈现方式。')}
-            <section class="settings-group">
-                <h3>基础偏好</h3>
-                <label class="setting-field"><span>时钟格式</span><select data-setting="clockFormat"><option value="24h" ${settings.appearance.clockFormat === '24h' ? 'selected' : ''}>24 小时制</option><option value="12h" ${settings.appearance.clockFormat === '12h' ? 'selected' : ''}>12 小时制</option></select></label>
-                <label class="setting-field"><span>搜索引擎</span><select data-setting="searchEngine"><option value="google" ${settings.layout.searchEngine === 'google' ? 'selected' : ''}>Google</option><option value="bing" ${settings.layout.searchEngine === 'bing' ? 'selected' : ''}>Bing</option><option value="baidu" ${settings.layout.searchEngine === 'baidu' ? 'selected' : ''}>百度</option><option value="duckduckgo" ${settings.layout.searchEngine === 'duckduckgo' ? 'selected' : ''}>DuckDuckGo</option></select></label>
-            </section>
-            <section class="settings-group settings-list">
-                <h3>视觉体验</h3>
-                ${toggle('enhancedAnimations', '增强动画', settings.appearance.enhancedAnimations, '启用进场动画与 Liquid Glass 形变')}
-                ${toggle('hdrHighlights', 'HDR 高光', settings.appearance.hdrHighlights, hdrDescription())}
-                ${toggle('darkText', '使用深色文字', settings.appearance.theme === 'light', '浅色壁纸推荐开启，深色壁纸可关闭')}
-            </section>
+            ${group('主题', `
+                ${segmentRow('theme', '文字配色', appearance.theme, [['auto', '自动'], ['light', '深色文字'], ['dark', '浅色文字']])}
+                <p class="setting-hint">“自动”会根据壁纸明暗选择文字颜色。</p>
+            `)}
+            ${group('效果', `
+                ${toggle('enhancedAnimations', '增强动画', appearance.enhancedAnimations, '进场动画与 Liquid Glass 形变')}
+                ${toggle('hdrHighlights', 'HDR 高光', appearance.hdrHighlights, hdrDescription())}
+            `)}
+        `;
+        if (this.activeTab === 'widgets') return `
+            ${group('时钟', `
+                ${toggle('showClock', '显示时钟', layout.showClock)}
+                <div class="setting-sub" data-depends="showClock">
+                    ${segmentRow('clockFormat', '时间格式', appearance.clockFormat, [['24h', '24 小时'], ['12h', '12 小时']])}
+                    ${segmentRow('dateFormat', '日期格式', appearance.dateFormat, [['long', '9月26日 星期六'], ['short', '9/26 周六']])}
+                </div>
+            `)}
+            ${group('搜索', `
+                ${toggle('showSearch', '显示搜索框', layout.showSearch, '按 / 键随时聚焦')}
+                <div class="setting-sub" data-depends="showSearch">
+                    ${segmentRow('searchEngine', '搜索引擎', layout.searchEngine, Object.entries(ENGINES).map(([key, engine]) => [key, engine.label] as Option))}
+                </div>
+            `)}
+            ${group('启动台', `
+                ${toggle('showBookmarks', '书签与文件夹', layout.showBookmarks)}
+                ${toggle('showRecent', '常访问网站', layout.showRecent, '根据最近 30 天浏览记录生成')}
+                ${toggle('openInNewTab', '在新标签页打开', layout.openInNewTab, '点击书签时保留当前页面')}
+            `)}
+            ${group('状态', `
+                ${toggle('showStatus', '活动状态', layout.showStatus, '有媒体播放、下载或使用电池时显示在左上角')}
+            `)}
         `;
         if (this.activeTab === 'wallpaper') return `
-            ${paneHeader('壁纸', '让启动台适配图片、视频和不同明暗背景。')}
-            <section class="settings-group">
-                <h3>壁纸来源</h3>
-                <div class="settings-button-stack">
-                    <button class="settings-action settings-action-featured random-wallpaper" type="button" data-liquid-item><b>✦</b><span>换一张二次元壁纸<small>从在线图源随机获取</small></span></button>
-                    <label class="settings-action upload-wallpaper" data-liquid-item><b>↑</b><span>上传本地图片或视频<small>视频会自动静音循环播放</small></span><input type="file" accept="image/*,video/*" hidden></label>
-                    <button class="settings-action reset-wallpaper" type="button" data-liquid-item><b>↻</b><span>恢复默认背景</span></button>
+            <section class="wallpaper-preview" aria-label="当前壁纸">
+                <div class="wallpaper-preview-media"></div>
+                <span class="wallpaper-kind">${wallpaperLabel(wallpaper)}</span>
+            </section>
+            ${group('更换', `
+                <div class="settings-actions">
+                    <button class="settings-action random-wallpaper" type="button" data-liquid-item>${ICONS.shuffle}<span>随机二次元壁纸<small>下载后保存在本地，打开新标签页不再闪烁</small></span></button>
+                    <label class="settings-action upload-wallpaper" data-liquid-item>${ICONS.upload}<span>上传图片或视频<small>视频会静音循环播放</small></span><input type="file" accept="image/*,video/*" hidden></label>
+                    <button class="settings-action reset-wallpaper" type="button" data-liquid-item>${ICONS.reset}<span>恢复默认渐变</span></button>
                 </div>
-            </section>
-            <section class="settings-group">
-                <h3>画面调节</h3>
-                ${range('blur', '模糊度', settings.wallpaper.blur, 0, 10, 'px')}
-                ${range('overlay', '暗度', settings.wallpaper.overlay, 0, 80, '%')}
-            </section>
-        `;
-        if (this.activeTab === 'layout') return `
-            ${paneHeader('布局', '只保留你每天真正会看的区域。')}
-            <section class="settings-group settings-list">
-                <h3>桌面组件</h3>
-                ${toggle('showClock', '时钟与日期', settings.layout.showClock, '显示在页面顶部左侧')}
-                ${toggle('showSearch', '搜索框', settings.layout.showSearch, '使用斜杠键可快速聚焦')}
-                ${toggle('showBookmarks', '书签与文件夹', settings.layout.showBookmarks, '启动台的主要工作区域')}
-                ${toggle('showStatus', '活动与系统状态', settings.layout.showStatus, '媒体、下载、电池和设备信息')}
-                ${toggle('showRecent', '最近常访问', settings.layout.showRecent, '根据本机浏览历史聚合网站')}
-            </section>
+            `)}
+            ${group('调节', `
+                ${range('blur', '模糊', wallpaper.blur, 0, 10, 'px')}
+                ${range('overlay', '遮罩', wallpaper.overlay, 0, 80, '%')}
+            `)}
         `;
         return `
-            ${paneHeader('数据', '备份、迁移或恢复当前启动台。')}
-            <section class="settings-group">
-                <h3>备份与恢复</h3>
-                <div class="settings-button-stack">
-                    <button class="settings-action export-data" type="button" data-liquid-item><b>↓</b><span>导出数据<small>保存书签、设置和本地壁纸</small></span></button>
-                    <label class="settings-action import-data" data-liquid-item><b>↑</b><span>导入数据<small>兼容旧版 1.0 与 2.0 备份</small></span><input type="file" accept="application/json,.json" hidden></label>
-                    <button class="settings-action danger reset-data" type="button" data-liquid-item><b>↻</b><span>重置所有设置<small>清空后无法撤销</small></span></button>
+            ${group('备份', `
+                <div class="settings-actions">
+                    <button class="settings-action export-data" type="button" data-liquid-item>${ICONS.download}<span>导出备份<small>书签、设置和本地壁纸，保存为 JSON</small></span></button>
+                    <label class="settings-action import-data" data-liquid-item>${ICONS.upload}<span>从备份恢复<small>支持 1.0 与 2.0 备份，会覆盖当前数据</small></span><input type="file" accept="application/json,.json" hidden></label>
                 </div>
-            </section>
-            <div class="data-note"><strong>导入前建议先导出</strong><p>导入操作会覆盖当前书签、布局与壁纸设置。</p></div>
+            `)}
+            ${group('危险操作', `
+                <div class="settings-actions">
+                    <button class="settings-action danger reset-data" type="button" data-liquid-item>${ICONS.trash}<span>清空所有数据<small>删除全部书签、文件夹、设置和本地壁纸</small></span></button>
+                </div>
+            `, 'is-danger')}
         `;
     }
 
-    private bind(): void {
-        this.querySelector('.settings-close')?.addEventListener('click', () => this.close());
-        this.querySelector('.settings-scrim')?.addEventListener('click', () => this.close());
-        this.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((button) => {
-            button.addEventListener('click', () => {
-                this.activeTab = button.dataset.tab as Tab;
-                this.render();
+    private bindPane(pane: HTMLElement): void {
+        pane.querySelectorAll<HTMLElement>('[data-segment]').forEach((groupElement) => {
+            const buttons = [...groupElement.querySelectorAll<HTMLButtonElement>('[data-value]')];
+            buttons.forEach((button) => button.addEventListener('click', () => {
+                void this.applySegment(groupElement.dataset.segment ?? '', button.dataset.value ?? '');
+            }));
+            groupElement.addEventListener('keydown', (event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                event.preventDefault();
+                const index = buttons.findIndex((button) => button.classList.contains('is-active'));
+                const next = buttons[(index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length];
+                next.focus();
+                next.click();
             });
         });
-        this.querySelector<HTMLSelectElement>('[data-setting="clockFormat"]')?.addEventListener('change', (event) => {
-            void appStore.updateSettings('appearance', { clockFormat: (event.target as HTMLSelectElement).value as '12h' | '24h' });
-        });
-        this.querySelector<HTMLSelectElement>('[data-setting="searchEngine"]')?.addEventListener('change', (event) => {
-            void appStore.updateSettings('layout', { searchEngine: (event.target as HTMLSelectElement).value as AppSettings['layout']['searchEngine'] });
-        });
-        this.querySelectorAll<HTMLInputElement>('input[data-toggle]').forEach((input) => {
+        pane.querySelectorAll<HTMLInputElement>('input[data-toggle]').forEach((input) => {
             input.addEventListener('change', () => void this.applyToggle(input.dataset.toggle ?? '', input.checked));
         });
-        this.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach((input) => {
+        pane.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach((input) => {
             input.addEventListener('input', () => {
-                const output = input.closest('label')?.querySelector('output');
+                const output = input.closest('.range-row')?.querySelector('output');
                 if (output) output.textContent = `${input.value}${input.dataset.unit ?? ''}`;
+                // Preview live on the wallpaper; persisted on release to spare sync write quota.
+                document.querySelector<HTMLElement>('wallpaper-surface')?.style.setProperty(
+                    input.name === 'blur' ? '--wallpaper-blur' : '--wallpaper-overlay',
+                    input.name === 'blur' ? `${input.value}px` : String(Number(input.value) / 100)
+                );
             });
             input.addEventListener('change', () => void appStore.updateSettings('wallpaper', {
                 [input.name]: Number(input.value)
-            } as Partial<AppSettings['wallpaper']>));
+            } as Partial<AppSettings['wallpaper']>).catch(notifyError));
         });
-        this.querySelector('.random-wallpaper')?.addEventListener('click', () => {
-            this.dispatchEvent(new CustomEvent('random-wallpaper', { bubbles: true, composed: true }));
+        pane.querySelector('.random-wallpaper')?.addEventListener('click', (event) => void this.withBusy(event.currentTarget as HTMLElement, useOnlineWallpaper));
+        pane.querySelector<HTMLInputElement>('.upload-wallpaper input')?.addEventListener('change', (event) => {
+            const input = event.target as HTMLInputElement;
+            const file = input.files?.[0];
+            input.value = '';
+            if (file) void this.withBusy(input.closest('label')!, () => useLocalWallpaper(file));
         });
-        this.querySelector<HTMLInputElement>('.upload-wallpaper input')?.addEventListener('change', (event) => {
-            void this.uploadWallpaper((event.target as HTMLInputElement).files?.[0]);
+        pane.querySelector('.reset-wallpaper')?.addEventListener('click', () => void resetWallpaper().catch(notifyError));
+        pane.querySelector('.export-data')?.addEventListener('click', () => void backupService.createBackup().catch(notifyError));
+        pane.querySelector<HTMLInputElement>('.import-data input')?.addEventListener('change', (event) => {
+            const input = event.target as HTMLInputElement;
+            const file = input.files?.[0];
+            input.value = '';
+            if (file) void this.importData(file);
         });
-        this.querySelector('.reset-wallpaper')?.addEventListener('click', () => void this.resetWallpaper());
-        this.querySelector('.export-data')?.addEventListener('click', () => void this.exportData());
-        this.querySelector<HTMLInputElement>('.import-data input')?.addEventListener('change', (event) => {
-            void this.importData((event.target as HTMLInputElement).files?.[0]);
-        });
-        this.querySelector('.reset-data')?.addEventListener('click', () => void this.resetData());
+        pane.querySelector('.reset-data')?.addEventListener('click', () => void this.resetData());
+        this.syncControls(appStore.state.settings);
     }
 
-    private async applyToggle(name: string, checked: boolean): Promise<void> {
-        const appearance = ['enhancedAnimations', 'hdrHighlights', 'darkText'];
+    private async withBusy(control: HTMLElement, task: () => Promise<void>): Promise<void> {
+        if (control.classList.contains('is-busy')) return;
+        control.classList.add('is-busy');
+        control.setAttribute('aria-busy', 'true');
         try {
-            if (name === 'darkText') await appStore.updateSettings('appearance', { theme: checked ? 'light' : 'dark' });
-            else if (appearance.includes(name)) await appStore.updateSettings('appearance', { [name]: checked });
-            else await appStore.updateSettings('layout', { [name]: checked });
-        } catch (error) { showError(error); }
-    }
-
-    private async uploadWallpaper(file?: File): Promise<void> {
-        if (!file) return;
-        const kind = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : null;
-        if (!kind) { alert('请选择图片或视频文件。'); return; }
-        let previous: Blob | null = null;
-        let stored = false;
-        try {
-            await validateLocalMedia(file, kind);
-            previous = await mediaStore.get(kind);
-            await mediaStore.set(kind, file);
-            stored = true;
-            await appStore.updateSettings('wallpaper', { type: kind === 'video' ? 'video' : 'local', value: 'local' });
+            await task();
         } catch (error) {
-            if (stored) {
-                try {
-                    if (previous) await mediaStore.set(kind, previous);
-                    else await mediaStore.clear(kind);
-                } catch (rollbackError) {
-                    showError(new Error(`${errorMessage(error)}；恢复原背景也失败：${errorMessage(rollbackError)}`));
-                    return;
-                }
-            }
-            showError(error);
+            notifyError(error);
+        } finally {
+            control.classList.remove('is-busy');
+            control.removeAttribute('aria-busy');
         }
     }
 
-    private async resetWallpaper(): Promise<void> {
+    private async applySegment(name: string, value: string): Promise<void> {
         try {
-            await appStore.updateSettings('wallpaper', { type: 'gradient', value: '', blur: 0, overlay: 30 });
-            await mediaStore.clearAll();
-        } catch (error) { showError(error); }
+            if (name === 'theme') await appStore.updateSettings('appearance', { theme: value as AppSettings['appearance']['theme'] });
+            else if (name === 'clockFormat') await appStore.updateSettings('appearance', { clockFormat: value as '12h' | '24h' });
+            else if (name === 'dateFormat') await appStore.updateSettings('appearance', { dateFormat: value as 'long' | 'short' });
+            else if (name === 'searchEngine') await appStore.updateSettings('layout', { searchEngine: value as AppSettings['layout']['searchEngine'] });
+        } catch (error) { notifyError(error); }
     }
 
-    private async exportData(): Promise<void> {
-        try { await backupService.createBackup(); } catch (error) { showError(error); }
+    private async applyToggle(name: string, checked: boolean): Promise<void> {
+        try {
+            if (name === 'enhancedAnimations' || name === 'hdrHighlights') await appStore.updateSettings('appearance', { [name]: checked });
+            else await appStore.updateSettings('layout', { [name]: checked });
+        } catch (error) { notifyError(error); }
     }
 
-    private async importData(file?: File): Promise<void> {
-        if (!file || !confirm('导入会覆盖当前书签与设置，继续吗？')) return;
+    /** Mirrors the live wallpaper into the preview card without re-downloading anything. */
+    private async refreshPreview(): Promise<void> {
+        const host = this.querySelector<HTMLElement>('.wallpaper-preview-media');
+        if (!host || !this.openState) return;
+        const token = ++this.previewToken;
+        const { type, value } = appStore.state.settings.wallpaper;
+        const key = `${type}:${value}`;
+        if (host.dataset.key === key) return;
+        let url = '';
+        try {
+            if (type === 'local' || type === 'video') {
+                const blob = await mediaStore.get(type === 'video' ? 'video' : 'image');
+                if (blob) url = URL.createObjectURL(blob);
+            }
+        } catch {
+            // The preview is decorative; the wallpaper surface reports real failures.
+        }
+        if (token !== this.previewToken) {
+            if (url) URL.revokeObjectURL(url);
+            return;
+        }
+        if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
+        this.previewUrl = url;
+        host.dataset.key = key;
+        host.replaceChildren();
+        host.style.backgroundImage = '';
+        if (type === 'video' && url) {
+            const video = document.createElement('video');
+            Object.assign(video, { src: url, muted: true, loop: true, autoplay: true, playsInline: true });
+            host.append(video);
+        } else if (type === 'local' && url) {
+            host.style.backgroundImage = `url("${url}")`;
+        } else if (type === 'preset' && value) {
+            host.style.backgroundImage = `url("${value.replaceAll('"', '%22')}")`;
+        }
+    }
+
+    private async importData(file: File): Promise<void> {
+        const confirmed = await confirmAction({
+            title: '从备份恢复？',
+            body: '当前的书签、文件夹、设置和本地壁纸会被备份中的内容替换。建议先导出一份当前数据。',
+            confirmText: '恢复'
+        });
+        if (!confirmed) return;
         try {
             await backupService.importData(await backupService.read(file));
-            alert('导入完成，旧数据已经转换到新版本。');
-        } catch (error) { showError(error); }
+            notify('已从备份恢复', 'success');
+        } catch (error) { notifyError(error); }
     }
 
     private async resetData(): Promise<void> {
-        if (!confirm('确定清空所有书签、设置和本地壁纸吗？此操作无法撤销。')) return;
+        const confirmed = await confirmAction({
+            title: '清空所有数据？',
+            body: `将删除 ${appStore.state.bookmarks.length} 个书签、全部文件夹、设置和本地壁纸，且无法撤销。`,
+            confirmText: '清空',
+            danger: true
+        });
+        if (!confirmed) return;
         try {
             await mediaStore.clearAll();
             await appStore.reset();
-        } catch (error) { showError(error); }
+            notify('已清空所有数据', 'success');
+        } catch (error) { notifyError(error); }
     }
 }
 
-function tabButton(tab: Tab, label: string, icon: string, active: Tab): string {
-    return `<button type="button" role="tab" data-tab="${tab}" data-liquid-item class="settings-tab ${tab === active ? 'is-active' : ''}" aria-selected="${tab === active}"><i aria-hidden="true">${icon}</i><span>${label}</span></button>`;
+function group(title: string, body: string, className = ''): string {
+    return `<section class="settings-group ${className}"><h3>${title}</h3><div class="settings-card">${body}</div></section>`;
 }
 
-function paneHeader(title: string, description: string): string {
-    return `<header class="settings-pane-header"><h3>${title}</h3><p>${description}</p></header>`;
+function segmentRow(name: string, label: string, value: string, options: Option[]): string {
+    return `
+        <div class="segment-row">
+            <span class="segment-label" id="segment-${name}">${label}</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="segment-${name}" data-segment="${name}" style="--segments:${options.length}">
+                ${options.map(([optionValue, optionLabel]) => {
+                    const checked = optionValue === value;
+                    return `<button type="button" role="radio" aria-checked="${checked}" tabindex="${checked ? 0 : -1}" class="${checked ? 'is-active' : ''}" data-value="${optionValue}" data-liquid-item>${optionLabel}</button>`;
+                }).join('')}
+            </div>
+        </div>`;
 }
 
 function toggle(name: string, label: string, checked: boolean, description = ''): string {
-    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ''}</span><liquid-toggle><input type="checkbox" data-toggle="${name}" ${checked ? 'checked' : ''}><span class="liquid-toggle-track" aria-hidden="true"><span class="liquid-toggle-thumb"></span></span></liquid-toggle></label>`;
+    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ''}</span><liquid-toggle><input type="checkbox" role="switch" data-toggle="${name}" ${checked ? 'checked' : ''}><span class="liquid-toggle-track" aria-hidden="true"><span class="liquid-toggle-thumb"></span></span></liquid-toggle></label>`;
 }
 
 function hdrDescription(): string {
     const hdrDisplay = window.matchMedia('(dynamic-range: high)').matches
         && CSS.supports('dynamic-range-limit', 'no-limit');
-    if (!hdrDisplay) return '当前为 SDR，连接 HDR 屏幕后自动启用';
+    if (!hdrDisplay) return '当前为 SDR 屏幕，连接 HDR 屏幕后自动生效';
     return 'gpu' in navigator
         ? 'HDR 媒体与 WebGPU 玻璃高光均已启用'
         : 'HDR 媒体已启用，当前浏览器未开放动态 HDR 高光';
 }
 
 function range(name: string, label: string, value: number, min: number, max: number, unit: string): string {
-    return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}"></liquid-range></label>`;
-}
-
-function showError(error: unknown): void {
-    alert(errorMessage(error));
-}
-
-function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : '操作失败';
-}
-
-async function validateLocalMedia(file: File, kind: 'image' | 'video'): Promise<void> {
-    const url = URL.createObjectURL(file);
-    let video: HTMLVideoElement | null = null;
-    try {
-        if (kind === 'image') {
-            const image = new Image();
-            image.src = url;
-            await image.decode().catch(() => { throw new Error('图片文件无法解码，背景没有更改'); });
-            return;
-        }
-
-        video = document.createElement('video');
-        video.preload = 'auto';
-        video.muted = true;
-        video.playsInline = true;
-        video.src = url;
-        await waitForVideo(video);
-        await video.play().catch(() => { throw new Error('视频无法播放，背景没有更改'); });
-    } finally {
-        if (video) {
-            video.pause();
-            video.removeAttribute('src');
-            video.load();
-        }
-        URL.revokeObjectURL(url);
-    }
-}
-
-function waitForVideo(video: HTMLVideoElement): Promise<void> {
-    return new Promise((resolve, reject) => {
-        let timeout = 0;
-        const finish = (error?: Error) => {
-            window.clearTimeout(timeout);
-            video.removeEventListener('canplay', onReady);
-            video.removeEventListener('error', onError);
-            if (error) reject(error);
-            else resolve();
-        };
-        const onReady = () => finish();
-        const onError = () => finish(new Error('视频文件无法解码，背景没有更改'));
-        video.addEventListener('canplay', onReady, { once: true });
-        video.addEventListener('error', onError, { once: true });
-        timeout = window.setTimeout(() => finish(new Error('读取视频超时，背景没有更改')), 10000);
-        video.load();
-    });
+    return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}"></liquid-range></label>`;
 }
