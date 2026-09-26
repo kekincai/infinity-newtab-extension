@@ -52,8 +52,8 @@
     return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}\u2026`;
   }
   function isManagedFavicon(value) {
-    const icon = String(value ?? "");
-    return /^https:\/\/www\.google\.com\/s2\/favicons/i.test(icon) || /^chrome-extension:\/\/[^/]+\/_favicon\//i.test(icon);
+    const icon2 = String(value ?? "");
+    return /^https:\/\/www\.google\.com\/s2\/favicons/i.test(icon2) || /^chrome-extension:\/\/[^/]+\/_favicon\//i.test(icon2);
   }
   function faviconUrl(pageUrl, size = 128) {
     try {
@@ -78,8 +78,8 @@
     return Boolean(bookmark.icon && !isManagedFavicon(bookmark.icon));
   }
   function bookmarkIconIsRaster(bookmark) {
-    const icon = bookmarkIcon(bookmark);
-    return !/^data:image\/svg\+xml/i.test(icon) && !/\.svg(?:$|[?#])/i.test(icon);
+    const icon2 = bookmarkIcon(bookmark);
+    return !/^data:image\/svg\+xml/i.test(icon2) && !/\.svg(?:$|[?#])/i.test(icon2);
   }
   function bookmarkIconFallback(bookmark) {
     return bookmark.icon && !isManagedFavicon(bookmark.icon) ? faviconUrl(bookmark.url) : DEFAULT_ICON;
@@ -128,14 +128,14 @@
       const key = `${folder}|${canonicalUrl(url)}`;
       if (merged.has(key)) return;
       const id = typeof raw.id === "number" || typeof raw.id === "string" ? raw.id : Date.now() + index;
-      const icon = sanitizeRemoteUrl(raw.icon, true);
+      const icon2 = sanitizeBookmarkIcon(raw.icon);
       const order = Number(raw.order);
       merged.set(key, {
         id,
         folder,
         url,
         name: cleanText(raw.name, 160) || new URL(url).hostname,
-        icon,
+        icon: icon2,
         order: Number.isFinite(order) ? order : index
       });
     });
@@ -167,6 +167,7 @@
         showBookmarks: booleanOr(layout.showBookmarks, true),
         showStatus: booleanOr(layout.showStatus, true),
         showRecent: booleanOr(layout.showRecent, true),
+        openInNewTab: booleanOr(layout.openInNewTab, false),
         searchEngine: searchEngines.includes(String(layout.searchEngine)) ? layout.searchEngine : "google"
       },
       wallpaper: {
@@ -180,7 +181,7 @@
         dateFormat: appearance.dateFormat === "short" ? "short" : "long",
         enhancedAnimations: booleanOr(appearance.enhancedAnimations, true),
         hdrHighlights: booleanOr(appearance.hdrHighlights, true),
-        theme: appearance.theme === "dark" ? "dark" : "light"
+        theme: sanitizeTheme(appearance.theme, layout)
       }
     };
   }
@@ -202,8 +203,17 @@
     const url = new URL(value);
     return `${url.origin}${url.pathname}`.toLowerCase();
   }
+  function sanitizeTheme(theme, layout) {
+    if (theme === "dark") return "dark";
+    if (theme === "light") return typeof layout.openInNewTab === "boolean" ? "light" : "auto";
+    return "auto";
+  }
+  function sanitizeBookmarkIcon(value) {
+    const icon2 = sanitizeRemoteUrl(value, true);
+    return icon2.startsWith("data:") && icon2.length > MAX_INLINE_ICON_LENGTH ? "" : icon2;
+  }
   function sanitizeWallpaperValue(value) {
-    if (value === "local" || value === "") return value;
+    if (typeof value === "string" && (value === "" || /^(local|online)(-\d+)?$/.test(value))) return value;
     return sanitizeRemoteUrl(value, true);
   }
   function booleanOr(value, fallback) {
@@ -216,7 +226,7 @@
   function isRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
   }
-  var DEFAULT_SETTINGS;
+  var DEFAULT_SETTINGS, MAX_INLINE_ICON_LENGTH;
   var init_backup = __esm({
     "src/core/backup.ts"() {
       "use strict";
@@ -228,6 +238,7 @@
           showBookmarks: true,
           showStatus: true,
           showRecent: true,
+          openInNewTab: false,
           searchEngine: "google"
         },
         wallpaper: {
@@ -241,9 +252,65 @@
           dateFormat: "long",
           enhancedAnimations: true,
           hdrHighlights: true,
-          theme: "light"
+          theme: "auto"
         }
       };
+      MAX_INLINE_ICON_LENGTH = 4096;
+    }
+  });
+
+  // src/core/bookmark-storage.ts
+  function bookmarkChunkKey(index) {
+    return `${CHUNK_PREFIX}${index}`;
+  }
+  function encodeBookmarks(bookmarks) {
+    const encoder = new TextEncoder();
+    const chunks = [];
+    let current = [];
+    let size = 2;
+    bookmarks.forEach((bookmark) => {
+      const bytes = encoder.encode(JSON.stringify(bookmark)).length + 1;
+      if (bytes + 2 > ITEM_BUDGET) throw new Error(`\u4E66\u7B7E\u201C${bookmark.name}\u201D\u6570\u636E\u8FC7\u5927\uFF0C\u65E0\u6CD5\u540C\u6B65`);
+      if (current.length && size + bytes > ITEM_BUDGET) {
+        chunks.push(current);
+        current = [];
+        size = 2;
+      }
+      current.push(bookmark);
+      size += bytes;
+    });
+    if (current.length) chunks.push(current);
+    const values = { [BOOKMARK_CHUNKS_KEY]: chunks.length };
+    chunks.forEach((chunk, index) => {
+      values[bookmarkChunkKey(index)] = chunk;
+    });
+    return { values, count: chunks.length };
+  }
+  function decodeBookmarks(stored) {
+    const count = stored[BOOKMARK_CHUNKS_KEY];
+    if (typeof count === "number" && Number.isInteger(count) && count >= 0) {
+      return Array.from({ length: count }, (_, index) => stored[bookmarkChunkKey(index)]).flatMap((chunk) => Array.isArray(chunk) ? chunk : []);
+    }
+    const legacy = stored[LEGACY_BOOKMARKS_KEY];
+    return Array.isArray(legacy) ? legacy : [];
+  }
+  function storedChunkCount(stored) {
+    const count = stored[BOOKMARK_CHUNKS_KEY];
+    return typeof count === "number" && Number.isInteger(count) && count >= 0 ? count : 0;
+  }
+  function staleBookmarkKeys(previousCount, nextCount, hasLegacy) {
+    const keys = hasLegacy ? [LEGACY_BOOKMARKS_KEY] : [];
+    for (let index = nextCount; index < previousCount; index += 1) keys.push(bookmarkChunkKey(index));
+    return keys;
+  }
+  var LEGACY_BOOKMARKS_KEY, BOOKMARK_CHUNKS_KEY, CHUNK_PREFIX, ITEM_BUDGET;
+  var init_bookmark_storage = __esm({
+    "src/core/bookmark-storage.ts"() {
+      "use strict";
+      LEGACY_BOOKMARKS_KEY = "bookmarks";
+      BOOKMARK_CHUNKS_KEY = "bookmarkChunks";
+      CHUNK_PREFIX = "bookmarks.";
+      ITEM_BUDGET = 7600;
     }
   });
 
@@ -262,7 +329,7 @@
   function storageSet(values, areaName = "sync") {
     return new Promise((resolve, reject) => {
       area(areaName).set(values, () => {
-        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        if (chrome.runtime.lastError) reject(new Error(describeWriteError(chrome.runtime.lastError.message)));
         else resolve();
       });
     });
@@ -283,6 +350,11 @@
       });
     });
   }
+  function describeWriteError(message = "") {
+    if (/QUOTA_BYTES/i.test(message)) return "Chrome \u540C\u6B65\u7A7A\u95F4\u5DF2\u6EE1\uFF08\u4E0A\u9650\u7EA6 100 KB\uFF09\uFF0C\u8BF7\u5220\u9664\u90E8\u5206\u4E66\u7B7E\u6216\u81EA\u5B9A\u4E49\u56FE\u6807\u540E\u91CD\u8BD5";
+    if (/MAX_WRITE_OPERATIONS/i.test(message)) return "\u64CD\u4F5C\u592A\u9891\u7E41\uFF0CChrome \u6682\u65F6\u9650\u5236\u4E86\u540C\u6B65\u5199\u5165\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5";
+    return message || "\u4FDD\u5B58\u5931\u8D25";
+  }
   var init_storage = __esm({
     "src/core/storage.ts"() {
       "use strict";
@@ -302,13 +374,18 @@
   function normalizeBookmarkInput(input, state, id = `${Date.now()}-${crypto.randomUUID()}`) {
     const url = normalizeUrl(input.url);
     if (!url) throw new Error("\u8BF7\u8F93\u5165\u6709\u6548\u7684\u7F51\u5740");
+    if (url.length > 2048) throw new Error("\u7F51\u5740\u8FC7\u957F\uFF0C\u65E0\u6CD5\u540C\u6B65\u4FDD\u5B58");
+    const icon2 = sanitizeRemoteUrl(input.icon, true);
+    if (icon2.startsWith("data:") && icon2.length > MAX_INLINE_ICON_LENGTH) {
+      throw new Error("\u5185\u5D4C\u56FE\u6807\u8FC7\u5927\uFF0C\u8BF7\u6539\u7528\u56FE\u6807\u7F51\u5740");
+    }
     const folder = state.folders.includes(input.folder) ? input.folder : "\u5168\u90E8";
     return {
       id,
       url,
       folder,
       name: cleanText(input.name, 160) || new URL(url).hostname,
-      icon: sanitizeRemoteUrl(input.icon, true),
+      icon: icon2,
       order: state.bookmarks.filter((bookmark) => bookmark.folder === folder && String(bookmark.id) !== String(id)).length
     };
   }
@@ -340,14 +417,14 @@
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
   }
-  var MANAGED_KEYS, ALL_CHANGES, AppStore, appStore;
+  var ALL_CHANGES, AppStore, appStore;
   var init_store = __esm({
     "src/core/store.ts"() {
       "use strict";
       init_backup();
+      init_bookmark_storage();
       init_storage();
       init_utils();
-      MANAGED_KEYS = ["bookmarks", "folders", "settings", "recentSearches", "lastBackupPrompt"];
       ALL_CHANGES = [
         "bookmarks",
         "folders",
@@ -360,13 +437,17 @@
       AppStore = class extends EventTarget {
         stateValue = initialState();
         initialized = false;
+        bookmarkChunks = 0;
+        hasLegacyBookmarks = false;
         get state() {
           return this.stateValue;
         }
         async init(force = false) {
           if (this.initialized && !force) return;
-          const stored = await storageGet([...MANAGED_KEYS]);
-          const bookmarks = sanitizeBookmarks(Array.isArray(stored.bookmarks) ? stored.bookmarks : []);
+          const stored = await storageGet(null);
+          this.bookmarkChunks = storedChunkCount(stored);
+          this.hasLegacyBookmarks = LEGACY_BOOKMARKS_KEY in stored;
+          const bookmarks = sanitizeBookmarks(decodeBookmarks(stored));
           const folders = normalizeFolders(stored.folders, bookmarks);
           this.stateValue = {
             bookmarks,
@@ -457,6 +538,11 @@
             if (source !== destination) normalizeFolderOrder(draft.bookmarks, source);
           }, ["bookmarks"]);
         }
+        async removeRecentSearch(query) {
+          await this.commit((draft) => {
+            draft.recentSearches = draft.recentSearches.filter((item) => item !== query);
+          }, ["recentSearches"]);
+        }
         async saveRecentSearch(query) {
           const value = cleanText(query, 200);
           if (!value) return;
@@ -476,8 +562,9 @@
           next.settings = sanitizeSettings(data.settings);
           next.recentSearches = normalizeRecentSearches(data.recentSearches);
           next.lastBackupPrompt = finiteNumber(data.lastBackupPrompt, 0);
+          const encoded = encodeBookmarks(next.bookmarks);
           const values = {
-            bookmarks: next.bookmarks,
+            ...encoded.values,
             folders: next.folders,
             settings: next.settings,
             recentSearches: next.recentSearches,
@@ -485,14 +572,21 @@
             ...Array.isArray(data.todos) ? { todos: data.todos } : {}
           };
           await storageSet(values);
-          const staleKeys = ["bookmarks", "folders", "settings", "todos", "recentSearches", "lastBackupPrompt"].filter((key) => !(key in values));
+          const staleKeys = [
+            ...["todos"].filter((key) => !(key in values)),
+            ...staleBookmarkKeys(this.bookmarkChunks, encoded.count, this.hasLegacyBookmarks)
+          ];
           if (staleKeys.length) await storageRemove(staleKeys);
+          this.bookmarkChunks = encoded.count;
+          this.hasLegacyBookmarks = false;
           this.stateValue = next;
           this.initialized = true;
           this.emit(ALL_CHANGES);
         }
         async reset() {
           await storageClear("sync");
+          this.bookmarkChunks = 0;
+          this.hasLegacyBookmarks = false;
           this.stateValue = initialState();
           this.emit(ALL_CHANGES);
         }
@@ -500,12 +594,31 @@
           const draft = structuredClone(this.stateValue);
           mutator(draft);
           const values = {};
+          let bookmarkChunks = null;
           keys.forEach((key) => {
-            values[key] = draft[key];
+            if (key !== "bookmarks") {
+              values[key] = draft[key];
+              return;
+            }
+            const encoded = encodeBookmarks(draft.bookmarks);
+            Object.assign(values, encoded.values);
+            bookmarkChunks = encoded.count;
           });
           await storageSet(values);
           this.stateValue = draft;
+          if (bookmarkChunks !== null) await this.dropStaleBookmarkKeys(bookmarkChunks);
           this.emit(changes);
+        }
+        /** Stale chunks are harmless to readers, so a failed cleanup never rolls back a save. */
+        async dropStaleBookmarkKeys(nextCount) {
+          const stale = staleBookmarkKeys(this.bookmarkChunks, nextCount, this.hasLegacyBookmarks);
+          this.bookmarkChunks = nextCount;
+          if (!stale.length) return;
+          try {
+            await storageRemove(stale);
+            this.hasLegacyBookmarks = false;
+          } catch {
+          }
         }
         emit(changes) {
           this.dispatchEvent(new CustomEvent("change", { detail: { state: this.stateValue, changes } }));
@@ -653,6 +766,147 @@
     }
   });
 
+  // src/core/wallpaper-service.ts
+  async function useOnlineWallpaper() {
+    let response;
+    try {
+      response = await fetch(`${ONLINE_WALLPAPER}?t=${Date.now()}`, { cache: "no-store" });
+    } catch {
+      throw new Error("\u65E0\u6CD5\u8FDE\u63A5\u5728\u7EBF\u58C1\u7EB8\u670D\u52A1\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC");
+    }
+    if (!response.ok) throw new Error(`\u5728\u7EBF\u58C1\u7EB8\u670D\u52A1\u6682\u65F6\u4E0D\u53EF\u7528\uFF08${response.status}\uFF09`);
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/")) throw new Error("\u5728\u7EBF\u58C1\u7EB8\u670D\u52A1\u8FD4\u56DE\u7684\u4E0D\u662F\u56FE\u7247");
+    await validateLocalMedia(blob, "image");
+    await storeWallpaper(blob, "image", "online");
+  }
+  async function migrateLegacyWallpaper() {
+    const { type, value } = appStore.state.settings.wallpaper;
+    if (type !== "preset" || !value.startsWith(ONLINE_WALLPAPER)) return;
+    try {
+      await useOnlineWallpaper();
+    } catch {
+    }
+  }
+  async function useLocalWallpaper(file) {
+    const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : null;
+    if (!kind) throw new Error("\u8BF7\u9009\u62E9\u56FE\u7247\u6216\u89C6\u9891\u6587\u4EF6");
+    await validateLocalMedia(file, kind);
+    await storeWallpaper(file, kind, "local");
+  }
+  async function resetWallpaper() {
+    await appStore.updateSettings("wallpaper", { type: "gradient", value: "", blur: 0, overlay: 30 });
+    await mediaStore.clearAll();
+  }
+  function wallpaperLabel(wallpaper) {
+    if (wallpaper.type === "video") return "\u672C\u5730\u89C6\u9891";
+    if (wallpaper.type === "local") return wallpaper.value.startsWith("online") ? "\u5728\u7EBF\u58C1\u7EB8" : "\u672C\u5730\u56FE\u7247";
+    if (wallpaper.type === "preset") return "\u5728\u7EBF\u56FE\u7247";
+    return "\u9ED8\u8BA4\u6E10\u53D8";
+  }
+  async function storeWallpaper(blob, kind, source) {
+    const previous = await mediaStore.get(kind);
+    await mediaStore.set(kind, blob);
+    try {
+      await appStore.updateSettings("wallpaper", {
+        type: kind === "video" ? "video" : "local",
+        value: `${source}-${Date.now()}`
+      });
+    } catch (error) {
+      try {
+        if (previous) await mediaStore.set(kind, previous);
+        else await mediaStore.clear(kind);
+      } catch (rollbackError) {
+        throw new Error(`${errorMessage(error)}\uFF1B\u6062\u590D\u539F\u80CC\u666F\u4E5F\u5931\u8D25\uFF1A${errorMessage(rollbackError)}`);
+      }
+      throw error;
+    }
+  }
+  async function toneOfBlob(blob) {
+    const bitmap = await createImageBitmap(blob, { resizeWidth: SAMPLE_SIZE, resizeHeight: SAMPLE_SIZE });
+    try {
+      return toneOf(bitmap);
+    } finally {
+      bitmap.close();
+    }
+  }
+  function toneOf(source) {
+    const canvas = document.createElement("canvas");
+    canvas.width = SAMPLE_SIZE;
+    canvas.height = SAMPLE_SIZE;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return "dark";
+    context.drawImage(source, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+    const { data } = context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+    let total = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      total += (0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2]) / 255;
+    }
+    return total / (data.length / 4) > LIGHT_THRESHOLD ? "light" : "dark";
+  }
+  async function validateLocalMedia(file, kind) {
+    const url = URL.createObjectURL(file);
+    let video = null;
+    try {
+      if (kind === "image") {
+        const image = new Image();
+        image.src = url;
+        await image.decode().catch(() => {
+          throw new Error("\u56FE\u7247\u6587\u4EF6\u65E0\u6CD5\u89E3\u7801\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539");
+        });
+        return;
+      }
+      video = document.createElement("video");
+      video.preload = "auto";
+      video.muted = true;
+      video.playsInline = true;
+      video.src = url;
+      await waitForVideo(video);
+      await video.play().catch(() => {
+        throw new Error("\u89C6\u9891\u65E0\u6CD5\u64AD\u653E\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539");
+      });
+    } finally {
+      if (video) {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      }
+      URL.revokeObjectURL(url);
+    }
+  }
+  function waitForVideo(video) {
+    return new Promise((resolve, reject) => {
+      let timeout = 0;
+      const finish = (error) => {
+        window.clearTimeout(timeout);
+        video.removeEventListener("canplay", onReady);
+        video.removeEventListener("error", onError);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onReady = () => finish();
+      const onError = () => finish(new Error("\u89C6\u9891\u6587\u4EF6\u65E0\u6CD5\u89E3\u7801\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539"));
+      video.addEventListener("canplay", onReady, { once: true });
+      video.addEventListener("error", onError, { once: true });
+      timeout = window.setTimeout(() => finish(new Error("\u8BFB\u53D6\u89C6\u9891\u8D85\u65F6\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539")), 1e4);
+      video.load();
+    });
+  }
+  function errorMessage(error) {
+    return error instanceof Error ? error.message : "\u64CD\u4F5C\u5931\u8D25";
+  }
+  var ONLINE_WALLPAPER, SAMPLE_SIZE, LIGHT_THRESHOLD;
+  var init_wallpaper_service = __esm({
+    "src/core/wallpaper-service.ts"() {
+      "use strict";
+      init_media_store();
+      init_store();
+      ONLINE_WALLPAPER = "https://www.dmoe.cc/random.php";
+      SAMPLE_SIZE = 32;
+      LIGHT_THRESHOLD = 0.58;
+    }
+  });
+
   // src/core/backup-service.ts
   function dateStamp() {
     return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
@@ -670,8 +924,16 @@
           return {
             version: "2.0",
             exportDate: (/* @__PURE__ */ new Date()).toISOString(),
-            data: await storageGet(null),
+            data: await this.collectData(),
             localMedia: await mediaStore.export()
+          };
+        }
+        /** Backups keep the flat 2.0 layout even though sync storage now chunks bookmarks. */
+        async collectData() {
+          const { todos } = await storageGet(["todos"]);
+          return {
+            ...structuredClone(appStore.state),
+            ...Array.isArray(todos) ? { todos } : {}
           };
         }
         async importData(value) {
@@ -743,6 +1005,192 @@
     }
   });
 
+  // src/components/ui-layer.ts
+  function pushLayer(element, close) {
+    const layer = {
+      element,
+      close,
+      restoreFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null
+    };
+    layers.push(layer);
+    return () => {
+      const index = layers.indexOf(layer);
+      if (index < 0) return;
+      layers.splice(index, 1);
+      if (layer.restoreFocus?.isConnected && element.contains(document.activeElement)) layer.restoreFocus.focus();
+      else if (layer.restoreFocus?.isConnected && document.activeElement === document.body) layer.restoreFocus.focus();
+    };
+  }
+  function hasOpenLayer() {
+    return layers.length > 0;
+  }
+  function trapFocus(container, event) {
+    const focusable = [...container.querySelectorAll(FOCUSABLE)].filter((element) => element.getClientRects().length);
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    const active = document.activeElement;
+    if (!container.contains(active)) {
+      event.preventDefault();
+      first.focus();
+    } else if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+  function openModal(options) {
+    return new Promise((resolve) => {
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal-backdrop is-open";
+      backdrop.innerHTML = `
+            <form class="modal glass-panel" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
+                <header class="modal-header">
+                    <h2 id="modal-title">${escapeHtml(options.title)}</h2>
+                    <button class="icon-close" type="button" aria-label="\u5173\u95ED" data-action="cancel">${CLOSE_ICON}</button>
+                </header>
+                ${options.body ? `<p class="modal-body">${escapeHtml(options.body)}</p>` : ""}
+                ${options.input ? `<label class="field"><span>${escapeHtml(options.input.label)}</span><input name="value" type="text" autocomplete="off" maxlength="${options.input.maxLength ?? 80}" placeholder="${escapeHtml(options.input.placeholder ?? "")}" value="${escapeHtml(options.input.value ?? "")}"></label>` : ""}
+                <footer class="modal-actions">
+                    <button class="glass-button" type="button" data-action="cancel" data-liquid-item>${escapeHtml(options.cancelText ?? "\u53D6\u6D88")}</button>
+                    <button class="glass-button ${options.danger ? "danger" : "primary"}" type="submit" data-liquid-item>${escapeHtml(options.confirmText ?? "\u786E\u5B9A")}</button>
+                </footer>
+            </form>`;
+      document.body.append(backdrop);
+      const form = backdrop.querySelector("form");
+      const input = form.querySelector('input[name="value"]');
+      let release = () => {
+      };
+      const finish = (value) => {
+        release();
+        backdrop.remove();
+        resolve(value);
+      };
+      release = pushLayer(form, () => finish(null));
+      form.querySelectorAll('[data-action="cancel"]').forEach((button) => button.addEventListener("click", () => finish(null)));
+      backdrop.addEventListener("pointerdown", (event) => {
+        if (event.target === backdrop) finish(null);
+      });
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        finish(input ? input.value.trim() : "");
+      });
+      requestAnimationFrame(() => {
+        if (input) {
+          input.focus();
+          input.select();
+        } else {
+          form.querySelector('button[type="submit"]')?.focus();
+        }
+      });
+    });
+  }
+  async function confirmAction(options) {
+    return await openModal(options) !== null;
+  }
+  async function promptText(title, input, confirmText = "\u4FDD\u5B58") {
+    const value = await openModal({ title, input, confirmText });
+    return value || null;
+  }
+  function notify(message, kind = "info", timeout = kind === "error" ? 7e3 : 3200) {
+    let region = document.querySelector(".toast-region");
+    if (!region) {
+      region = document.createElement("div");
+      region.className = "toast-region";
+      region.setAttribute("role", "status");
+      region.setAttribute("aria-live", "polite");
+      document.body.append(region);
+    }
+    const toast = document.createElement("div");
+    toast.className = `toast app-notice is-${kind}`;
+    toast.textContent = message;
+    region.append(toast);
+    window.setTimeout(() => {
+      toast.classList.add("is-leaving");
+      window.setTimeout(() => toast.remove(), 220);
+    }, timeout);
+  }
+  function notifyError(error, fallback = "\u64CD\u4F5C\u5931\u8D25") {
+    notify(error instanceof Error && error.message ? error.message : fallback, "error");
+  }
+  function openMenu(items, at) {
+    document.querySelector(".context-menu")?.dispatchEvent(new Event("menu-close"));
+    const menu = document.createElement("div");
+    menu.className = "context-menu glass-panel";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = items.map((item, index) => {
+      if ("separator" in item) return "<hr>";
+      if ("heading" in item) return `<span class="menu-heading">${escapeHtml(item.heading)}</span>`;
+      return `<button type="button" role="menuitem" data-index="${index}" class="${item.danger ? "danger" : ""}" ${item.disabled ? "disabled" : ""}>${item.icon ? `<i aria-hidden="true">${item.icon}</i>` : "<i></i>"}<span>${escapeHtml(item.label)}</span></button>`;
+    }).join("");
+    document.body.append(menu);
+    const anchor = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
+    const point = anchor ? { x: anchor.left, y: anchor.bottom + 6 } : at;
+    const { width, height } = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(point.x, innerWidth - width - 8))}px`;
+    menu.style.top = `${point.y + height > innerHeight - 8 ? Math.max(8, point.y - height - (anchor ? anchor.height + 12 : 0)) : point.y}px`;
+    let release = () => {
+    };
+    const close = () => {
+      document.removeEventListener("pointerdown", onOutside, true);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+      release();
+      menu.remove();
+    };
+    const onOutside = (event) => {
+      if (!menu.contains(event.target)) close();
+    };
+    release = pushLayer(menu, close);
+    menu.addEventListener("menu-close", close);
+    document.addEventListener("pointerdown", onOutside, true);
+    window.addEventListener("blur", close);
+    window.addEventListener("resize", close);
+    const buttons = [...menu.querySelectorAll("button:not([disabled])")];
+    menu.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-index]");
+      const item = button ? items[Number(button.dataset.index)] : null;
+      if (!item || !("action" in item)) return;
+      close();
+      item.action();
+    });
+    menu.addEventListener("keydown", (event) => {
+      const index = buttons.indexOf(document.activeElement);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        buttons[(index + step + buttons.length) % buttons.length]?.focus();
+      }
+    });
+    buttons[0]?.focus({ preventScroll: true });
+  }
+  var layers, FOCUSABLE, CLOSE_ICON;
+  var init_ui_layer = __esm({
+    "src/components/ui-layer.ts"() {
+      "use strict";
+      init_utils();
+      layers = [];
+      FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+      document.addEventListener("keydown", (event) => {
+        const top = layers.at(-1);
+        if (!top) return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          top.close();
+          return;
+        }
+        if (event.key === "Tab") trapFocus(top.element, event);
+      }, true);
+      CLOSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg>';
+    }
+  });
+
   // src/components/backup-toast.ts
   var REMINDER_INTERVAL, BackupToast;
   var init_backup_toast = __esm({
@@ -751,17 +1199,25 @@
       init_backup_service();
       init_store();
       init_base();
+      init_ui_layer();
       REMINDER_INTERVAL = 7 * 24 * 60 * 60 * 1e3;
       BackupToast = class extends StoreElement {
-        observedChanges = ["lastBackupPrompt"];
+        observedChanges = ["lastBackupPrompt", "bookmarks"];
         dismissed = false;
         render() {
           const due = Date.now() - appStore.state.lastBackupPrompt >= REMINDER_INTERVAL;
-          this.hidden = !due || this.dismissed;
+          this.hidden = !due || this.dismissed || !appStore.state.bookmarks.length;
+          if (this.hidden) {
+            this.innerHTML = "";
+            return;
+          }
           this.innerHTML = `
-            <div class="backup-toast glass-panel">
-                <span>\u5907\u4EFD\u4E00\u4E0B\uFF0C\u4E66\u7B7E\u4F1A\u66F4\u5B89\u5FC3</span>
-                <div class="backup-actions"><button class="glass-button primary backup-now" type="button" data-liquid-item>\u7ACB\u5373\u5BFC\u51FA</button><button class="glass-button backup-later" type="button" data-liquid-item>\u7A0D\u540E</button></div>
+            <div class="backup-toast glass-panel" role="status">
+                <span>\u5DF2\u7ECF\u4E00\u5468\u6CA1\u5907\u4EFD\u4E86\uFF0C\u5BFC\u51FA\u4E00\u4EFD\u4E66\u7B7E\u66F4\u5B89\u5FC3</span>
+                <div class="backup-actions">
+                    <button class="glass-button backup-later" type="button" data-liquid-item>\u7A0D\u540E</button>
+                    <button class="glass-button primary backup-now" type="button" data-liquid-item>\u7ACB\u5373\u5BFC\u51FA</button>
+                </div>
             </div>
         `;
           this.querySelector(".backup-now")?.addEventListener("click", () => void this.finish(true));
@@ -770,13 +1226,49 @@
         async finish(exportNow) {
           try {
             if (exportNow) await backupService.createBackup();
-            await appStore.setLastBackupPrompt();
             this.dismissed = true;
-            this.render();
+            await appStore.setLastBackupPrompt();
           } catch (error) {
-            alert(error instanceof Error ? error.message : "\u5907\u4EFD\u5931\u8D25");
+            notifyError(error, "\u5907\u4EFD\u5931\u8D25");
           }
         }
+      };
+    }
+  });
+
+  // src/components/icons.ts
+  var icon, ICONS;
+  var init_icons = __esm({
+    "src/components/icons.ts"() {
+      "use strict";
+      icon = (paths) => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+      ICONS = {
+        settings: icon('<path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"></path><circle cx="16" cy="6" r="2"></circle><circle cx="8" cy="12" r="2"></circle><circle cx="13" cy="18" r="2"></circle>'),
+        shuffle: icon('<path d="M3 7h3.5c2 0 3.2 1 4.3 2.6l2.4 4.8c1.1 1.6 2.3 2.6 4.3 2.6H21M17.5 13.5 21 17l-3.5 3.5M3 17h3.5c1.2 0 2.1-.4 2.9-1.1M14.6 8.1c.8-.7 1.7-1.1 2.9-1.1H21M17.5 3.5 21 7l-3.5 3.5"></path>'),
+        search: icon('<circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path>'),
+        plus: icon('<path d="M12 5v14M5 12h14"></path>'),
+        folderPlus: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path><path d="M12 11v5M9.5 13.5h5"></path>'),
+        back: icon('<path d="M15 5 8 12l7 7"></path>'),
+        more: icon('<circle cx="6" cy="12" r="1.2"></circle><circle cx="12" cy="12" r="1.2"></circle><circle cx="18" cy="12" r="1.2"></circle>'),
+        edit: icon('<path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="m13.5 6.5 4 4"></path>'),
+        trash: icon('<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"></path>'),
+        open: icon('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path>'),
+        move: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path><path d="M10 13.5h6M13.5 11l2.5 2.5-2.5 2.5"></path>'),
+        refresh: icon('<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"></path>'),
+        upload: icon('<path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path>'),
+        download: icon('<path d="M12 4v12M7 11l5 5 5-5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path>'),
+        reset: icon('<path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v5h5"></path>'),
+        play: icon('<path d="M8 5.5v13l10-6.5z"></path>'),
+        battery: icon('<rect x="3" y="7.5" width="16" height="9" rx="2"></rect><path d="M21 11v2"></path>'),
+        bolt: icon('<path d="m13 3-7 10h5l-1 8 7-10h-5z"></path>'),
+        palette: icon('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.7 0-1.2-1-1.6-1-2.6 0-.9.7-1.7 1.7-1.7H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3z"></path><circle cx="7.5" cy="11" r="1"></circle><circle cx="10" cy="7" r="1"></circle><circle cx="15" cy="7.5" r="1"></circle>'),
+        widgets: icon('<rect x="4" y="4" width="7" height="7" rx="2"></rect><rect x="13" y="4" width="7" height="7" rx="2"></rect><rect x="4" y="13" width="7" height="7" rx="2"></rect><rect x="13" y="13" width="7" height="7" rx="2"></rect>'),
+        image: icon('<rect x="3" y="5" width="18" height="14" rx="2.5"></rect><circle cx="9" cy="10" r="1.8"></circle><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"></path>'),
+        database: icon('<ellipse cx="12" cy="6" rx="7" ry="2.8"></ellipse><path d="M5 6v12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8"></path>'),
+        clock: icon('<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>'),
+        bookmark: icon('<path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1z"></path>'),
+        pulse: icon('<path d="M3 12h4l2.5-6 4 12 2.5-6H21"></path>'),
+        close: icon('<path d="M6 6l12 12M18 6 6 18"></path>')
       };
     }
   });
@@ -788,400 +1280,627 @@
       "use strict";
       init_store();
       init_utils();
+      init_icons();
+      init_ui_layer();
       BookmarkDialog = class extends HTMLElement {
         editing;
-        folder = "\u5168\u90E8";
+        releaseLayer = null;
         connectedCallback() {
           document.addEventListener("open-bookmark-dialog", this.onOpen);
-          this.render();
         }
         disconnectedCallback() {
           document.removeEventListener("open-bookmark-dialog", this.onOpen);
+          this.close();
         }
         onOpen = (event) => {
           this.editing = event.detail.bookmark;
-          this.folder = event.detail.folder ?? "\u5168\u90E8";
-          this.render(true);
+          this.open(event.detail);
         };
-        render(open = false) {
-          const bookmark = this.editing;
-          const selected = bookmark?.folder ?? this.folder;
+        open({ bookmark, folder = "\u5168\u90E8", draft }) {
+          this.close();
+          const selected = bookmark?.folder ?? folder;
+          const title = bookmark ? "\u7F16\u8F91\u4E66\u7B7E" : "\u6DFB\u52A0\u4E66\u7B7E";
           this.innerHTML = `
-            <div class="dialog-backdrop ${open ? "is-open" : ""}" role="presentation">
-                <form class="bookmark-dialog glass-panel" role="dialog" aria-modal="true" aria-label="${bookmark ? "\u7F16\u8F91\u4E66\u7B7E" : "\u6DFB\u52A0\u4E66\u7B7E"}">
-                    <header><div><span class="section-kicker">\u5FEB\u6377\u5165\u53E3</span><h2>${bookmark ? "\u7F16\u8F91\u4E66\u7B7E" : "\u6DFB\u52A0\u4E66\u7B7E"}</h2></div><button class="dialog-close" type="button" aria-label="\u5173\u95ED">\xD7</button></header>
-                    <label>\u7F51\u5740<input name="url" type="url" required placeholder="https://example.com \u6216 chrome-extension://..." value="${escapeHtml(bookmark?.url ?? "")}"></label>
-                    <label>\u540D\u79F0<input name="name" type="text" maxlength="160" placeholder="\u81EA\u52A8\u4F7F\u7528\u7F51\u7AD9\u540D\u79F0" value="${escapeHtml(bookmark?.name ?? "")}"></label>
-                    <label>\u6587\u4EF6\u5939<select name="folder">${appStore.state.folders.map((folder) => `<option value="${escapeHtml(folder)}" ${folder === selected ? "selected" : ""}>${escapeHtml(folder)}</option>`).join("")}</select></label>
-                    <label>\u56FE\u6807\u5730\u5740\uFF08\u53EF\u9009\uFF09<input name="icon" type="url" placeholder="https://example.com/favicon.ico" value="${escapeHtml(bookmark?.icon ?? "")}"></label>
-                    <div class="dialog-preview"><img alt=""><span>\u8F93\u5165\u7F51\u5740\u540E\u9884\u89C8\u56FE\u6807</span></div>
-                    <div class="dialog-actions"><button class="glass-button cancel-dialog" type="button" data-liquid-item>\u53D6\u6D88</button><button class="glass-button primary" type="submit" data-liquid-item>\u4FDD\u5B58</button></div>
+            <div class="modal-backdrop dialog-backdrop is-open">
+                <form class="modal bookmark-dialog glass-panel" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
+                    <header class="modal-header">
+                        <h2>${title}</h2>
+                        <button class="icon-close dialog-close" type="button" aria-label="\u5173\u95ED">${ICONS.close}</button>
+                    </header>
+                    <label class="field">
+                        <span>\u7F51\u5740</span>
+                        <span class="field-with-icon">
+                            <img class="url-preview" src="${DEFAULT_ICON}" alt="">
+                            <input name="url" type="text" inputmode="url" required autocomplete="off" spellcheck="false" placeholder="example.com" value="${escapeHtml(bookmark?.url ?? draft?.url ?? "")}">
+                        </span>
+                    </label>
+                    <label class="field">
+                        <span>\u540D\u79F0</span>
+                        <input name="name" type="text" maxlength="160" autocomplete="off" placeholder="\u7559\u7A7A\u5219\u4F7F\u7528\u7F51\u7AD9\u57DF\u540D" value="${escapeHtml(bookmark?.name ?? draft?.name ?? "")}">
+                    </label>
+                    <label class="field">
+                        <span>\u6587\u4EF6\u5939</span>
+                        <span class="select-wrap"><select name="folder">${appStore.state.folders.map((item) => `<option value="${escapeHtml(item)}" ${item === selected ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></span>
+                    </label>
+                    <details class="field-advanced" ${bookmark?.icon ? "open" : ""}>
+                        <summary>\u81EA\u5B9A\u4E49\u56FE\u6807</summary>
+                        <label class="field">
+                            <span>\u56FE\u6807\u7F51\u5740\uFF08\u7559\u7A7A\u81EA\u52A8\u83B7\u53D6\uFF09</span>
+                            <input name="icon" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://example.com/icon.png" value="${escapeHtml(bookmark?.icon ?? "")}">
+                        </label>
+                    </details>
+                    <p class="field-error" role="alert" hidden></p>
+                    <footer class="modal-actions">
+                        <button class="glass-button cancel-dialog" type="button" data-liquid-item>\u53D6\u6D88</button>
+                        <button class="glass-button primary" type="submit" data-liquid-item>\u4FDD\u5B58</button>
+                    </footer>
                 </form>
             </div>
         `;
-          if (!open) return;
           const backdrop = this.querySelector(".dialog-backdrop");
           const form = this.querySelector("form");
-          const urlInput = this.querySelector('input[name="url"]');
-          const preview = this.querySelector(".dialog-preview img");
-          const close = () => {
-            this.editing = void 0;
-            this.render(false);
-          };
+          const urlInput = form.querySelector('input[name="url"]');
+          const iconInput = form.querySelector('input[name="icon"]');
+          const preview = form.querySelector(".url-preview");
+          const error = form.querySelector(".field-error");
           const updatePreview = () => {
-            const url = normalizeUrl(urlInput?.value);
-            if (preview && url) preview.src = faviconUrl(url);
+            const custom = iconInput.value.trim();
+            const url = normalizeUrl(urlInput.value);
+            preview.src = custom.startsWith("https://") || custom.startsWith("data:image/") ? custom : url ? faviconUrl(url, 64) : DEFAULT_ICON;
           };
-          updatePreview();
-          urlInput?.addEventListener("input", updatePreview);
-          this.querySelector(".dialog-close")?.addEventListener("click", close);
-          this.querySelector(".cancel-dialog")?.addEventListener("click", close);
-          backdrop?.addEventListener("click", (event) => {
-            if (event.target === backdrop) close();
+          preview.addEventListener("error", () => {
+            preview.src = DEFAULT_ICON;
           });
-          form?.addEventListener("submit", async (event) => {
+          updatePreview();
+          urlInput.addEventListener("input", () => {
+            error.hidden = true;
+            urlInput.removeAttribute("aria-invalid");
+            updatePreview();
+          });
+          iconInput.addEventListener("change", updatePreview);
+          this.querySelector(".dialog-close")?.addEventListener("click", () => this.close());
+          this.querySelector(".cancel-dialog")?.addEventListener("click", () => this.close());
+          backdrop.addEventListener("pointerdown", (event) => {
+            if (event.target === backdrop) this.close();
+          });
+          form.addEventListener("submit", async (event) => {
             event.preventDefault();
             const data = new FormData(form);
             const input = {
               url: String(data.get("url") ?? ""),
               name: String(data.get("name") ?? ""),
               folder: String(data.get("folder") ?? "\u5168\u90E8"),
-              icon: String(data.get("icon") ?? "")
+              icon: String(data.get("icon") ?? "").trim()
             };
+            if (!normalizeUrl(input.url)) {
+              error.textContent = "\u8BF7\u8F93\u5165\u6709\u6548\u7684\u7F51\u5740\uFF0C\u4F8B\u5982 github.com";
+              error.hidden = false;
+              urlInput.setAttribute("aria-invalid", "true");
+              urlInput.focus();
+              return;
+            }
             try {
               if (this.editing) await appStore.updateBookmark(this.editing.id, input);
               else await appStore.addBookmark(input);
-              close();
-            } catch (error) {
-              alert(error instanceof Error ? error.message : "\u4FDD\u5B58\u5931\u8D25");
+              this.close();
+            } catch (saveError) {
+              notifyError(saveError, "\u4FDD\u5B58\u5931\u8D25");
             }
           });
-          window.setTimeout(() => urlInput?.focus(), 0);
+          this.releaseLayer = pushLayer(form, () => this.close());
+          requestAnimationFrame(() => (bookmark ? form.querySelector('input[name="name"]') : urlInput)?.focus());
+        }
+        close() {
+          this.editing = void 0;
+          this.innerHTML = "";
+          const release = this.releaseLayer;
+          this.releaseLayer = null;
+          release?.();
         }
       };
     }
   });
 
+  // src/core/history.ts
+  function rankSites(items) {
+    const hosts = /* @__PURE__ */ new Map();
+    items.forEach((item) => {
+      try {
+        const url = new URL(String(item.url ?? ""));
+        if (!["http:", "https:"].includes(url.protocol)) return;
+        const hostname = url.hostname.toLowerCase();
+        const host = hostname.replace(/^www\./, "");
+        if (!host || host === "newtab" || /(^|\.)google\.[a-z.]+$/.test(host)) return;
+        const visits = Math.max(1, Number(item.visitCount) || 1);
+        const stats = hosts.get(host) ?? {
+          host,
+          url: "",
+          title: "",
+          count: 0,
+          lastVisit: 0,
+          hostnames: /* @__PURE__ */ new Map(),
+          rootTitle: ""
+        };
+        stats.count += visits;
+        stats.lastVisit = Math.max(stats.lastVisit, Number(item.lastVisitTime) || 0);
+        stats.hostnames.set(`${url.protocol}//${hostname}`, (stats.hostnames.get(`${url.protocol}//${hostname}`) ?? 0) + visits);
+        const title = typeof item.title === "string" ? item.title.trim() : "";
+        if (url.pathname === "/" && !url.search && title && !stats.rootTitle) stats.rootTitle = title;
+        hosts.set(host, stats);
+      } catch {
+      }
+    });
+    return [...hosts.values()].sort((left, right) => right.count - left.count || right.lastVisit - left.lastVisit).slice(0, 20).map(({ hostnames, rootTitle, ...site }) => {
+      const origin = [...hostnames.entries()].sort((left, right) => right[1] - left[1])[0][0];
+      return { ...site, url: `${origin}/`, title: siteName(site.host, rootTitle) };
+    });
+  }
+  function siteName(host, rootTitle) {
+    const cleaned = rootTitle.replace(/^\(\d+\+?\)\s*/, "").split(/\s+[-|–—·]\s+/)[0].trim();
+    if (cleaned && cleaned.length <= 18) return cleaned;
+    return host;
+  }
+  var init_history = __esm({
+    "src/core/history.ts"() {
+      "use strict";
+    }
+  });
+
   // src/components/bookmark-launchpad.ts
+  function viewButton(view, label, active) {
+    const selected = view === active;
+    return `<button type="button" role="tab" class="view-tab ${selected ? "is-active" : ""}" data-view="${view}" aria-selected="${selected}" tabindex="${selected ? 0 : -1}" data-liquid-item>${label}</button>`;
+  }
+  function readView() {
+    try {
+      return localStorage.getItem(VIEW_KEY) === "recent" ? "recent" : "bookmarks";
+    } catch {
+      return "bookmarks";
+    }
+  }
+  function findBookmark(id) {
+    return appStore.state.bookmarks.find((item) => String(item.id) === String(id));
+  }
+  function bindIconFallback(image) {
+    const fallback = image.dataset.iconFallback;
+    if (!fallback) return;
+    const useFallback = () => {
+      if (image.dataset.fallbackUsed === "true") {
+        image.classList.add("icon-unavailable");
+        return;
+      }
+      image.dataset.fallbackUsed = "true";
+      image.removeAttribute("srcset");
+      image.src = fallback;
+    };
+    image.addEventListener("load", () => {
+      if (image.dataset.iconRaster === "true") image.classList.add("icon-raster");
+      if (image.dataset.iconCanUpgrade === "true" && image.dataset.fallbackUsed !== "true" && image.naturalWidth > 0 && image.naturalWidth < 64) {
+        useFallback();
+      }
+    });
+    image.addEventListener("error", useFallback);
+  }
   function compareBookmarks2(left, right) {
     return left.order - right.order || String(left.id).localeCompare(String(right.id));
   }
-  function showError(error) {
-    alert(error instanceof Error ? error.message : "\u64CD\u4F5C\u5931\u8D25");
-  }
-  var FOLDER_COLORS, BookmarkLaunchpad;
+  var ROOT, FOLDER_COLORS, VIEW_KEY, BookmarkLaunchpad;
   var init_bookmark_launchpad = __esm({
     "src/components/bookmark-launchpad.ts"() {
       "use strict";
+      init_history();
       init_store();
       init_utils();
       init_base();
-      FOLDER_COLORS = ["#ff92c8", "#80d8ff", "#ffd27d", "#9be7c4", "#b8a6ff"];
+      init_icons();
+      init_ui_layer();
+      ROOT = "\u5168\u90E8";
+      FOLDER_COLORS = ["#ff8cc6", "#6fd3ff", "#ffc86b", "#86e0bd", "#b3a2ff"];
+      VIEW_KEY = "infinity-launchpad-view";
       BookmarkLaunchpad = class extends StoreElement {
         observedChanges = ["bookmarks", "folders", "settings.layout"];
-        currentFolder = "\u5168\u90E8";
+        currentFolder = ROOT;
+        view = readView();
         draggingId = null;
+        recent = { sites: [], state: "idle", error: "" };
         render() {
-          const { bookmarks, folders, settings } = appStore.state;
-          if (!folders.includes(this.currentFolder)) this.currentFolder = "\u5168\u90E8";
-          this.hidden = !settings.layout.showBookmarks;
-          const visible = bookmarks.filter((bookmark) => bookmark.folder === this.currentFolder).sort(compareBookmarks2);
-          const folderCards = this.currentFolder === "\u5168\u90E8" ? folders.filter((folder) => folder !== "\u5168\u90E8").map((folder, index) => this.folderTemplate(folder, index)).join("") : this.backTemplate();
+          const { folders, settings } = appStore.state;
+          const { showBookmarks, showRecent } = settings.layout;
+          this.hidden = !showBookmarks && !showRecent;
+          if (this.hidden) {
+            this.innerHTML = "";
+            return;
+          }
+          if (!folders.includes(this.currentFolder)) this.currentFolder = ROOT;
+          if (!showRecent) this.view = "bookmarks";
+          if (!showBookmarks) this.view = "recent";
+          if (this.view === "recent" && this.recent.state === "idle") {
+            this.recent.state = "loading";
+            void this.fetchRecent();
+          }
           this.innerHTML = `
-            <section class="launchpad-section">
-                <header class="launchpad-header">
-                    <div>
-                        <span class="section-kicker">\u5F53\u524D\u6587\u4EF6\u5939</span>
-                        <h2>${escapeHtml(this.currentFolder)}</h2>
-                    </div>
-                    <div class="launchpad-actions">
-                        <button class="glass-button anime-wallpaper" type="button" data-liquid-item>\u6362\u5F20\u4E8C\u6B21\u5143\u58C1\u7EB8</button>
-                        <button class="glass-button primary create-folder" type="button" data-liquid-item>\u65B0\u5EFA\u6587\u4EF6\u5939</button>
-                    </div>
+            <section class="launchpad glass-panel" aria-label="\u542F\u52A8\u53F0">
+                <header class="launchpad-toolbar">
+                    ${this.leadingTemplate(showBookmarks, showRecent)}
+                    <div class="toolbar-actions">${this.actionsTemplate()}</div>
                 </header>
-                <div class="launchpad-grid">
-                    ${folderCards}
-                    ${this.currentFolder === "\u5168\u90E8" ? this.addFolderTemplate() : ""}
-                    ${visible.map((bookmark) => this.bookmarkTemplate(bookmark)).join("")}
-                    ${!folderCards && !visible.length ? '<div class="empty-launchpad">\u8FD9\u91CC\u8FD8\u6CA1\u6709\u4E66\u7B7E</div>' : ""}
+                <div class="launchpad-grid" data-view="${this.view}">
+                    ${this.view === "recent" ? this.recentTemplate() : this.bookmarksTemplate()}
                 </div>
-                <button class="add-bookmark-fab" type="button" data-liquid-item aria-label="\u6DFB\u52A0\u4E66\u7B7E">+</button>
             </section>
         `;
           this.bindEvents();
         }
+        leadingTemplate(showBookmarks, showRecent) {
+          if (this.view === "bookmarks" && this.currentFolder !== ROOT) {
+            return `
+                <nav class="breadcrumb" aria-label="\u6587\u4EF6\u5939\u8DEF\u5F84">
+                    <button class="toolbar-button crumb-back" type="button" data-liquid-item data-drop-folder="${ROOT}" title="\u8FD4\u56DE\u5168\u90E8\uFF08\u4E5F\u53EF\u628A\u4E66\u7B7E\u62D6\u5230\u8FD9\u91CC\u79FB\u51FA\u6587\u4EF6\u5939\uFF09">${ICONS.back}<span>${ROOT}</span></button>
+                    <span class="crumb-separator" aria-hidden="true">/</span>
+                    <h2 class="crumb-current">${escapeHtml(this.currentFolder)}</h2>
+                </nav>`;
+          }
+          if (showBookmarks && showRecent) {
+            return `
+                <div class="view-switch" role="tablist" aria-label="\u542F\u52A8\u53F0\u89C6\u56FE">
+                    ${viewButton("bookmarks", "\u4E66\u7B7E", this.view)}
+                    ${viewButton("recent", "\u5E38\u8BBF\u95EE", this.view)}
+                </div>`;
+          }
+          return `<h2 class="launchpad-title">${showBookmarks ? "\u4E66\u7B7E" : "\u5E38\u8BBF\u95EE"}</h2>`;
+        }
+        actionsTemplate() {
+          if (this.view === "recent") {
+            return `<button class="toolbar-button refresh-recent" type="button" data-liquid-item title="\u91CD\u65B0\u8BFB\u53D6\u6D4F\u89C8\u8BB0\u5F55">${ICONS.refresh}<span>\u5237\u65B0</span></button>`;
+          }
+          if (this.currentFolder !== ROOT) {
+            return `
+                <button class="toolbar-button rename-current" type="button" data-liquid-item>${ICONS.edit}<span>\u91CD\u547D\u540D</span></button>
+                <button class="toolbar-button delete-current" type="button" data-liquid-item>${ICONS.trash}<span>\u5220\u9664\u6587\u4EF6\u5939</span></button>`;
+          }
+          return `<button class="toolbar-button create-folder" type="button" data-liquid-item>${ICONS.folderPlus}<span>\u65B0\u5EFA\u6587\u4EF6\u5939</span></button>`;
+        }
+        bookmarksTemplate() {
+          const { bookmarks, folders } = appStore.state;
+          const visible = bookmarks.filter((bookmark) => bookmark.folder === this.currentFolder).sort(compareBookmarks2);
+          const folderTiles = this.currentFolder === ROOT ? folders.filter((folder) => folder !== ROOT).map((folder, index) => this.folderTemplate(folder, index)).join("") : "";
+          return `
+            ${folderTiles}
+            ${visible.map((bookmark) => this.bookmarkTemplate(bookmark)).join("")}
+            <button class="tile add-tile add-bookmark" type="button" data-liquid-item>
+                <span class="tile-icon">${ICONS.plus}</span>
+                <span class="tile-name">\u6DFB\u52A0\u4E66\u7B7E</span>
+            </button>
+        `;
+        }
         bookmarkTemplate(bookmark) {
           const name = cleanDisplayName(bookmark.name) || cleanDisplayName(new URL(bookmark.url).hostname);
+          const newTab = appStore.state.settings.layout.openInNewTab;
           return `
-            <a class="bookmark-tile" href="${escapeHtml(bookmark.url)}" data-bookmark-id="${escapeHtml(bookmark.id)}" data-liquid-item draggable="true" rel="noreferrer">
-                <span class="tile-actions">
-                    <button class="tile-action edit-bookmark" type="button" aria-label="\u7F16\u8F91\u4E66\u7B7E" title="\u7F16\u8F91">\u270E</button>
-                    <button class="tile-action delete-bookmark" type="button" aria-label="\u5220\u9664\u4E66\u7B7E" title="\u5220\u9664">\xD7</button>
-                </span>
-                <span class="bookmark-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="80px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" data-icon-raster="${bookmarkIconIsRaster(bookmark)}" alt="" loading="eager" decoding="async"></span>
-                <span class="bookmark-name">${escapeHtml(name)}</span>
+            <a class="tile bookmark-tile" href="${escapeHtml(bookmark.url)}" ${newTab ? 'target="_blank"' : ""} rel="noopener noreferrer"
+                data-bookmark-id="${escapeHtml(bookmark.id)}" data-liquid-item draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
+                <span class="tile-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="56px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" data-icon-raster="${bookmarkIconIsRaster(bookmark)}" alt="" decoding="async"></span>
+                <span class="tile-name">${escapeHtml(name)}</span>
+                <button class="tile-more" type="button" tabindex="-1" aria-label="\u4E66\u7B7E\u64CD\u4F5C">${ICONS.more}</button>
             </a>
         `;
         }
         folderTemplate(folder, index) {
           const bookmarks = appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks2);
-          const previews = bookmarks.slice(0, 4).map((bookmark) => `<span class="folder-preview-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="32px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" alt="" loading="lazy" decoding="async"></span>`).join("");
+          const previews = bookmarks.slice(0, 4).map((bookmark) => `<span class="folder-mini"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="20px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" alt="" loading="lazy" decoding="async"></span>`).join("");
           return `
-            <article class="folder-tile" tabindex="0" role="button" data-folder="${escapeHtml(folder)}" data-liquid-item style="--folder-color:${FOLDER_COLORS[index % FOLDER_COLORS.length]}">
-                <span class="tile-actions folder-actions">
-                    <button class="tile-action rename-folder" type="button" aria-label="\u91CD\u547D\u540D\u6587\u4EF6\u5939" title="\u91CD\u547D\u540D">\u270E</button>
-                    <button class="tile-action delete-folder" type="button" aria-label="\u5220\u9664\u6587\u4EF6\u5939" title="\u5220\u9664">\xD7</button>
-                </span>
-                <span class="folder-preview">${previews || '<span class="folder-empty-dot">\u2726</span>'}</span>
-                <strong>${escapeHtml(folder)}</strong>
-                <small>${bookmarks.length} \u4E2A\u4E66\u7B7E</small>
-            </article>
+            <div class="tile folder-tile" tabindex="0" role="button" data-folder="${escapeHtml(folder)}" data-drop-folder="${escapeHtml(folder)}" data-liquid-item
+                style="--folder-color:${FOLDER_COLORS[index % FOLDER_COLORS.length]}" aria-label="\u6587\u4EF6\u5939 ${escapeHtml(folder)}\uFF0C${bookmarks.length} \u4E2A\u4E66\u7B7E">
+                <span class="tile-icon folder-icon">${previews ? `<span class="folder-grid">${previews}</span>` : ICONS.bookmark}</span>
+                <span class="tile-name">${escapeHtml(folder)}</span>
+                <button class="tile-more" type="button" tabindex="-1" aria-label="\u6587\u4EF6\u5939\u64CD\u4F5C">${ICONS.more}</button>
+            </div>
         `;
         }
-        addFolderTemplate() {
-          return `
-            <button class="folder-tile add-folder-tile" type="button" data-liquid-item>
-                <span class="add-folder-symbol">+</span>
-                <strong>\u65B0\u5EFA\u6587\u4EF6\u5939</strong>
-                <small>\u628A\u76F8\u5173\u7AD9\u70B9\u6536\u8FDB\u4E00\u4E2A\u5408\u96C6</small>
-            </button>
-        `;
-        }
-        backTemplate() {
-          return `
-            <button class="folder-tile back-folder-tile" type="button" data-liquid-item>
-                <span class="add-folder-symbol">\u2190</span>
-                <strong>\u8FD4\u56DE\u5168\u90E8</strong>
-                <small>\u56DE\u5230\u6240\u6709\u6587\u4EF6\u5939</small>
-            </button>
-        `;
+        recentTemplate() {
+          if (this.recent.state === "loading" || this.recent.state === "idle") return '<p class="launchpad-message">\u6B63\u5728\u6574\u7406\u6D4F\u89C8\u8BB0\u5F55\u2026</p>';
+          if (this.recent.state === "error") return `<p class="launchpad-message">${escapeHtml(this.recent.error)}</p>`;
+          if (!this.recent.sites.length) return '<p class="launchpad-message">\u6700\u8FD1 30 \u5929\u8FD8\u6CA1\u6709\u53EF\u5C55\u793A\u7684\u7F51\u7AD9</p>';
+          const newTab = appStore.state.settings.layout.openInNewTab;
+          return this.recent.sites.map((site, index) => `
+            <a class="tile recent-tile" href="${escapeHtml(site.url)}" ${newTab ? 'target="_blank"' : ""} rel="noopener noreferrer" data-recent-index="${index}" data-liquid-item title="${escapeHtml(site.host)}">
+                <span class="tile-icon"><img src="${escapeHtml(faviconUrl(site.url))}" srcset="${escapeHtml(faviconSrcSet(site.url))}" sizes="56px" alt="" loading="lazy" decoding="async"></span>
+                <span class="tile-name">${escapeHtml(site.title)}</span>
+            </a>
+        `).join("");
         }
         bindEvents() {
-          this.querySelector(".anime-wallpaper")?.addEventListener("click", () => {
-            this.dispatchEvent(new CustomEvent("random-wallpaper", { bubbles: true, composed: true }));
+          this.querySelectorAll("[data-view]").forEach((button) => {
+            button.addEventListener("click", () => this.setView(button.dataset.view));
           });
-          this.querySelectorAll(".create-folder, .add-folder-tile").forEach((button) => {
-            button.addEventListener("click", () => void this.createFolder());
+          this.querySelector(".view-switch")?.addEventListener("keydown", (event) => {
+            const key = event.key;
+            if (key !== "ArrowLeft" && key !== "ArrowRight") return;
+            this.setView(this.view === "bookmarks" ? "recent" : "bookmarks");
+            this.querySelector(`[data-view="${this.view}"]`)?.focus();
           });
-          this.querySelector(".back-folder-tile")?.addEventListener("click", () => {
-            this.currentFolder = "\u5168\u90E8";
-            this.render();
+          this.querySelector(".crumb-back")?.addEventListener("click", () => this.openFolder(ROOT));
+          this.querySelector(".create-folder")?.addEventListener("click", () => void this.createFolder());
+          this.querySelector(".rename-current")?.addEventListener("click", () => void this.renameFolder(this.currentFolder));
+          this.querySelector(".delete-current")?.addEventListener("click", () => void this.deleteFolder(this.currentFolder));
+          this.querySelector(".refresh-recent")?.addEventListener("click", () => void this.loadRecent());
+          this.querySelector(".add-bookmark")?.addEventListener("click", () => this.openDialog());
+          this.querySelectorAll(".bookmark-tile img, .folder-tile img").forEach((image) => bindIconFallback(image));
+          this.querySelectorAll(".recent-tile img").forEach((image) => {
+            image.addEventListener("error", () => image.classList.add("icon-unavailable"), { once: true });
           });
-          this.querySelector(".add-bookmark-fab")?.addEventListener("click", () => this.openDialog());
-          this.querySelectorAll(".folder-tile[data-folder]").forEach((card) => {
-            const folder = card.dataset.folder ?? "\u5168\u90E8";
-            const enter = () => {
-              this.currentFolder = folder;
-              this.render();
-            };
+          this.querySelectorAll(".folder-tile").forEach((card) => {
+            const folder = card.dataset.folder ?? ROOT;
             card.addEventListener("click", (event) => {
-              if (!event.target.closest(".tile-action")) enter();
+              if (event.target.closest(".tile-more")) return;
+              this.openFolder(folder);
             });
             card.addEventListener("keydown", (event) => {
-              if (event.key === "Enter" || event.key === " ") {
+              if (event.target === card && (event.key === "Enter" || event.key === " ")) {
                 event.preventDefault();
-                enter();
+                this.openFolder(folder);
               }
             });
-            card.addEventListener("dragover", (event) => {
-              event.preventDefault();
-              card.classList.add("drop-target");
-            });
-            card.addEventListener("dragleave", () => card.classList.remove("drop-target"));
-            card.addEventListener("drop", (event) => {
-              event.preventDefault();
-              card.classList.remove("drop-target");
-              const id = this.dragId(event);
-              if (id !== null) void this.moveBookmark(id, folder);
-            });
-            card.querySelector(".rename-folder")?.addEventListener("click", (event) => {
-              event.stopPropagation();
-              void this.renameFolder(folder);
-            });
-            card.querySelector(".delete-folder")?.addEventListener("click", (event) => {
-              event.stopPropagation();
-              void this.deleteFolder(folder);
-            });
           });
-          this.querySelectorAll(".bookmark-tile").forEach((card) => {
-            const id = card.dataset.bookmarkId ?? "";
-            const bookmark = appStore.state.bookmarks.find((item) => String(item.id) === String(id));
-            card.querySelectorAll("img").forEach((image) => this.bindIconFallback(image));
-            card.addEventListener("click", (event) => {
-              if (!bookmark || new URL(bookmark.url).protocol !== "chrome-extension:" || event.defaultPrevented) return;
-              event.preventDefault();
-              void Promise.resolve(chrome.tabs.create({ url: bookmark.url })).catch(showError);
-            });
-            card.addEventListener("dragstart", (event) => {
-              this.draggingId = id;
-              event.dataTransfer?.setData("text/plain", id);
-              if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-              card.classList.add("is-dragging");
-            });
-            card.addEventListener("dragend", () => {
-              this.draggingId = null;
-              card.classList.remove("is-dragging");
-              this.querySelectorAll(".drop-target").forEach((item) => item.classList.remove("drop-target"));
-            });
-            card.addEventListener("dragover", (event) => {
-              event.preventDefault();
-              card.classList.add("drop-target");
-            });
-            card.addEventListener("dragleave", () => card.classList.remove("drop-target"));
-            card.addEventListener("drop", (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              card.classList.remove("drop-target");
-              const sourceId = this.dragId(event);
-              if (sourceId !== null && sourceId !== id) void this.moveBookmark(sourceId, this.currentFolder, id);
-            });
-            card.querySelector(".edit-bookmark")?.addEventListener("click", (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              if (bookmark) this.openDialog(bookmark);
-            });
-            card.querySelector(".delete-bookmark")?.addEventListener("click", (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              if (confirm("\u5220\u9664\u8FD9\u4E2A\u4E66\u7B7E\uFF1F")) void appStore.deleteBookmark(id).catch(showError);
-            });
+          this.querySelectorAll(".bookmark-tile").forEach((card) => this.bindBookmark(card));
+          this.querySelectorAll("[data-drop-folder]").forEach((target) => this.bindFolderDrop(target));
+          const grid = this.querySelector(".launchpad-grid");
+          grid?.addEventListener("dragover", (event) => {
+            if (this.draggingId !== null) event.preventDefault();
           });
-          this.querySelectorAll(".folder-tile img").forEach((image) => this.bindIconFallback(image));
-          this.querySelector(".launchpad-grid")?.addEventListener("dragover", (event) => event.preventDefault());
-          this.querySelector(".launchpad-grid")?.addEventListener("drop", (event) => {
-            if (event.target.closest(".bookmark-tile, .folder-tile[data-folder]")) return;
+          grid?.addEventListener("drop", (event) => {
+            if (event.target.closest(".bookmark-tile, [data-drop-folder]")) return;
             event.preventDefault();
             const id = this.dragId(event);
             if (id !== null) void this.moveBookmark(id, this.currentFolder);
           });
+          this.querySelectorAll(".tile-more").forEach((button) => {
+            button.addEventListener("click", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              this.openTileMenu(button.closest(".tile"), button);
+            });
+          });
+          this.querySelector(".launchpad")?.addEventListener("contextmenu", (event) => {
+            const mouse = event;
+            const tile = mouse.target.closest(".tile");
+            if (tile?.classList.contains("add-tile")) return;
+            event.preventDefault();
+            const at = mouse.clientX || mouse.clientY ? { x: mouse.clientX, y: mouse.clientY } : tile ?? mouse.target;
+            if (tile) this.openTileMenu(tile, at);
+            else if (this.view === "bookmarks") this.openMenuFor([
+              { label: "\u6DFB\u52A0\u4E66\u7B7E", icon: ICONS.plus, action: () => this.openDialog() },
+              ...this.currentFolder === ROOT ? [{ label: "\u65B0\u5EFA\u6587\u4EF6\u5939", icon: ICONS.folderPlus, action: () => void this.createFolder() }] : []
+            ], at);
+          });
         }
-        openDialog(bookmark) {
+        bindBookmark(card) {
+          const id = card.dataset.bookmarkId ?? "";
+          card.addEventListener("click", (event) => {
+            const bookmark = findBookmark(id);
+            if (!bookmark || event.defaultPrevented || new URL(bookmark.url).protocol !== "chrome-extension:") return;
+            event.preventDefault();
+            void Promise.resolve(chrome.tabs.create({ url: bookmark.url })).catch(notifyError);
+          });
+          card.addEventListener("dragstart", (event) => {
+            this.draggingId = id;
+            event.dataTransfer?.setData("text/plain", id);
+            if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+            card.classList.add("is-dragging");
+            this.classList.add("is-dragging");
+          });
+          card.addEventListener("dragend", () => {
+            this.draggingId = null;
+            card.classList.remove("is-dragging");
+            this.classList.remove("is-dragging");
+            this.querySelectorAll(".drop-target").forEach((item) => item.classList.remove("drop-target"));
+          });
+          card.addEventListener("dragover", (event) => {
+            if (this.draggingId === null || this.draggingId === id) return;
+            event.preventDefault();
+            card.classList.add("drop-target");
+          });
+          card.addEventListener("dragleave", () => card.classList.remove("drop-target"));
+          card.addEventListener("drop", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            card.classList.remove("drop-target");
+            const sourceId = this.dragId(event);
+            if (sourceId !== null && sourceId !== id) void this.moveBookmark(sourceId, this.currentFolder, id);
+          });
+        }
+        bindFolderDrop(target) {
+          const folder = target.dataset.dropFolder ?? ROOT;
+          target.addEventListener("dragover", (event) => {
+            if (this.draggingId === null) return;
+            event.preventDefault();
+            target.classList.add("drop-target");
+          });
+          target.addEventListener("dragleave", () => target.classList.remove("drop-target"));
+          target.addEventListener("drop", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            target.classList.remove("drop-target");
+            const id = this.dragId(event);
+            if (id !== null) void this.moveBookmark(id, folder);
+          });
+        }
+        openTileMenu(tile, at) {
+          if (tile.dataset.folder) {
+            const folder = tile.dataset.folder;
+            this.openMenuFor([
+              { label: "\u6253\u5F00", icon: ICONS.open, action: () => this.openFolder(folder) },
+              { label: "\u91CD\u547D\u540D", icon: ICONS.edit, action: () => void this.renameFolder(folder) },
+              { separator: true },
+              { label: "\u5220\u9664\u6587\u4EF6\u5939", icon: ICONS.trash, danger: true, action: () => void this.deleteFolder(folder) }
+            ], at);
+            return;
+          }
+          if (tile.dataset.recentIndex !== void 0) {
+            const site = this.recent.sites[Number(tile.dataset.recentIndex)];
+            if (!site) return;
+            this.openMenuFor([
+              { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => window.open(site.url, "_blank", "noopener") },
+              { label: "\u6DFB\u52A0\u5230\u4E66\u7B7E", icon: ICONS.plus, action: () => this.openDialog(void 0, { url: site.url, name: site.title }) }
+            ], at);
+            return;
+          }
+          const bookmark = findBookmark(tile.dataset.bookmarkId ?? "");
+          if (!bookmark) return;
+          const destinations = appStore.state.folders.filter((folder) => folder !== bookmark.folder);
+          this.openMenuFor([
+            { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => void Promise.resolve(chrome.tabs.create({ url: bookmark.url })).catch(notifyError) },
+            { label: "\u7F16\u8F91", icon: ICONS.edit, action: () => this.openDialog(bookmark) },
+            ...destinations.length ? [
+              { separator: true },
+              { heading: "\u79FB\u52A8\u5230" },
+              ...destinations.map((folder) => ({ label: folder, icon: ICONS.move, action: () => void this.moveBookmark(bookmark.id, folder) }))
+            ] : [],
+            { separator: true },
+            { label: "\u5220\u9664", icon: ICONS.trash, danger: true, action: () => void this.deleteBookmark(bookmark) }
+          ], at);
+        }
+        openMenuFor(items, at) {
+          openMenu(items, at);
+        }
+        setView(view) {
+          if (view === this.view) return;
+          this.view = view;
+          try {
+            localStorage.setItem(VIEW_KEY, view);
+          } catch {
+          }
+          this.render();
+        }
+        openFolder(folder) {
+          this.currentFolder = folder;
+          this.render();
+          const focusTarget = folder === ROOT ? ".create-folder" : ".crumb-back";
+          this.querySelector(focusTarget)?.focus({ preventScroll: true });
+        }
+        openDialog(bookmark, draft) {
           this.dispatchEvent(new CustomEvent("open-bookmark-dialog", {
             bubbles: true,
             composed: true,
-            detail: { bookmark, folder: this.currentFolder }
+            detail: { bookmark, draft, folder: this.currentFolder }
           }));
         }
+        async loadRecent() {
+          this.recent = { ...this.recent, state: "loading", error: "" };
+          this.render();
+          await this.fetchRecent();
+        }
+        async fetchRecent() {
+          try {
+            if (!chrome.history?.search) throw new Error("\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u5386\u53F2\u8BB0\u5F55\u8BBF\u95EE");
+            const items = await new Promise((resolve, reject) => {
+              chrome.history.search({ text: "", startTime: Date.now() - 30 * 24 * 60 * 60 * 1e3, maxResults: 3e3 }, (result) => {
+                if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+                else resolve(result ?? []);
+              });
+            });
+            this.recent = { sites: rankSites(items), state: "ready", error: "" };
+          } catch (error) {
+            this.recent = { sites: [], state: "error", error: error instanceof Error && error.message ? error.message : "\u8BFB\u53D6\u6D4F\u89C8\u8BB0\u5F55\u5931\u8D25" };
+          }
+          if (this.view === "recent") this.render();
+        }
         async createFolder() {
-          const name = prompt("\u6587\u4EF6\u5939\u540D\u79F0")?.trim();
+          const name = await promptText("\u65B0\u5EFA\u6587\u4EF6\u5939", { label: "\u540D\u79F0", placeholder: "\u4F8B\u5982\uFF1A\u5DE5\u4F5C\u3001\u5A31\u4E50" }, "\u521B\u5EFA");
           if (!name) return;
           try {
-            if (!await appStore.addFolder(name)) alert("\u6587\u4EF6\u5939\u540D\u79F0\u4E3A\u7A7A\u6216\u5DF2\u7ECF\u5B58\u5728\u3002");
+            if (!await appStore.addFolder(name)) notifyError(new Error(`\u5DF2\u7ECF\u6709\u540D\u4E3A\u201C${name}\u201D\u7684\u6587\u4EF6\u5939`));
           } catch (error) {
-            showError(error);
+            notifyError(error);
           }
         }
         async renameFolder(folder) {
-          const name = prompt("\u65B0\u7684\u6587\u4EF6\u5939\u540D\u79F0", folder)?.trim();
+          const name = await promptText("\u91CD\u547D\u540D\u6587\u4EF6\u5939", { label: "\u540D\u79F0", value: folder });
           if (!name || name === folder) return;
+          const inside = this.currentFolder === folder;
+          if (inside) this.currentFolder = name;
           try {
-            if (!await appStore.renameFolder(folder, name)) alert("\u6587\u4EF6\u5939\u540D\u79F0\u4E3A\u7A7A\u6216\u5DF2\u7ECF\u5B58\u5728\u3002");
+            if (!await appStore.renameFolder(folder, name)) {
+              if (inside) this.currentFolder = folder;
+              notifyError(new Error(`\u5DF2\u7ECF\u6709\u540D\u4E3A\u201C${name}\u201D\u7684\u6587\u4EF6\u5939`));
+            }
           } catch (error) {
-            showError(error);
+            if (inside) this.currentFolder = folder;
+            notifyError(error);
           }
         }
         async deleteFolder(folder) {
-          if (!confirm(`\u5220\u9664\u6587\u4EF6\u5939\u201C${folder}\u201D\uFF1F\u5176\u4E2D\u7684\u4E66\u7B7E\u4F1A\u79FB\u56DE\u201C\u5168\u90E8\u201D\u3002`)) return;
+          const count = appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).length;
+          const confirmed = await confirmAction({
+            title: `\u5220\u9664\u6587\u4EF6\u5939\u201C${folder}\u201D\uFF1F`,
+            body: count ? `\u5176\u4E2D\u7684 ${count} \u4E2A\u4E66\u7B7E\u4F1A\u79FB\u56DE\u201C${ROOT}\u201D\uFF0C\u4E0D\u4F1A\u88AB\u5220\u9664\u3002` : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\u3002",
+            confirmText: "\u5220\u9664",
+            danger: true
+          });
+          if (!confirmed) return;
           try {
             await appStore.deleteFolder(folder);
+            if (this.currentFolder === folder) this.openFolder(ROOT);
           } catch (error) {
-            showError(error);
+            notifyError(error);
           }
+        }
+        async deleteBookmark(bookmark) {
+          const confirmed = await confirmAction({
+            title: `\u5220\u9664\u201C${cleanDisplayName(bookmark.name) || bookmark.url}\u201D\uFF1F`,
+            confirmText: "\u5220\u9664",
+            danger: true
+          });
+          if (confirmed) await appStore.deleteBookmark(bookmark.id).catch(notifyError);
         }
         async moveBookmark(id, folder, targetId) {
           try {
             await appStore.moveBookmark(id, folder, targetId);
           } catch (error) {
-            showError(error);
+            notifyError(error);
           }
         }
         dragId(event) {
           return event.dataTransfer?.getData("text/plain") || this.draggingId;
-        }
-        bindIconFallback(image) {
-          const fallback = image.dataset.iconFallback;
-          if (!fallback) return;
-          const useFallback = () => {
-            if (image.dataset.fallbackUsed === "true") {
-              image.classList.add("icon-unavailable");
-              return;
-            }
-            image.dataset.fallbackUsed = "true";
-            image.removeAttribute("srcset");
-            image.src = fallback;
-          };
-          image.addEventListener("load", () => {
-            if (image.dataset.iconRaster === "true") image.classList.add("icon-raster");
-            if (image.dataset.iconCanUpgrade === "true" && image.dataset.fallbackUsed !== "true" && image.naturalWidth > 0 && image.naturalWidth < 64) {
-              useFallback();
-            }
-          });
-          image.addEventListener("error", useFallback);
         }
       };
     }
   });
 
   // src/components/dashboard-header.ts
-  function callbackResult(start, fallback) {
-    return new Promise((resolve) => {
-      try {
-        start((result) => resolve(chrome.runtime.lastError ? fallback : result));
-      } catch {
-        resolve(fallback);
-      }
-    });
-  }
   var DashboardHeader;
   var init_dashboard_header = __esm({
     "src/components/dashboard-header.ts"() {
       "use strict";
       init_store();
-      init_utils();
       init_base();
       DashboardHeader = class extends StoreElement {
-        observedChanges = ["settings.layout"];
+        observedChanges = ["settings.layout", "settings.appearance"];
         clockTimer = 0;
-        statusTimer = 0;
         connectedCallback() {
           super.connectedCallback();
-          this.updateClock();
-          this.clockTimer = window.setInterval(() => this.updateClock(), 1e3);
-          void this.updateStatus();
-          this.statusTimer = window.setInterval(() => void this.updateStatus(), 8e3);
+          this.scheduleTick();
         }
         disconnectedCallback() {
           super.disconnectedCallback();
-          window.clearInterval(this.clockTimer);
-          window.clearInterval(this.statusTimer);
+          window.clearTimeout(this.clockTimer);
         }
         render() {
-          const { layout } = appStore.state.settings;
-          this.innerHTML = `
-            <div class="time-row" ${layout.showClock ? "" : "hidden"}>
-                <time class="hero-time" id="time">--:--</time>
-                <span class="hero-date" id="date">----</span>
-            </div>
-            <div class="status-grid" ${layout.showStatus ? "" : "hidden"}>
-                <article class="glass-panel status-panel status-panel-wide" data-liquid-item>
-                    <span class="section-kicker">\u6D3B\u52A8</span>
-                    <div class="status-pills">
-                        <button class="status-chip is-media" type="button" data-liquid-item>\u65E0\u5A92\u4F53\u64AD\u653E</button>
-                        <button class="status-chip is-download" type="button" data-liquid-item>\u65E0\u4E0B\u8F7D</button>
-                    </div>
-                </article>
-                <article class="glass-panel status-panel" data-liquid-item>
-                    <span class="section-kicker">\u7CFB\u7EDF</span>
-                    <div class="status-pills system-pills">
-                        <span class="status-chip cpu-chip">CPU: --</span>
-                        <span class="status-chip memory-chip">\u5185\u5B58: --</span>
-                        <span class="status-chip battery-chip">\u7535\u6C60: --</span>
-                    </div>
-                </article>
-            </div>
-        `;
+          this.hidden = !appStore.state.settings.layout.showClock;
+          if (!this.querySelector(".hero-time")) {
+            this.innerHTML = '<time class="hero-time" id="time">--:--</time><span class="hero-date" id="date"></span>';
+          }
           this.updateClock();
-          void this.updateStatus();
+        }
+        /** Wakes up on the minute boundary instead of polling every second. */
+        scheduleTick() {
+          window.clearTimeout(this.clockTimer);
+          const now = /* @__PURE__ */ new Date();
+          const delay = 6e4 - (now.getSeconds() * 1e3 + now.getMilliseconds()) + 20;
+          this.clockTimer = window.setTimeout(() => {
+            this.updateClock();
+            this.scheduleTick();
+          }, delay);
         }
         updateClock() {
           const time = this.querySelector("#time");
@@ -1189,54 +1908,13 @@
           if (!time || !date) return;
           const now = /* @__PURE__ */ new Date();
           const { clockFormat, dateFormat } = appStore.state.settings.appearance;
+          time.dateTime = now.toISOString();
           time.textContent = now.toLocaleTimeString("zh-CN", {
             hour: "2-digit",
             minute: "2-digit",
             hour12: clockFormat === "12h"
           });
-          date.textContent = now.toLocaleDateString("zh-CN", dateFormat === "long" ? { year: "numeric", month: "long", day: "numeric", weekday: "short" } : { month: "numeric", day: "numeric", weekday: "short" });
-        }
-        async updateStatus() {
-          const cpu = this.querySelector(".cpu-chip");
-          const memory = this.querySelector(".memory-chip");
-          if (cpu) cpu.textContent = `CPU: ${navigator.hardwareConcurrency || "--"} \u7EBF\u7A0B`;
-          if (memory) memory.textContent = `\u5185\u5B58: ${navigator.deviceMemory ? `\u2248 ${navigator.deviceMemory} GB` : "\u4E0D\u53EF\u7528"}`;
-          await Promise.all([this.updateMedia(), this.updateDownloads(), this.updateBattery()]);
-        }
-        async updateMedia() {
-          const button = this.querySelector(".is-media");
-          if (!button || !chrome.tabs?.query) return;
-          const tabs = await callbackResult((done) => chrome.tabs.query({ audible: true }, done), []);
-          const tab = tabs[0];
-          button.textContent = tab ? `\u64AD\u653E\u4E2D\uFF1A${truncate(tab.title || "\u5A92\u4F53", 28)}` : "\u65E0\u5A92\u4F53\u64AD\u653E";
-          button.disabled = !tab;
-          button.onclick = tab ? () => chrome.tabs.update(tab.id, { active: true }) : null;
-        }
-        async updateDownloads() {
-          const button = this.querySelector(".is-download");
-          if (!button || !chrome.downloads?.search) return;
-          const downloads = await callbackResult((done) => chrome.downloads.search({ state: "in_progress" }, done), []);
-          button.textContent = downloads.length ? `\u4E0B\u8F7D\u4E2D\uFF1A${downloads.length} \u9879` : "\u65E0\u4E0B\u8F7D";
-          button.disabled = !downloads.length;
-          button.onclick = downloads.length ? () => chrome.downloads.show(downloads[0].id) : null;
-        }
-        async updateBattery() {
-          const chip = this.querySelector(".battery-chip");
-          if (!chip) return;
-          if (!navigator.getBattery) {
-            chip.textContent = "\u7535\u6C60: \u4E0D\u53EF\u7528";
-            return;
-          }
-          try {
-            const battery = await navigator.getBattery();
-            if (!Number.isFinite(battery.level)) {
-              chip.textContent = "\u7535\u6C60: \u4E0D\u53EF\u7528";
-              return;
-            }
-            chip.textContent = `\u7535\u6C60: ${Math.round(battery.level * 100)}%${battery.charging ? " \u26A1" : ""}`;
-          } catch {
-            chip.textContent = "\u7535\u6C60: \u4E0D\u53EF\u7528";
-          }
+          date.textContent = now.toLocaleDateString("zh-CN", dateFormat === "long" ? { month: "long", day: "numeric", weekday: "long" } : { month: "numeric", day: "numeric", weekday: "short" });
         }
       };
     }
@@ -2254,154 +2932,129 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
   });
 
-  // src/core/history.ts
-  function rankSites(items) {
-    const hosts = /* @__PURE__ */ new Map();
-    items.forEach((item) => {
-      try {
-        const url = new URL(String(item.url ?? ""));
-        if (!["http:", "https:"].includes(url.protocol)) return;
-        const host = url.hostname.replace(/^www\./, "").toLowerCase();
-        if (!host || host === "newtab" || /(^|\.)google\.[a-z.]+$/.test(host)) return;
-        const previous = hosts.get(host);
-        hosts.set(host, {
-          host,
-          url: `${url.protocol}//${host}/`,
-          title: host.split(".")[0] || host,
-          count: (previous?.count ?? 0) + Math.max(1, Number(item.visitCount) || 1),
-          lastVisit: Math.max(previous?.lastVisit ?? 0, Number(item.lastVisitTime) || 0)
-        });
-      } catch {
-      }
-    });
-    return [...hosts.values()].sort((left, right) => right.count - left.count || right.lastVisit - left.lastVisit).slice(0, 20);
-  }
-  var init_history = __esm({
-    "src/core/history.ts"() {
-      "use strict";
-    }
-  });
-
-  // src/components/recent-sites.ts
-  var RecentSites;
-  var init_recent_sites = __esm({
-    "src/components/recent-sites.ts"() {
-      "use strict";
-      init_store();
-      init_history();
-      init_utils();
-      init_base();
-      RecentSites = class extends StoreElement {
-        observedChanges = ["settings.layout"];
-        sites = [];
-        loading = true;
-        error = "";
-        loaded = false;
-        connectedCallback() {
-          super.connectedCallback();
-          if (!this.loaded) void this.load();
-        }
-        render() {
-          this.hidden = !appStore.state.settings.layout.showRecent;
-          this.innerHTML = `
-            <section class="glass-panel recent-panel" data-liquid-item>
-                <header class="recent-header">
-                    <div><span class="section-kicker">\u5E38\u8BBF\u95EE</span><h2>\u6700\u8FD1\u5E38\u8BBF\u95EE\u7684\u7F51\u7AD9</h2></div>
-                    <div class="recent-actions"><button class="glass-button refresh-recent" type="button" data-liquid-item>\u5237\u65B0</button></div>
-                </header>
-                <div class="recent-viewport">
-                    <div class="recent-track">
-                        ${this.contentTemplate()}
-                    </div>
-                </div>
-            </section>
-        `;
-          this.querySelector(".refresh-recent")?.addEventListener("click", () => void this.load());
-          this.querySelectorAll("img").forEach((image) => {
-            image.addEventListener("error", () => {
-              image.style.opacity = "0.3";
-            });
-          });
-        }
-        contentTemplate() {
-          if (this.loading) return '<div class="recent-message">\u6B63\u5728\u6574\u7406\u6D4F\u89C8\u8BB0\u5F55\u2026</div>';
-          if (this.error) return `<div class="recent-message">${escapeHtml(this.error)}</div>`;
-          if (!this.sites.length) return '<div class="recent-message">\u6682\u65E0\u53EF\u5C55\u793A\u7684\u5386\u53F2\u8BB0\u5F55</div>';
-          return this.sites.map((site) => `
-            <a class="recent-card" href="${escapeHtml(site.url)}" data-liquid-item rel="noreferrer">
-                <span class="recent-icon"><img src="${escapeHtml(faviconUrl(site.url))}" srcset="${escapeHtml(faviconSrcSet(site.url))}" sizes="34px" alt="" loading="lazy" decoding="async"></span>
-                <span class="recent-copy"><strong>${escapeHtml(truncate(site.title, 20))}</strong><small>${escapeHtml(site.host)}</small></span>
-            </a>
-        `).join("");
-        }
-        async load() {
-          this.loaded = true;
-          this.loading = true;
-          this.error = "";
-          this.render();
-          if (!chrome.history?.search) {
-            this.loading = false;
-            this.error = "\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u5386\u53F2\u8BB0\u5F55\u8BBF\u95EE";
-            this.render();
-            return;
-          }
-          try {
-            const items = await new Promise((resolve, reject) => {
-              chrome.history.search({
-                text: "",
-                startTime: Date.now() - 30 * 24 * 60 * 60 * 1e3,
-                maxResults: 5e3
-              }, (result) => {
-                if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-                else resolve(result ?? []);
-              });
-            });
-            this.sites = rankSites(items);
-          } catch {
-            this.error = "\u8BFB\u53D6\u5386\u53F2\u8BB0\u5F55\u5931\u8D25";
-          } finally {
-            this.loading = false;
-            this.render();
-          }
-        }
-      };
-    }
-  });
-
   // src/components/search-command.ts
-  var ENGINES, SearchCommand;
+  var ENGINES, ENGINE_ORDER, MAX_SUGGESTIONS, SearchCommand;
   var init_search_command = __esm({
     "src/components/search-command.ts"() {
       "use strict";
       init_store();
       init_utils();
       init_base();
+      init_icons();
       ENGINES = {
         google: { label: "Google", url: "https://www.google.com/search?q=" },
         bing: { label: "Bing", url: "https://www.bing.com/search?q=" },
         baidu: { label: "\u767E\u5EA6", url: "https://www.baidu.com/s?wd=" },
         duckduckgo: { label: "DuckDuckGo", url: "https://duckduckgo.com/?q=" }
       };
+      ENGINE_ORDER = Object.keys(ENGINES);
+      MAX_SUGGESTIONS = 6;
       SearchCommand = class extends StoreElement {
         observedChanges = ["settings.layout", "recentSearches"];
+        activeIndex = -1;
+        handleStoreChange() {
+          if (!this.querySelector("form")) return this.render();
+          const { layout } = appStore.state.settings;
+          this.hidden = !layout.showSearch;
+          const engine = this.querySelector(".search-engine");
+          if (engine) engine.textContent = ENGINES[layout.searchEngine].label;
+          if (this.contains(document.activeElement)) this.renderSuggestions();
+        }
         render() {
           const { layout } = appStore.state.settings;
-          const engine = ENGINES[layout.searchEngine];
           this.hidden = !layout.showSearch;
           this.innerHTML = `
             <form class="search-shell glass-panel" role="search" data-liquid-item>
-                <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
-                <input name="query" type="search" autocomplete="off" list="search-history" placeholder="\u641C\u7D22\u7F51\u7EDC..." aria-label="\u641C\u7D22\u7F51\u7EDC">
-                <span class="search-engine">${engine.label}</span>
-                <datalist id="search-history">${appStore.state.recentSearches.slice(0, 8).map((item) => `<option value="${escapeHtml(item)}"></option>`).join("")}</datalist>
+                ${ICONS.search}
+                <input name="query" type="search" autocomplete="off" spellcheck="false" placeholder="\u641C\u7D22\u7F51\u7EDC\uFF0C\u6216\u6309 / \u805A\u7126" aria-label="\u641C\u7D22\u7F51\u7EDC"
+                    role="combobox" aria-expanded="false" aria-controls="search-suggestions" aria-autocomplete="list">
+                <button class="search-engine" type="button" title="\u5207\u6362\u641C\u7D22\u5F15\u64CE">${ENGINES[layout.searchEngine].label}</button>
             </form>
+            <ul class="search-suggestions glass-panel" id="search-suggestions" role="listbox" hidden></ul>
         `;
-          this.querySelector("form")?.addEventListener("submit", (event) => {
+          const form = this.querySelector("form");
+          const input = this.querySelector('input[name="query"]');
+          form.addEventListener("submit", (event) => {
             event.preventDefault();
-            const input = this.querySelector('input[name="query"]');
-            const query = input?.value.trim() ?? "";
-            if (!query) return;
-            void appStore.saveRecentSearch(query);
+            this.search(input.value);
+          });
+          input.addEventListener("focus", () => this.renderSuggestions());
+          input.addEventListener("input", () => {
+            this.activeIndex = -1;
+            this.renderSuggestions();
+          });
+          input.addEventListener("keydown", (event) => this.onKeyDown(event));
+          this.addEventListener("focusout", (event) => {
+            if (!this.contains(event.relatedTarget)) this.hideSuggestions();
+          });
+          this.querySelector(".search-engine")?.addEventListener("click", () => {
+            const next = ENGINE_ORDER[(ENGINE_ORDER.indexOf(appStore.state.settings.layout.searchEngine) + 1) % ENGINE_ORDER.length];
+            void appStore.updateSettings("layout", { searchEngine: next });
+          });
+          this.querySelector(".search-suggestions")?.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            const target = event.target;
+            const item = target.closest("[data-query]");
+            if (!item) return;
+            if (target.closest(".suggestion-remove")) void appStore.removeRecentSearch(item.dataset.query ?? "");
+            else this.search(item.dataset.query ?? "");
+          });
+        }
+        suggestions() {
+          const query = this.querySelector('input[name="query"]')?.value.trim().toLowerCase() ?? "";
+          return appStore.state.recentSearches.filter((item) => !query || item.toLowerCase().includes(query) && item.toLowerCase() !== query).slice(0, MAX_SUGGESTIONS);
+        }
+        renderSuggestions() {
+          const list = this.querySelector(".search-suggestions");
+          const input = this.querySelector('input[name="query"]');
+          if (!list || !input) return;
+          const items = this.suggestions();
+          this.activeIndex = Math.min(this.activeIndex, items.length - 1);
+          list.hidden = !items.length;
+          input.setAttribute("aria-expanded", String(Boolean(items.length)));
+          list.innerHTML = items.map((item, index) => `
+            <li role="option" id="suggestion-${index}" data-query="${escapeHtml(item)}" aria-selected="${index === this.activeIndex}" class="${index === this.activeIndex ? "is-active" : ""}">
+                ${ICONS.clock}<span>${escapeHtml(item)}</span>
+                <button class="suggestion-remove" type="button" tabindex="-1" aria-label="\u5220\u9664\u8FD9\u6761\u8BB0\u5F55">${ICONS.close}</button>
+            </li>`).join("");
+          if (this.activeIndex >= 0) input.setAttribute("aria-activedescendant", `suggestion-${this.activeIndex}`);
+          else input.removeAttribute("aria-activedescendant");
+        }
+        hideSuggestions() {
+          const list = this.querySelector(".search-suggestions");
+          if (list) list.hidden = true;
+          this.querySelector('input[name="query"]')?.setAttribute("aria-expanded", "false");
+          this.activeIndex = -1;
+        }
+        onKeyDown(event) {
+          const items = this.suggestions();
+          const input = event.target;
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            if (!items.length) return;
+            event.preventDefault();
+            const step = event.key === "ArrowDown" ? 1 : -1;
+            this.activeIndex = (this.activeIndex + step + items.length + 1) % (items.length + 1);
+            if (this.activeIndex === items.length) this.activeIndex = -1;
+            this.renderSuggestions();
+          } else if (event.key === "Enter" && this.activeIndex >= 0 && items[this.activeIndex]) {
+            event.preventDefault();
+            this.search(items[this.activeIndex]);
+          } else if (event.key === "Escape") {
+            if (!this.querySelector(".search-suggestions")?.hidden) {
+              event.preventDefault();
+              this.hideSuggestions();
+            } else if (input.value) {
+              input.value = "";
+            } else {
+              input.blur();
+            }
+          }
+        }
+        search(value) {
+          const query = value.trim();
+          if (!query) return;
+          const engine = ENGINES[appStore.state.settings.layout.searchEngine];
+          void appStore.saveRecentSearch(query).finally(() => {
             window.location.href = `${engine.url}${encodeURIComponent(query)}`;
           });
         }
@@ -2410,343 +3063,499 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   });
 
   // src/components/settings-drawer.ts
-  function tabButton(tab, label, icon, active) {
-    return `<button type="button" role="tab" data-tab="${tab}" data-liquid-item class="settings-tab ${tab === active ? "is-active" : ""}" aria-selected="${tab === active}"><i aria-hidden="true">${icon}</i><span>${label}</span></button>`;
+  function group(title, body, className = "") {
+    return `<section class="settings-group ${className}"><h3>${title}</h3><div class="settings-card">${body}</div></section>`;
   }
-  function paneHeader(title, description) {
-    return `<header class="settings-pane-header"><h3>${title}</h3><p>${description}</p></header>`;
+  function segmentRow(name, label, value, options) {
+    return `
+        <div class="segment-row">
+            <span class="segment-label" id="segment-${name}">${label}</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="segment-${name}" data-segment="${name}" style="--segments:${options.length}">
+                ${options.map(([optionValue, optionLabel]) => {
+      const checked = optionValue === value;
+      return `<button type="button" role="radio" aria-checked="${checked}" tabindex="${checked ? 0 : -1}" class="${checked ? "is-active" : ""}" data-value="${optionValue}" data-liquid-item>${optionLabel}</button>`;
+    }).join("")}
+            </div>
+        </div>`;
   }
   function toggle(name, label, checked, description = "") {
-    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ""}</span><liquid-toggle><input type="checkbox" data-toggle="${name}" ${checked ? "checked" : ""}><span class="liquid-toggle-track" aria-hidden="true"><span class="liquid-toggle-thumb"></span></span></liquid-toggle></label>`;
+    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ""}</span><liquid-toggle><input type="checkbox" role="switch" data-toggle="${name}" ${checked ? "checked" : ""}><span class="liquid-toggle-track" aria-hidden="true"><span class="liquid-toggle-thumb"></span></span></liquid-toggle></label>`;
   }
   function hdrDescription() {
     const hdrDisplay = window.matchMedia("(dynamic-range: high)").matches && CSS.supports("dynamic-range-limit", "no-limit");
-    if (!hdrDisplay) return "\u5F53\u524D\u4E3A SDR\uFF0C\u8FDE\u63A5 HDR \u5C4F\u5E55\u540E\u81EA\u52A8\u542F\u7528";
+    if (!hdrDisplay) return "\u5F53\u524D\u4E3A SDR \u5C4F\u5E55\uFF0C\u8FDE\u63A5 HDR \u5C4F\u5E55\u540E\u81EA\u52A8\u751F\u6548";
     return "gpu" in navigator ? "HDR \u5A92\u4F53\u4E0E WebGPU \u73BB\u7483\u9AD8\u5149\u5747\u5DF2\u542F\u7528" : "HDR \u5A92\u4F53\u5DF2\u542F\u7528\uFF0C\u5F53\u524D\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u52A8\u6001 HDR \u9AD8\u5149";
   }
   function range(name, label, value, min, max, unit) {
-    return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}"></liquid-range></label>`;
+    return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}"></liquid-range></label>`;
   }
-  function showError2(error) {
-    alert(errorMessage(error));
-  }
-  function errorMessage(error) {
-    return error instanceof Error ? error.message : "\u64CD\u4F5C\u5931\u8D25";
-  }
-  async function validateLocalMedia(file, kind) {
-    const url = URL.createObjectURL(file);
-    let video = null;
-    try {
-      if (kind === "image") {
-        const image = new Image();
-        image.src = url;
-        await image.decode().catch(() => {
-          throw new Error("\u56FE\u7247\u6587\u4EF6\u65E0\u6CD5\u89E3\u7801\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539");
-        });
-        return;
-      }
-      video = document.createElement("video");
-      video.preload = "auto";
-      video.muted = true;
-      video.playsInline = true;
-      video.src = url;
-      await waitForVideo(video);
-      await video.play().catch(() => {
-        throw new Error("\u89C6\u9891\u65E0\u6CD5\u64AD\u653E\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539");
-      });
-    } finally {
-      if (video) {
-        video.pause();
-        video.removeAttribute("src");
-        video.load();
-      }
-      URL.revokeObjectURL(url);
-    }
-  }
-  function waitForVideo(video) {
-    return new Promise((resolve, reject) => {
-      let timeout = 0;
-      const finish = (error) => {
-        window.clearTimeout(timeout);
-        video.removeEventListener("canplay", onReady);
-        video.removeEventListener("error", onError);
-        if (error) reject(error);
-        else resolve();
-      };
-      const onReady = () => finish();
-      const onError = () => finish(new Error("\u89C6\u9891\u6587\u4EF6\u65E0\u6CD5\u89E3\u7801\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539"));
-      video.addEventListener("canplay", onReady, { once: true });
-      video.addEventListener("error", onError, { once: true });
-      timeout = window.setTimeout(() => finish(new Error("\u8BFB\u53D6\u89C6\u9891\u8D85\u65F6\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539")), 1e4);
-      video.load();
-    });
-  }
-  var SettingsDrawer;
+  var TABS, SettingsDrawer;
   var init_settings_drawer = __esm({
     "src/components/settings-drawer.ts"() {
       "use strict";
       init_backup_service();
       init_media_store();
       init_store();
+      init_wallpaper_service();
       init_base();
+      init_icons();
+      init_search_command();
+      init_ui_layer();
+      TABS = [
+        ["appearance", "\u5916\u89C2", ICONS.palette],
+        ["widgets", "\u7EC4\u4EF6", ICONS.widgets],
+        ["wallpaper", "\u58C1\u7EB8", ICONS.image],
+        ["data", "\u6570\u636E", ICONS.database]
+      ];
       SettingsDrawer = class extends StoreElement {
         observedChanges = ["settings.appearance", "settings.wallpaper", "settings.layout"];
         openState = false;
         activeTab = "appearance";
+        releaseLayer = null;
+        previewUrl = "";
+        previewToken = 0;
         open() {
+          if (this.openState) return;
           this.openState = true;
           this.syncOpenState();
-          window.requestAnimationFrame(() => this.querySelector(".settings-close")?.focus());
+          this.releaseLayer = pushLayer(this.querySelector(".settings-drawer"), () => this.close());
+          void this.refreshPreview();
+          window.requestAnimationFrame(() => this.querySelector(".settings-tab.is-active")?.focus());
         }
         close() {
-          if (this.contains(document.activeElement)) {
-            document.querySelector(".settings-trigger")?.focus();
-          }
+          if (!this.openState) return;
           this.openState = false;
           this.syncOpenState();
+          const release = this.releaseLayer;
+          this.releaseLayer = null;
+          release?.();
+        }
+        disconnectedCallback() {
+          super.disconnectedCallback();
+          if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
         }
         handleStoreChange() {
           this.syncControls(appStore.state.settings);
         }
         render() {
-          const settings = appStore.state.settings;
           this.innerHTML = `
-            <aside class="settings-drawer glass-panel ${this.openState ? "is-open" : ""}" aria-hidden="${!this.openState}" ${this.openState ? "" : "inert"}>
+            <aside class="settings-drawer glass-panel" aria-label="\u8BBE\u7F6E" aria-hidden="true" inert>
                 <header class="settings-header">
-                    <span class="settings-brand" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-                    <div><span class="section-kicker">Infinity \u63A7\u5236\u53F0</span><h2>\u8BBE\u7F6E</h2></div>
-                    <button class="settings-close" type="button" aria-label="\u5173\u95ED">\xD7</button>
+                    <h2>\u8BBE\u7F6E</h2>
+                    <button class="icon-close settings-close" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E">${CLOSE_ICON}</button>
                 </header>
-                <div class="settings-workspace">
-                    <div class="settings-tabs" role="tablist">
-                        ${tabButton("appearance", "\u5916\u89C2", "\u25CC", this.activeTab)}
-                        ${tabButton("wallpaper", "\u58C1\u7EB8", "\u25C7", this.activeTab)}
-                        ${tabButton("layout", "\u5E03\u5C40", "\u229E", this.activeTab)}
-                        ${tabButton("data", "\u6570\u636E", "\u21C4", this.activeTab)}
-                    </div>
-                    <div class="settings-pane">${this.paneTemplate(settings)}</div>
-                </div>
+                <nav class="settings-tabs" role="tablist" aria-label="\u8BBE\u7F6E\u5206\u7C7B">
+                    ${TABS.map(([tab, label, icon2]) => `<button type="button" role="tab" id="settings-tab-${tab}" aria-controls="settings-pane" data-tab="${tab}" data-liquid-item class="settings-tab">${icon2}<span>${label}</span></button>`).join("")}
+                </nav>
+                <div class="settings-pane" id="settings-pane" role="tabpanel"></div>
             </aside>
-            <button class="settings-scrim ${this.openState ? "is-open" : ""}" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E"></button>
+            <div class="settings-scrim" aria-hidden="true"></div>
         `;
-          this.bind();
+          this.querySelector(".settings-close")?.addEventListener("click", () => this.close());
+          this.querySelector(".settings-scrim")?.addEventListener("click", () => this.close());
+          this.querySelectorAll("[data-tab]").forEach((button) => {
+            button.addEventListener("click", () => this.selectTab(button.dataset.tab));
+          });
+          this.querySelector(".settings-tabs")?.addEventListener("keydown", (event) => {
+            const key = event.key;
+            if (key !== "ArrowLeft" && key !== "ArrowRight") return;
+            const index = TABS.findIndex(([tab]) => tab === this.activeTab);
+            const next = TABS[(index + (key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length][0];
+            this.selectTab(next);
+            this.querySelector(`[data-tab="${next}"]`)?.focus();
+          });
+          this.renderPane();
           this.syncOpenState();
+        }
+        /** Only the pane is rebuilt; the drawer shell and its listeners stay put. */
+        selectTab(tab) {
+          if (tab === this.activeTab) return;
+          this.activeTab = tab;
+          this.renderPane();
+        }
+        renderPane() {
+          const pane = this.querySelector(".settings-pane");
+          if (!pane) return;
+          this.querySelectorAll("[data-tab]").forEach((button) => {
+            const active = button.dataset.tab === this.activeTab;
+            button.classList.toggle("is-active", active);
+            button.setAttribute("aria-selected", String(active));
+            button.tabIndex = active ? 0 : -1;
+          });
+          pane.setAttribute("aria-labelledby", `settings-tab-${this.activeTab}`);
+          pane.innerHTML = this.paneTemplate(appStore.state.settings);
+          pane.scrollTop = 0;
+          this.bindPane(pane);
+          if (this.activeTab === "wallpaper") void this.refreshPreview();
         }
         syncOpenState() {
           const drawer = this.querySelector(".settings-drawer");
-          const scrim = this.querySelector(".settings-scrim");
           drawer?.classList.toggle("is-open", this.openState);
           drawer?.setAttribute("aria-hidden", String(!this.openState));
           drawer?.toggleAttribute("inert", !this.openState);
-          scrim?.classList.toggle("is-open", this.openState);
+          this.querySelector(".settings-scrim")?.classList.toggle("is-open", this.openState);
+          document.body.classList.toggle("settings-open", this.openState);
         }
         syncControls(settings) {
-          const clockFormat = this.querySelector('[data-setting="clockFormat"]');
-          const searchEngine = this.querySelector('[data-setting="searchEngine"]');
-          if (clockFormat) clockFormat.value = settings.appearance.clockFormat;
-          if (searchEngine) searchEngine.value = settings.layout.searchEngine;
+          const segments = {
+            theme: settings.appearance.theme,
+            clockFormat: settings.appearance.clockFormat,
+            dateFormat: settings.appearance.dateFormat,
+            searchEngine: settings.layout.searchEngine
+          };
+          this.querySelectorAll("[data-segment]").forEach((group2) => {
+            const value = segments[group2.dataset.segment ?? ""];
+            group2.querySelectorAll("[data-value]").forEach((button) => {
+              const checked = button.dataset.value === value;
+              button.classList.toggle("is-active", checked);
+              button.setAttribute("aria-checked", String(checked));
+              button.tabIndex = checked ? 0 : -1;
+            });
+          });
           const toggles = {
             enhancedAnimations: settings.appearance.enhancedAnimations,
             hdrHighlights: settings.appearance.hdrHighlights,
-            darkText: settings.appearance.theme === "light",
             showClock: settings.layout.showClock,
             showSearch: settings.layout.showSearch,
             showBookmarks: settings.layout.showBookmarks,
             showStatus: settings.layout.showStatus,
-            showRecent: settings.layout.showRecent
+            showRecent: settings.layout.showRecent,
+            openInNewTab: settings.layout.openInNewTab
           };
           this.querySelectorAll("input[data-toggle]").forEach((input) => {
             input.checked = toggles[input.dataset.toggle ?? ""] ?? input.checked;
             input.closest("liquid-toggle")?.classList.toggle("is-checked", input.checked);
           });
-          const ranges = {
-            blur: settings.wallpaper.blur,
-            overlay: settings.wallpaper.overlay
-          };
+          this.querySelectorAll("[data-depends]").forEach((row) => {
+            row.classList.toggle("is-disabled", !toggles[row.dataset.depends ?? ""]);
+          });
+          const ranges = { blur: settings.wallpaper.blur, overlay: settings.wallpaper.overlay };
           this.querySelectorAll('input[type="range"]').forEach((input) => {
             const value = ranges[input.name];
-            if (!Number.isFinite(value)) return;
+            if (!Number.isFinite(value) || Number(input.value) === value) return;
             input.value = String(value);
             input.dispatchEvent(new Event("input", { bubbles: false }));
           });
+          const label = this.querySelector(".wallpaper-kind");
+          if (label) label.textContent = wallpaperLabel(settings.wallpaper);
+          if (this.activeTab === "wallpaper") void this.refreshPreview();
         }
         paneTemplate(settings) {
+          const { appearance, layout, wallpaper } = settings;
           if (this.activeTab === "appearance") return `
-            ${paneHeader("\u5916\u89C2", "\u51B3\u5B9A\u65F6\u95F4\u3001\u641C\u7D22\u548C\u4EA4\u4E92\u5448\u73B0\u65B9\u5F0F\u3002")}
-            <section class="settings-group">
-                <h3>\u57FA\u7840\u504F\u597D</h3>
-                <label class="setting-field"><span>\u65F6\u949F\u683C\u5F0F</span><select data-setting="clockFormat"><option value="24h" ${settings.appearance.clockFormat === "24h" ? "selected" : ""}>24 \u5C0F\u65F6\u5236</option><option value="12h" ${settings.appearance.clockFormat === "12h" ? "selected" : ""}>12 \u5C0F\u65F6\u5236</option></select></label>
-                <label class="setting-field"><span>\u641C\u7D22\u5F15\u64CE</span><select data-setting="searchEngine"><option value="google" ${settings.layout.searchEngine === "google" ? "selected" : ""}>Google</option><option value="bing" ${settings.layout.searchEngine === "bing" ? "selected" : ""}>Bing</option><option value="baidu" ${settings.layout.searchEngine === "baidu" ? "selected" : ""}>\u767E\u5EA6</option><option value="duckduckgo" ${settings.layout.searchEngine === "duckduckgo" ? "selected" : ""}>DuckDuckGo</option></select></label>
-            </section>
-            <section class="settings-group settings-list">
-                <h3>\u89C6\u89C9\u4F53\u9A8C</h3>
-                ${toggle("enhancedAnimations", "\u589E\u5F3A\u52A8\u753B", settings.appearance.enhancedAnimations, "\u542F\u7528\u8FDB\u573A\u52A8\u753B\u4E0E Liquid Glass \u5F62\u53D8")}
-                ${toggle("hdrHighlights", "HDR \u9AD8\u5149", settings.appearance.hdrHighlights, hdrDescription())}
-                ${toggle("darkText", "\u4F7F\u7528\u6DF1\u8272\u6587\u5B57", settings.appearance.theme === "light", "\u6D45\u8272\u58C1\u7EB8\u63A8\u8350\u5F00\u542F\uFF0C\u6DF1\u8272\u58C1\u7EB8\u53EF\u5173\u95ED")}
-            </section>
+            ${group("\u4E3B\u9898", `
+                ${segmentRow("theme", "\u6587\u5B57\u914D\u8272", appearance.theme, [["auto", "\u81EA\u52A8"], ["light", "\u6DF1\u8272\u6587\u5B57"], ["dark", "\u6D45\u8272\u6587\u5B57"]])}
+                <p class="setting-hint">\u201C\u81EA\u52A8\u201D\u4F1A\u6839\u636E\u58C1\u7EB8\u660E\u6697\u9009\u62E9\u6587\u5B57\u989C\u8272\u3002</p>
+            `)}
+            ${group("\u6548\u679C", `
+                ${toggle("enhancedAnimations", "\u589E\u5F3A\u52A8\u753B", appearance.enhancedAnimations, "\u8FDB\u573A\u52A8\u753B\u4E0E Liquid Glass \u5F62\u53D8")}
+                ${toggle("hdrHighlights", "HDR \u9AD8\u5149", appearance.hdrHighlights, hdrDescription())}
+            `)}
+        `;
+          if (this.activeTab === "widgets") return `
+            ${group("\u65F6\u949F", `
+                ${toggle("showClock", "\u663E\u793A\u65F6\u949F", layout.showClock)}
+                <div class="setting-sub" data-depends="showClock">
+                    ${segmentRow("clockFormat", "\u65F6\u95F4\u683C\u5F0F", appearance.clockFormat, [["24h", "24 \u5C0F\u65F6"], ["12h", "12 \u5C0F\u65F6"]])}
+                    ${segmentRow("dateFormat", "\u65E5\u671F\u683C\u5F0F", appearance.dateFormat, [["long", "9\u670826\u65E5 \u661F\u671F\u516D"], ["short", "9/26 \u5468\u516D"]])}
+                </div>
+            `)}
+            ${group("\u641C\u7D22", `
+                ${toggle("showSearch", "\u663E\u793A\u641C\u7D22\u6846", layout.showSearch, "\u6309 / \u952E\u968F\u65F6\u805A\u7126")}
+                <div class="setting-sub" data-depends="showSearch">
+                    ${segmentRow("searchEngine", "\u641C\u7D22\u5F15\u64CE", layout.searchEngine, Object.entries(ENGINES).map(([key, engine]) => [key, engine.label]))}
+                </div>
+            `)}
+            ${group("\u542F\u52A8\u53F0", `
+                ${toggle("showBookmarks", "\u4E66\u7B7E\u4E0E\u6587\u4EF6\u5939", layout.showBookmarks)}
+                ${toggle("showRecent", "\u5E38\u8BBF\u95EE\u7F51\u7AD9", layout.showRecent, "\u6839\u636E\u6700\u8FD1 30 \u5929\u6D4F\u89C8\u8BB0\u5F55\u751F\u6210")}
+                ${toggle("openInNewTab", "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", layout.openInNewTab, "\u70B9\u51FB\u4E66\u7B7E\u65F6\u4FDD\u7559\u5F53\u524D\u9875\u9762")}
+            `)}
+            ${group("\u72B6\u6001", `
+                ${toggle("showStatus", "\u6D3B\u52A8\u72B6\u6001", layout.showStatus, "\u6709\u5A92\u4F53\u64AD\u653E\u3001\u4E0B\u8F7D\u6216\u4F7F\u7528\u7535\u6C60\u65F6\u663E\u793A\u5728\u5DE6\u4E0A\u89D2")}
+            `)}
         `;
           if (this.activeTab === "wallpaper") return `
-            ${paneHeader("\u58C1\u7EB8", "\u8BA9\u542F\u52A8\u53F0\u9002\u914D\u56FE\u7247\u3001\u89C6\u9891\u548C\u4E0D\u540C\u660E\u6697\u80CC\u666F\u3002")}
-            <section class="settings-group">
-                <h3>\u58C1\u7EB8\u6765\u6E90</h3>
-                <div class="settings-button-stack">
-                    <button class="settings-action settings-action-featured random-wallpaper" type="button" data-liquid-item><b>\u2726</b><span>\u6362\u4E00\u5F20\u4E8C\u6B21\u5143\u58C1\u7EB8<small>\u4ECE\u5728\u7EBF\u56FE\u6E90\u968F\u673A\u83B7\u53D6</small></span></button>
-                    <label class="settings-action upload-wallpaper" data-liquid-item><b>\u2191</b><span>\u4E0A\u4F20\u672C\u5730\u56FE\u7247\u6216\u89C6\u9891<small>\u89C6\u9891\u4F1A\u81EA\u52A8\u9759\u97F3\u5FAA\u73AF\u64AD\u653E</small></span><input type="file" accept="image/*,video/*" hidden></label>
-                    <button class="settings-action reset-wallpaper" type="button" data-liquid-item><b>\u21BB</b><span>\u6062\u590D\u9ED8\u8BA4\u80CC\u666F</span></button>
+            <section class="wallpaper-preview" aria-label="\u5F53\u524D\u58C1\u7EB8">
+                <div class="wallpaper-preview-media"></div>
+                <span class="wallpaper-kind">${wallpaperLabel(wallpaper)}</span>
+            </section>
+            ${group("\u66F4\u6362", `
+                <div class="settings-actions">
+                    <button class="settings-action random-wallpaper" type="button" data-liquid-item>${ICONS.shuffle}<span>\u968F\u673A\u4E8C\u6B21\u5143\u58C1\u7EB8<small>\u4E0B\u8F7D\u540E\u4FDD\u5B58\u5728\u672C\u5730\uFF0C\u6253\u5F00\u65B0\u6807\u7B7E\u9875\u4E0D\u518D\u95EA\u70C1</small></span></button>
+                    <label class="settings-action upload-wallpaper" data-liquid-item>${ICONS.upload}<span>\u4E0A\u4F20\u56FE\u7247\u6216\u89C6\u9891<small>\u89C6\u9891\u4F1A\u9759\u97F3\u5FAA\u73AF\u64AD\u653E</small></span><input type="file" accept="image/*,video/*" hidden></label>
+                    <button class="settings-action reset-wallpaper" type="button" data-liquid-item>${ICONS.reset}<span>\u6062\u590D\u9ED8\u8BA4\u6E10\u53D8</span></button>
                 </div>
-            </section>
-            <section class="settings-group">
-                <h3>\u753B\u9762\u8C03\u8282</h3>
-                ${range("blur", "\u6A21\u7CCA\u5EA6", settings.wallpaper.blur, 0, 10, "px")}
-                ${range("overlay", "\u6697\u5EA6", settings.wallpaper.overlay, 0, 80, "%")}
-            </section>
-        `;
-          if (this.activeTab === "layout") return `
-            ${paneHeader("\u5E03\u5C40", "\u53EA\u4FDD\u7559\u4F60\u6BCF\u5929\u771F\u6B63\u4F1A\u770B\u7684\u533A\u57DF\u3002")}
-            <section class="settings-group settings-list">
-                <h3>\u684C\u9762\u7EC4\u4EF6</h3>
-                ${toggle("showClock", "\u65F6\u949F\u4E0E\u65E5\u671F", settings.layout.showClock, "\u663E\u793A\u5728\u9875\u9762\u9876\u90E8\u5DE6\u4FA7")}
-                ${toggle("showSearch", "\u641C\u7D22\u6846", settings.layout.showSearch, "\u4F7F\u7528\u659C\u6760\u952E\u53EF\u5FEB\u901F\u805A\u7126")}
-                ${toggle("showBookmarks", "\u4E66\u7B7E\u4E0E\u6587\u4EF6\u5939", settings.layout.showBookmarks, "\u542F\u52A8\u53F0\u7684\u4E3B\u8981\u5DE5\u4F5C\u533A\u57DF")}
-                ${toggle("showStatus", "\u6D3B\u52A8\u4E0E\u7CFB\u7EDF\u72B6\u6001", settings.layout.showStatus, "\u5A92\u4F53\u3001\u4E0B\u8F7D\u3001\u7535\u6C60\u548C\u8BBE\u5907\u4FE1\u606F")}
-                ${toggle("showRecent", "\u6700\u8FD1\u5E38\u8BBF\u95EE", settings.layout.showRecent, "\u6839\u636E\u672C\u673A\u6D4F\u89C8\u5386\u53F2\u805A\u5408\u7F51\u7AD9")}
-            </section>
+            `)}
+            ${group("\u8C03\u8282", `
+                ${range("blur", "\u6A21\u7CCA", wallpaper.blur, 0, 10, "px")}
+                ${range("overlay", "\u906E\u7F69", wallpaper.overlay, 0, 80, "%")}
+            `)}
         `;
           return `
-            ${paneHeader("\u6570\u636E", "\u5907\u4EFD\u3001\u8FC1\u79FB\u6216\u6062\u590D\u5F53\u524D\u542F\u52A8\u53F0\u3002")}
-            <section class="settings-group">
-                <h3>\u5907\u4EFD\u4E0E\u6062\u590D</h3>
-                <div class="settings-button-stack">
-                    <button class="settings-action export-data" type="button" data-liquid-item><b>\u2193</b><span>\u5BFC\u51FA\u6570\u636E<small>\u4FDD\u5B58\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8</small></span></button>
-                    <label class="settings-action import-data" data-liquid-item><b>\u2191</b><span>\u5BFC\u5165\u6570\u636E<small>\u517C\u5BB9\u65E7\u7248 1.0 \u4E0E 2.0 \u5907\u4EFD</small></span><input type="file" accept="application/json,.json" hidden></label>
-                    <button class="settings-action danger reset-data" type="button" data-liquid-item><b>\u21BB</b><span>\u91CD\u7F6E\u6240\u6709\u8BBE\u7F6E<small>\u6E05\u7A7A\u540E\u65E0\u6CD5\u64A4\u9500</small></span></button>
+            ${group("\u5907\u4EFD", `
+                <div class="settings-actions">
+                    <button class="settings-action export-data" type="button" data-liquid-item>${ICONS.download}<span>\u5BFC\u51FA\u5907\u4EFD<small>\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\uFF0C\u4FDD\u5B58\u4E3A JSON</small></span></button>
+                    <label class="settings-action import-data" data-liquid-item>${ICONS.upload}<span>\u4ECE\u5907\u4EFD\u6062\u590D<small>\u652F\u6301 1.0 \u4E0E 2.0 \u5907\u4EFD\uFF0C\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E</small></span><input type="file" accept="application/json,.json" hidden></label>
                 </div>
-            </section>
-            <div class="data-note"><strong>\u5BFC\u5165\u524D\u5EFA\u8BAE\u5148\u5BFC\u51FA</strong><p>\u5BFC\u5165\u64CD\u4F5C\u4F1A\u8986\u76D6\u5F53\u524D\u4E66\u7B7E\u3001\u5E03\u5C40\u4E0E\u58C1\u7EB8\u8BBE\u7F6E\u3002</p></div>
+            `)}
+            ${group("\u5371\u9669\u64CD\u4F5C", `
+                <div class="settings-actions">
+                    <button class="settings-action danger reset-data" type="button" data-liquid-item>${ICONS.trash}<span>\u6E05\u7A7A\u6240\u6709\u6570\u636E<small>\u5220\u9664\u5168\u90E8\u4E66\u7B7E\u3001\u6587\u4EF6\u5939\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8</small></span></button>
+                </div>
+            `, "is-danger")}
         `;
         }
-        bind() {
-          this.querySelector(".settings-close")?.addEventListener("click", () => this.close());
-          this.querySelector(".settings-scrim")?.addEventListener("click", () => this.close());
-          this.querySelectorAll("[data-tab]").forEach((button) => {
-            button.addEventListener("click", () => {
-              this.activeTab = button.dataset.tab;
-              this.render();
+        bindPane(pane) {
+          pane.querySelectorAll("[data-segment]").forEach((groupElement) => {
+            const buttons = [...groupElement.querySelectorAll("[data-value]")];
+            buttons.forEach((button) => button.addEventListener("click", () => {
+              void this.applySegment(groupElement.dataset.segment ?? "", button.dataset.value ?? "");
+            }));
+            groupElement.addEventListener("keydown", (event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              event.preventDefault();
+              const index = buttons.findIndex((button) => button.classList.contains("is-active"));
+              const next = buttons[(index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length];
+              next.focus();
+              next.click();
             });
           });
-          this.querySelector('[data-setting="clockFormat"]')?.addEventListener("change", (event) => {
-            void appStore.updateSettings("appearance", { clockFormat: event.target.value });
-          });
-          this.querySelector('[data-setting="searchEngine"]')?.addEventListener("change", (event) => {
-            void appStore.updateSettings("layout", { searchEngine: event.target.value });
-          });
-          this.querySelectorAll("input[data-toggle]").forEach((input) => {
+          pane.querySelectorAll("input[data-toggle]").forEach((input) => {
             input.addEventListener("change", () => void this.applyToggle(input.dataset.toggle ?? "", input.checked));
           });
-          this.querySelectorAll('input[type="range"]').forEach((input) => {
+          pane.querySelectorAll('input[type="range"]').forEach((input) => {
             input.addEventListener("input", () => {
-              const output = input.closest("label")?.querySelector("output");
+              const output = input.closest(".range-row")?.querySelector("output");
               if (output) output.textContent = `${input.value}${input.dataset.unit ?? ""}`;
+              document.querySelector("wallpaper-surface")?.style.setProperty(
+                input.name === "blur" ? "--wallpaper-blur" : "--wallpaper-overlay",
+                input.name === "blur" ? `${input.value}px` : String(Number(input.value) / 100)
+              );
             });
             input.addEventListener("change", () => void appStore.updateSettings("wallpaper", {
               [input.name]: Number(input.value)
-            }));
+            }).catch(notifyError));
           });
-          this.querySelector(".random-wallpaper")?.addEventListener("click", () => {
-            this.dispatchEvent(new CustomEvent("random-wallpaper", { bubbles: true, composed: true }));
+          pane.querySelector(".random-wallpaper")?.addEventListener("click", (event) => void this.withBusy(event.currentTarget, useOnlineWallpaper));
+          pane.querySelector(".upload-wallpaper input")?.addEventListener("change", (event) => {
+            const input = event.target;
+            const file = input.files?.[0];
+            input.value = "";
+            if (file) void this.withBusy(input.closest("label"), () => useLocalWallpaper(file));
           });
-          this.querySelector(".upload-wallpaper input")?.addEventListener("change", (event) => {
-            void this.uploadWallpaper(event.target.files?.[0]);
+          pane.querySelector(".reset-wallpaper")?.addEventListener("click", () => void resetWallpaper().catch(notifyError));
+          pane.querySelector(".export-data")?.addEventListener("click", () => void backupService.createBackup().catch(notifyError));
+          pane.querySelector(".import-data input")?.addEventListener("change", (event) => {
+            const input = event.target;
+            const file = input.files?.[0];
+            input.value = "";
+            if (file) void this.importData(file);
           });
-          this.querySelector(".reset-wallpaper")?.addEventListener("click", () => void this.resetWallpaper());
-          this.querySelector(".export-data")?.addEventListener("click", () => void this.exportData());
-          this.querySelector(".import-data input")?.addEventListener("change", (event) => {
-            void this.importData(event.target.files?.[0]);
-          });
-          this.querySelector(".reset-data")?.addEventListener("click", () => void this.resetData());
+          pane.querySelector(".reset-data")?.addEventListener("click", () => void this.resetData());
+          this.syncControls(appStore.state.settings);
+        }
+        async withBusy(control, task) {
+          if (control.classList.contains("is-busy")) return;
+          control.classList.add("is-busy");
+          control.setAttribute("aria-busy", "true");
+          try {
+            await task();
+          } catch (error) {
+            notifyError(error);
+          } finally {
+            control.classList.remove("is-busy");
+            control.removeAttribute("aria-busy");
+          }
+        }
+        async applySegment(name, value) {
+          try {
+            if (name === "theme") await appStore.updateSettings("appearance", { theme: value });
+            else if (name === "clockFormat") await appStore.updateSettings("appearance", { clockFormat: value });
+            else if (name === "dateFormat") await appStore.updateSettings("appearance", { dateFormat: value });
+            else if (name === "searchEngine") await appStore.updateSettings("layout", { searchEngine: value });
+          } catch (error) {
+            notifyError(error);
+          }
         }
         async applyToggle(name, checked) {
-          const appearance = ["enhancedAnimations", "hdrHighlights", "darkText"];
           try {
-            if (name === "darkText") await appStore.updateSettings("appearance", { theme: checked ? "light" : "dark" });
-            else if (appearance.includes(name)) await appStore.updateSettings("appearance", { [name]: checked });
+            if (name === "enhancedAnimations" || name === "hdrHighlights") await appStore.updateSettings("appearance", { [name]: checked });
             else await appStore.updateSettings("layout", { [name]: checked });
           } catch (error) {
-            showError2(error);
+            notifyError(error);
           }
         }
-        async uploadWallpaper(file) {
-          if (!file) return;
-          const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : null;
-          if (!kind) {
-            alert("\u8BF7\u9009\u62E9\u56FE\u7247\u6216\u89C6\u9891\u6587\u4EF6\u3002");
+        /** Mirrors the live wallpaper into the preview card without re-downloading anything. */
+        async refreshPreview() {
+          const host = this.querySelector(".wallpaper-preview-media");
+          if (!host || !this.openState) return;
+          const token = ++this.previewToken;
+          const { type, value } = appStore.state.settings.wallpaper;
+          const key = `${type}:${value}`;
+          if (host.dataset.key === key) return;
+          let url = "";
+          try {
+            if (type === "local" || type === "video") {
+              const blob = await mediaStore.get(type === "video" ? "video" : "image");
+              if (blob) url = URL.createObjectURL(blob);
+            }
+          } catch {
+          }
+          if (token !== this.previewToken) {
+            if (url) URL.revokeObjectURL(url);
             return;
           }
-          let previous = null;
-          let stored = false;
-          try {
-            await validateLocalMedia(file, kind);
-            previous = await mediaStore.get(kind);
-            await mediaStore.set(kind, file);
-            stored = true;
-            await appStore.updateSettings("wallpaper", { type: kind === "video" ? "video" : "local", value: "local" });
-          } catch (error) {
-            if (stored) {
-              try {
-                if (previous) await mediaStore.set(kind, previous);
-                else await mediaStore.clear(kind);
-              } catch (rollbackError) {
-                showError2(new Error(`${errorMessage(error)}\uFF1B\u6062\u590D\u539F\u80CC\u666F\u4E5F\u5931\u8D25\uFF1A${errorMessage(rollbackError)}`));
-                return;
-              }
-            }
-            showError2(error);
-          }
-        }
-        async resetWallpaper() {
-          try {
-            await appStore.updateSettings("wallpaper", { type: "gradient", value: "", blur: 0, overlay: 30 });
-            await mediaStore.clearAll();
-          } catch (error) {
-            showError2(error);
-          }
-        }
-        async exportData() {
-          try {
-            await backupService.createBackup();
-          } catch (error) {
-            showError2(error);
+          if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
+          this.previewUrl = url;
+          host.dataset.key = key;
+          host.replaceChildren();
+          host.style.backgroundImage = "";
+          if (type === "video" && url) {
+            const video = document.createElement("video");
+            Object.assign(video, { src: url, muted: true, loop: true, autoplay: true, playsInline: true });
+            host.append(video);
+          } else if (type === "local" && url) {
+            host.style.backgroundImage = `url("${url}")`;
+          } else if (type === "preset" && value) {
+            host.style.backgroundImage = `url("${value.replaceAll('"', "%22")}")`;
           }
         }
         async importData(file) {
-          if (!file || !confirm("\u5BFC\u5165\u4F1A\u8986\u76D6\u5F53\u524D\u4E66\u7B7E\u4E0E\u8BBE\u7F6E\uFF0C\u7EE7\u7EED\u5417\uFF1F")) return;
+          const confirmed = await confirmAction({
+            title: "\u4ECE\u5907\u4EFD\u6062\u590D\uFF1F",
+            body: "\u5F53\u524D\u7684\u4E66\u7B7E\u3001\u6587\u4EF6\u5939\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\u4F1A\u88AB\u5907\u4EFD\u4E2D\u7684\u5185\u5BB9\u66FF\u6362\u3002\u5EFA\u8BAE\u5148\u5BFC\u51FA\u4E00\u4EFD\u5F53\u524D\u6570\u636E\u3002",
+            confirmText: "\u6062\u590D"
+          });
+          if (!confirmed) return;
           try {
             await backupService.importData(await backupService.read(file));
-            alert("\u5BFC\u5165\u5B8C\u6210\uFF0C\u65E7\u6570\u636E\u5DF2\u7ECF\u8F6C\u6362\u5230\u65B0\u7248\u672C\u3002");
+            notify("\u5DF2\u4ECE\u5907\u4EFD\u6062\u590D", "success");
           } catch (error) {
-            showError2(error);
+            notifyError(error);
           }
         }
         async resetData() {
-          if (!confirm("\u786E\u5B9A\u6E05\u7A7A\u6240\u6709\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\u5417\uFF1F\u6B64\u64CD\u4F5C\u65E0\u6CD5\u64A4\u9500\u3002")) return;
+          const confirmed = await confirmAction({
+            title: "\u6E05\u7A7A\u6240\u6709\u6570\u636E\uFF1F",
+            body: `\u5C06\u5220\u9664 ${appStore.state.bookmarks.length} \u4E2A\u4E66\u7B7E\u3001\u5168\u90E8\u6587\u4EF6\u5939\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\uFF0C\u4E14\u65E0\u6CD5\u64A4\u9500\u3002`,
+            confirmText: "\u6E05\u7A7A",
+            danger: true
+          });
+          if (!confirmed) return;
           try {
             await mediaStore.clearAll();
             await appStore.reset();
+            notify("\u5DF2\u6E05\u7A7A\u6240\u6709\u6570\u636E", "success");
           } catch (error) {
-            showError2(error);
+            notifyError(error);
           }
         }
       };
     }
   });
 
+  // src/components/status-strip.ts
+  async function readBattery() {
+    try {
+      const battery = await navigator.getBattery?.();
+      if (!battery || !Number.isFinite(battery.level)) return null;
+      if (battery.charging && battery.level >= 1) return null;
+      return { level: battery.level, charging: battery.charging };
+    } catch {
+      return null;
+    }
+  }
+  function callbackResult(start, fallback) {
+    return new Promise((resolve) => {
+      try {
+        start((result) => resolve(chrome.runtime.lastError ? fallback : result));
+      } catch {
+        resolve(fallback);
+      }
+    });
+  }
+  var StatusStrip;
+  var init_status_strip = __esm({
+    "src/components/status-strip.ts"() {
+      "use strict";
+      init_store();
+      init_utils();
+      init_base();
+      init_icons();
+      StatusStrip = class extends StoreElement {
+        observedChanges = ["settings.layout"];
+        timer = 0;
+        status = { media: null, downloads: [], battery: null };
+        connectedCallback() {
+          super.connectedCallback();
+          void this.refresh();
+          this.timer = window.setInterval(() => void this.refresh(), 5e3);
+          document.addEventListener("visibilitychange", this.onVisibility);
+        }
+        disconnectedCallback() {
+          super.disconnectedCallback();
+          window.clearInterval(this.timer);
+          document.removeEventListener("visibilitychange", this.onVisibility);
+        }
+        onVisibility = () => {
+          if (document.visibilityState === "visible") void this.refresh();
+        };
+        handleStoreChange() {
+          this.render();
+          void this.refresh();
+        }
+        render() {
+          this.hidden = !appStore.state.settings.layout.showStatus;
+          const { media, downloads, battery } = this.status;
+          const chips = [
+            media ? `<button class="status-chip is-media" type="button" data-liquid-item title="\u5207\u6362\u5230\u6B63\u5728\u64AD\u653E\u7684\u6807\u7B7E\u9875">${ICONS.play}<span>${escapeHtml(truncate(media.title, 26))}</span></button>` : "",
+            downloads.length ? `<button class="status-chip is-download" type="button" data-liquid-item title="\u5728\u6587\u4EF6\u5939\u4E2D\u663E\u793A">${ICONS.download}<span>${downloads.length} \u9879\u4E0B\u8F7D\u4E2D</span></button>` : "",
+            battery ? `<span class="status-chip battery-chip ${battery.level <= 0.2 && !battery.charging ? "is-low" : ""}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ""
+          ].join("");
+          this.innerHTML = chips;
+          this.querySelector(".is-media")?.addEventListener("click", () => {
+            if (media) chrome.tabs.update(media.id, { active: true });
+          });
+          this.querySelector(".is-download")?.addEventListener("click", () => {
+            if (downloads[0] !== void 0) chrome.downloads.show(downloads[0]);
+          });
+        }
+        async refresh() {
+          if (document.visibilityState === "hidden" || this.hidden) return;
+          const [tabs, downloads, battery] = await Promise.all([
+            chrome.tabs?.query ? callbackResult((done) => chrome.tabs.query({ audible: true }, done), []) : [],
+            chrome.downloads?.search ? callbackResult((done) => chrome.downloads.search({ state: "in_progress" }, done), []) : [],
+            readBattery()
+          ]);
+          const next = {
+            media: tabs[0] ? { id: tabs[0].id, title: tabs[0].title || "\u6B63\u5728\u64AD\u653E" } : null,
+            downloads: downloads.map((item) => item.id),
+            battery
+          };
+          if (JSON.stringify(next) === JSON.stringify(this.status)) return;
+          this.status = next;
+          this.render();
+        }
+      };
+    }
+  });
+
   // src/components/wallpaper-surface.ts
+  function safeTone(sample) {
+    try {
+      return sample();
+    } catch {
+      return "dark";
+    }
+  }
   var WallpaperSurface;
   var init_wallpaper_surface = __esm({
     "src/components/wallpaper-surface.ts"() {
       "use strict";
       init_media_store();
       init_store();
+      init_wallpaper_service();
       init_base();
       WallpaperSurface = class extends StoreElement {
         observedChanges = ["settings.wallpaper"];
@@ -2776,6 +3585,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (!host) return;
           let candidateUrl = "";
           let candidateVideo = null;
+          let tone = Promise.resolve("light");
           try {
             if (wallpaper.type === "video") {
               const blob = await mediaStore.get("video");
@@ -2793,6 +3603,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               await candidateVideo.play();
               if (token !== this.renderToken) return;
               candidateVideo.style.removeProperty("visibility");
+              tone = Promise.resolve(safeTone(() => toneOf(candidateVideo)));
               this.commitMedia(host, candidateVideo, candidateUrl, "");
               candidateUrl = "";
               candidateVideo = null;
@@ -2801,14 +3612,19 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               if (!blob) throw new Error("\u627E\u4E0D\u5230\u5DF2\u4FDD\u5B58\u7684\u56FE\u7247\u80CC\u666F");
               candidateUrl = URL.createObjectURL(blob);
               if (token !== this.renderToken) return;
+              tone = toneOfBlob(blob).catch(() => "dark");
               this.commitMedia(host, null, candidateUrl, `url("${candidateUrl}")`);
               candidateUrl = "";
             } else {
               if (token !== this.renderToken) return;
-              const background = wallpaper.type === "preset" && wallpaper.value ? `url("${wallpaper.value.replaceAll('"', "%22")}")` : "";
+              const preset = wallpaper.type === "preset" && wallpaper.value;
+              const background = preset ? `url("${wallpaper.value.replaceAll('"', "%22")}")` : "";
+              if (preset) tone = Promise.resolve("dark");
               this.commitMedia(host, null, "", background);
             }
             this.appliedMediaKey = mediaKey;
+            const resolved = await tone;
+            if (token === this.renderToken) this.reportTone(resolved);
           } catch (error) {
             if (token === this.renderToken) this.reportError(error);
           } finally {
@@ -2823,6 +3639,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           host.style.backgroundImage = background;
           this.objectUrl = objectUrl;
           if (previousUrl && previousUrl !== objectUrl) URL.revokeObjectURL(previousUrl);
+        }
+        reportTone(tone) {
+          this.dispatchEvent(new CustomEvent("wallpaper-tone", { bubbles: true, composed: true, detail: { tone } }));
         }
         reportError(error) {
           this.dispatchEvent(new CustomEvent("wallpaper-error", {
@@ -2852,27 +3671,30 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_store();
       init_chrome_fallback();
       init_utils();
+      init_wallpaper_service();
       init_backup_toast();
       init_bookmark_dialog();
       init_bookmark_launchpad();
       init_dashboard_header();
+      init_icons();
       init_liquid_glass();
       init_liquid_controls();
-      init_recent_sites();
       init_search_command();
       init_settings_drawer();
+      init_status_strip();
+      init_ui_layer();
       init_wallpaper_surface();
-      var ANIME_WALLPAPER = "https://www.dmoe.cc/random.php";
       installChromeFallback();
       var InfinityNewTabApp = class extends HTMLElement {
         hdrMedia = window.matchMedia("(dynamic-range: high)");
-        noticeTimer = 0;
+        wallpaperTone = "light";
         updateClasses = () => {
           const { appearance } = appStore.state.settings;
           const hdrDisplay = this.hasHdrDisplay();
           const hdrCapable = hdrDisplay && "gpu" in navigator;
-          document.body.classList.toggle("theme-light", appearance.theme === "light");
-          document.body.classList.toggle("theme-dark", appearance.theme === "dark");
+          const theme = appearance.theme === "auto" ? this.wallpaperTone : appearance.theme;
+          document.body.classList.toggle("theme-light", theme === "light");
+          document.body.classList.toggle("theme-dark", theme === "dark");
           document.body.classList.toggle("enhanced-animations", appearance.enhancedAnimations);
           document.body.classList.toggle("hdr-highlights", appearance.hdrHighlights);
           document.body.classList.toggle("hdr-display", hdrDisplay);
@@ -2884,7 +3706,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (!changes || changes.includes("settings.appearance")) this.updateClasses();
         };
         async connectedCallback() {
-          this.innerHTML = '<div class="app-loading"><span></span><p>\u6B63\u5728\u6574\u7406\u4F60\u7684\u542F\u52A8\u53F0\u2026</p></div>';
+          this.innerHTML = '<div class="app-loading" role="status"><span></span><p>\u6B63\u5728\u6574\u7406\u4F60\u7684\u542F\u52A8\u53F0\u2026</p></div>';
           try {
             await appStore.init();
             this.updateClasses();
@@ -2892,6 +3714,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.hdrMedia.addEventListener("change", this.updateClasses);
             this.render();
             window.addEventListener("keydown", this.onKeyDown);
+            void migrateLegacyWallpaper();
           } catch (error) {
             this.innerHTML = `<div class="app-error"><h1>\u542F\u52A8\u53F0\u52A0\u8F7D\u5931\u8D25</h1><p>${escapeHtml(error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF")}</p></div>`;
           }
@@ -2900,7 +3723,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           appStore.removeEventListener("change", this.onStoreChange);
           this.hdrMedia.removeEventListener("change", this.updateClasses);
           window.removeEventListener("keydown", this.onKeyDown);
-          window.clearTimeout(this.noticeTimer);
         }
         hasHdrDisplay() {
           return this.hdrMedia.matches && CSS.supports("dynamic-range-limit", "no-limit");
@@ -2908,59 +3730,72 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         render() {
           this.innerHTML = `
             <wallpaper-surface></wallpaper-surface>
-            <div class="ambient-orb orb-one"></div><div class="ambient-orb orb-two"></div>
-            <button class="settings-trigger" type="button" data-liquid-item aria-label="\u6253\u5F00\u8BBE\u7F6E" title="\u8BBE\u7F6E"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"></path><circle cx="16" cy="6" r="2"></circle><circle cx="8" cy="12" r="2"></circle><circle cx="13" cy="18" r="2"></circle></svg></button>
+            <header class="top-bar">
+                <status-strip></status-strip>
+                <div class="top-actions">
+                    <button class="top-button shuffle-wallpaper" type="button" data-liquid-item aria-label="\u6362\u4E00\u5F20\u5728\u7EBF\u58C1\u7EB8" title="\u6362\u4E00\u5F20\u5728\u7EBF\u58C1\u7EB8">${ICONS.shuffle}</button>
+                    <button class="top-button settings-trigger" type="button" data-liquid-item aria-label="\u6253\u5F00\u8BBE\u7F6E" title="\u8BBE\u7F6E">${ICONS.settings}</button>
+                </div>
+            </header>
             <main class="app-shell">
-                <dashboard-header></dashboard-header>
-                <search-command></search-command>
+                <div class="hero">
+                    <dashboard-header></dashboard-header>
+                    <search-command></search-command>
+                </div>
                 <bookmark-launchpad></bookmark-launchpad>
-                <recent-sites></recent-sites>
             </main>
             <settings-drawer></settings-drawer>
             <bookmark-dialog></bookmark-dialog>
             <backup-toast></backup-toast>
-            <div class="app-notice" role="status" hidden></div>
             <liquid-glass-system></liquid-glass-system>
         `;
           this.querySelector(".settings-trigger")?.addEventListener("click", () => {
             this.querySelector("settings-drawer")?.open();
           });
-          this.addEventListener("random-wallpaper", () => void appStore.updateSettings("wallpaper", {
-            type: "preset",
-            value: `${ANIME_WALLPAPER}?t=${Date.now()}`
-          }));
+          this.querySelector(".shuffle-wallpaper")?.addEventListener("click", (event) => void this.shuffleWallpaper(event.currentTarget));
           this.addEventListener("wallpaper-error", this.onWallpaperError);
+          this.addEventListener("wallpaper-tone", this.onWallpaperTone);
         }
+        async shuffleWallpaper(button) {
+          if (button.classList.contains("is-busy")) return;
+          button.classList.add("is-busy");
+          button.setAttribute("aria-busy", "true");
+          try {
+            await useOnlineWallpaper();
+          } catch (error) {
+            notifyError(error);
+          } finally {
+            button.classList.remove("is-busy");
+            button.removeAttribute("aria-busy");
+          }
+        }
+        onWallpaperTone = (event) => {
+          this.wallpaperTone = event.detail.tone;
+          this.updateClasses();
+        };
         onWallpaperError = (event) => {
-          const notice = this.querySelector(".app-notice");
-          if (!notice) return;
-          notice.textContent = `\u80CC\u666F\u52A0\u8F7D\u5931\u8D25\uFF1A${event.detail?.message || "\u672A\u77E5\u9519\u8BEF"}\u3002\u5DF2\u4FDD\u7559\u539F\u80CC\u666F\u3002`;
-          notice.hidden = false;
-          window.clearTimeout(this.noticeTimer);
-          this.noticeTimer = window.setTimeout(() => {
-            notice.hidden = true;
-          }, 8e3);
+          notify(`\u80CC\u666F\u52A0\u8F7D\u5931\u8D25\uFF1A${event.detail?.message || "\u672A\u77E5\u9519\u8BEF"}\u3002\u5DF2\u4FDD\u7559\u539F\u80CC\u666F\u3002`, "error", 8e3);
         };
         onKeyDown = (event) => {
-          if (event.key === "/" && !isTypingTarget(event.target)) {
-            event.preventDefault();
-            this.querySelector("search-command input")?.focus();
-          }
-          if (event.key === "Escape") this.querySelector("settings-drawer")?.close();
+          if (event.key !== "/" || isTypingTarget(event.target) || hasOpenLayer()) return;
+          const input = this.querySelector("search-command input");
+          if (!input || input.closest("[hidden]")) return;
+          event.preventDefault();
+          input.focus();
         };
       };
       function isTypingTarget(target) {
-        return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+        return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target instanceof HTMLElement && target.isContentEditable;
       }
       var elements = [
         ["liquid-glass-system", LiquidGlassSystem],
         ["liquid-range", LiquidRange],
         ["liquid-toggle", LiquidToggle],
         ["wallpaper-surface", WallpaperSurface],
+        ["status-strip", StatusStrip],
         ["dashboard-header", DashboardHeader],
         ["search-command", SearchCommand],
         ["bookmark-launchpad", BookmarkLaunchpad],
-        ["recent-sites", RecentSites],
         ["settings-drawer", SettingsDrawer],
         ["bookmark-dialog", BookmarkDialog],
         ["backup-toast", BackupToast],

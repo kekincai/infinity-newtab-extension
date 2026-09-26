@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { sanitizeImportedData, sanitizeSettings } from '../src/core/backup';
+import { BOOKMARK_CHUNKS_KEY, bookmarkChunkKey } from '../src/core/bookmark-storage';
 import { rankSites } from '../src/core/history';
 import { AppStore } from '../src/core/store';
 import { convexSquircle, lipSquircle, precalculateDisplacements } from '../src/components/liquid-optics';
@@ -60,6 +61,11 @@ assert.equal((oldBackup.settings as any).layout.showStatus, true);
 assert.equal((oldBackup.settings as any).layout.showRecent, true);
 assert.equal((oldBackup.settings as any).appearance.hdrHighlights, true);
 assert.equal('showTodo' in (oldBackup.settings as any).layout, false);
+assert.equal((oldBackup.settings as any).appearance.theme, 'auto', '旧版本默认的配色应迁移为自动');
+assert.equal(sanitizeSettings({ appearance: { theme: 'light' } }).appearance.theme, 'auto', '2.5 之前的 light 是默认值，应迁移为自动');
+assert.equal(sanitizeSettings({ layout: { openInNewTab: false }, appearance: { theme: 'light' } }).appearance.theme, 'light', '2.5 之后主动选择的深色文字必须保留');
+assert.equal(sanitizeSettings({ appearance: { theme: 'dark' } }).appearance.theme, 'dark');
+assert.equal(sanitizeSettings({ wallpaper: { type: 'local', value: 'online-123' } }).wallpaper.value, 'online-123', '缓存的在线壁纸需要保留版本号以触发刷新');
 
 const unsafe = sanitizeImportedData({
     bookmarks: [{ id: 1, name: 'bad', url: 'javascript:alert(1)', icon: 'javascript:alert(2)' }],
@@ -104,6 +110,7 @@ assert.equal(bookmarkIconIsRaster({ ...managedBookmark, icon: 'data:image/svg+xm
 assert.ok(bookmarkIconFallback(customBookmark).includes('size=128'), '自定义图标失败时应回退到本地 favicon');
 
 const ranked = rankSites([
+    { url: 'https://www.youtube.com/', title: 'YouTube', visitCount: 1, lastVisitTime: 150 },
     { url: 'https://www.youtube.com/watch?v=1', visitCount: 8, lastVisitTime: 200 },
     { url: 'https://youtube.com/watch?v=2', visitCount: 4, lastVisitTime: 300 },
     { url: 'https://www.v2ex.com/t/1', visitCount: 5, lastVisitTime: 100 },
@@ -111,8 +118,11 @@ const ranked = rankSites([
 ]);
 assert.equal(ranked.length, 2);
 assert.equal(ranked[0].host, 'youtube.com');
-assert.equal(ranked[0].url, 'https://youtube.com/');
-assert.equal(ranked[0].count, 12);
+assert.equal(ranked[0].url, 'https://www.youtube.com/', '应打开实际访问最多的主机名，而不是强行去掉 www');
+assert.equal(ranked[0].count, 13);
+assert.equal(ranked[0].title, 'YouTube', '首页标题可用时应作为网站名');
+assert.equal(ranked[1].title, 'v2ex.com', '没有首页标题时显示完整域名，而不是只取第一段');
+assert.equal(rankSites([{ url: 'https://news.ycombinator.com/item?id=1', visitCount: 3 }])[0].title, 'news.ycombinator.com');
 
 const opticalSamples = precalculateDisplacements(55, 63, convexSquircle, 1.5, 128);
 assert.equal(opticalSamples.length, 128, '折射场必须覆盖 SVG 颜色通道的 128 个径向取样位置');
@@ -154,6 +164,34 @@ async function testTransactions(): Promise<void> {
 
     const extensionBookmark = await store.addBookmark({ name: '扩展页面', url: extensionPage, icon: '', folder: '全部' });
     assert.equal(extensionBookmark.url, extensionPage, '新增书签应接受 chrome-extension 页面');
+
+    assert.equal('bookmarks' in syncData, false, '保存后应移除旧的单键书签数组');
+    assert.equal(syncData[BOOKMARK_CHUNKS_KEY], 1);
+
+    for (let index = 0; index < 150; index += 1) {
+        await store.addBookmark({ name: `站点 ${index}`, url: `https://site-${index}.example.com/some/longer/path?ref=${index}`, icon: '', folder: '全部' });
+    }
+    const chunkCount = Number(syncData[BOOKMARK_CHUNKS_KEY]);
+    assert.ok(chunkCount > 1, '大量书签必须拆分为多个同步分片');
+    for (let index = 0; index < chunkCount; index += 1) {
+        const key = bookmarkChunkKey(index);
+        const bytes = new TextEncoder().encode(key + JSON.stringify(syncData[key])).length;
+        assert.ok(bytes < 8192, `分片 ${key} 超过 chrome.storage.sync 单项 8KB 上限：${bytes}`);
+    }
+    const reloaded = new AppStore();
+    await reloaded.init();
+    assert.equal(reloaded.state.bookmarks.length, store.state.bookmarks.length, '分片存储读回后书签数量必须一致');
+
+    const trimmed = store.state.bookmarks.filter((bookmark) => String(bookmark.name).startsWith('站点'));
+    for (const bookmark of trimmed) await store.deleteBookmark(bookmark.id);
+    assert.equal(syncData[BOOKMARK_CHUNKS_KEY], 1);
+    assert.equal(bookmarkChunkKey(1) in syncData, false, '书签减少后多余的分片应被清理');
+
+    await assert.rejects(
+        store.addBookmark({ name: 'Big icon', url: 'https://big.example/', icon: `data:image/png;base64,${'A'.repeat(5000)}`, folder: '全部' }),
+        /图标过大/,
+        '过大的内嵌图标会撑爆同步配额，必须拒绝'
+    );
 
     const countBeforeFailure = store.state.bookmarks.length;
     failWrites = true;

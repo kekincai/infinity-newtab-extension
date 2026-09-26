@@ -22,7 +22,7 @@ export function storageSet(
 ): Promise<void> {
     return new Promise((resolve, reject) => {
         area(areaName).set(values, () => {
-            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            if (chrome.runtime.lastError) reject(new Error(describeWriteError(chrome.runtime.lastError.message)));
             else resolve();
         });
     });
@@ -47,4 +47,10 @@ export function storageClear(areaName: StorageAreaName = 'sync'): Promise<void> 
             else resolve();
         });
     });
+}
+
+function describeWriteError(message = ''): string {
+    if (/QUOTA_BYTES/i.test(message)) return 'Chrome 同步空间已满（上限约 100 KB），请删除部分书签或自定义图标后重试';
+    if (/MAX_WRITE_OPERATIONS/i.test(message)) return '操作太频繁，Chrome 暂时限制了同步写入，请稍后再试';
+    return message || '保存失败';
 }

@@ -1,6 +1,8 @@
 export type SearchEngineKey = 'google' | 'bing' | 'baidu' | 'duckduckgo';
 export type WallpaperType = 'gradient' | 'preset' | 'local' | 'video';
-export type Theme = 'light' | 'dark';
+/** `light` renders dark text for bright wallpapers; `auto` follows the wallpaper brightness. */
+export type Theme = 'auto' | 'light' | 'dark';
+export type ResolvedTheme = Exclude<Theme, 'auto'>;
 
 export interface LayoutSettings {
     showClock: boolean;
@@ -8,6 +10,7 @@ export interface LayoutSettings {
     showBookmarks: boolean;
     showStatus: boolean;
     showRecent: boolean;
+    openInNewTab: boolean;
     searchEngine: SearchEngineKey;
 }
 

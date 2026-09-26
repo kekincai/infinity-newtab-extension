@@ -1,9 +1,15 @@
-import { DEFAULT_SETTINGS, sanitizeBookmarks, sanitizeSettings } from './backup';
+import { DEFAULT_SETTINGS, MAX_INLINE_ICON_LENGTH, sanitizeBookmarks, sanitizeSettings } from './backup';
+import {
+    LEGACY_BOOKMARKS_KEY,
+    decodeBookmarks,
+    encodeBookmarks,
+    staleBookmarkKeys,
+    storedChunkCount
+} from './bookmark-storage';
 import { storageClear, storageGet, storageRemove, storageSet } from './storage';
 import type { AppSettings, AppState, Bookmark, SettingsSection } from './types';
 import { cleanText, normalizeUrl, sanitizeRemoteUrl } from './utils';
 
-const MANAGED_KEYS = ['bookmarks', 'folders', 'settings', 'recentSearches', 'lastBackupPrompt'] as const;
 export type StoreChangeKey = keyof AppState | `settings.${SettingsSection}`;
 const ALL_CHANGES: StoreChangeKey[] = [
     'bookmarks',
@@ -28,6 +34,8 @@ function initialState(): AppState {
 export class AppStore extends EventTarget {
     private stateValue = initialState();
     private initialized = false;
+    private bookmarkChunks = 0;
+    private hasLegacyBookmarks = false;
 
     get state(): Readonly<AppState> {
         return this.stateValue;
@@ -35,8 +43,10 @@ export class AppStore extends EventTarget {
 
     async init(force = false): Promise<void> {
         if (this.initialized && !force) return;
-        const stored = await storageGet<Record<string, unknown>>([...MANAGED_KEYS]);
-        const bookmarks = sanitizeBookmarks(Array.isArray(stored.bookmarks) ? stored.bookmarks : []);
+        const stored = await storageGet<Record<string, unknown>>(null);
+        this.bookmarkChunks = storedChunkCount(stored);
+        this.hasLegacyBookmarks = LEGACY_BOOKMARKS_KEY in stored;
+        const bookmarks = sanitizeBookmarks(decodeBookmarks(stored));
         const folders = normalizeFolders(stored.folders, bookmarks);
         this.stateValue = {
             bookmarks,
@@ -139,6 +149,12 @@ export class AppStore extends EventTarget {
         }, ['bookmarks']);
     }
 
+    async removeRecentSearch(query: string): Promise<void> {
+        await this.commit((draft) => {
+            draft.recentSearches = draft.recentSearches.filter((item) => item !== query);
+        }, ['recentSearches']);
+    }
+
     async saveRecentSearch(query: string): Promise<void> {
         const value = cleanText(query, 200);
         if (!value) return;
@@ -158,8 +174,9 @@ export class AppStore extends EventTarget {
         next.settings = sanitizeSettings(data.settings);
         next.recentSearches = normalizeRecentSearches(data.recentSearches);
         next.lastBackupPrompt = finiteNumber(data.lastBackupPrompt, 0);
+        const encoded = encodeBookmarks(next.bookmarks);
         const values: Record<string, unknown> = {
-            bookmarks: next.bookmarks,
+            ...encoded.values,
             folders: next.folders,
             settings: next.settings,
             recentSearches: next.recentSearches,
@@ -167,9 +184,13 @@ export class AppStore extends EventTarget {
             ...(Array.isArray(data.todos) ? { todos: data.todos } : {})
         };
         await storageSet(values);
-        const staleKeys = ['bookmarks', 'folders', 'settings', 'todos', 'recentSearches', 'lastBackupPrompt']
-            .filter((key) => !(key in values));
+        const staleKeys = [
+            ...['todos'].filter((key) => !(key in values)),
+            ...staleBookmarkKeys(this.bookmarkChunks, encoded.count, this.hasLegacyBookmarks)
+        ];
         if (staleKeys.length) await storageRemove(staleKeys);
+        this.bookmarkChunks = encoded.count;
+        this.hasLegacyBookmarks = false;
         this.stateValue = next;
         this.initialized = true;
         this.emit(ALL_CHANGES);
@@ -177,6 +198,8 @@ export class AppStore extends EventTarget {
 
     async reset(): Promise<void> {
         await storageClear('sync');
+        this.bookmarkChunks = 0;
+        this.hasLegacyBookmarks = false;
         this.stateValue = initialState();
         this.emit(ALL_CHANGES);
     }
@@ -189,10 +212,33 @@ export class AppStore extends EventTarget {
         const draft = structuredClone(this.stateValue);
         mutator(draft);
         const values: Record<string, unknown> = {};
-        keys.forEach((key) => { values[key] = draft[key]; });
+        let bookmarkChunks: number | null = null;
+        keys.forEach((key) => {
+            if (key !== 'bookmarks') {
+                values[key] = draft[key];
+                return;
+            }
+            const encoded = encodeBookmarks(draft.bookmarks);
+            Object.assign(values, encoded.values);
+            bookmarkChunks = encoded.count;
+        });
         await storageSet(values);
         this.stateValue = draft;
+        if (bookmarkChunks !== null) await this.dropStaleBookmarkKeys(bookmarkChunks);
         this.emit(changes);
+    }
+
+    /** Stale chunks are harmless to readers, so a failed cleanup never rolls back a save. */
+    private async dropStaleBookmarkKeys(nextCount: number): Promise<void> {
+        const stale = staleBookmarkKeys(this.bookmarkChunks, nextCount, this.hasLegacyBookmarks);
+        this.bookmarkChunks = nextCount;
+        if (!stale.length) return;
+        try {
+            await storageRemove(stale);
+            this.hasLegacyBookmarks = false;
+        } catch {
+            // Retried on the next bookmark save.
+        }
     }
 
     private emit(changes: StoreChangeKey[]): void {
@@ -207,13 +253,18 @@ function normalizeBookmarkInput(
 ): Bookmark {
     const url = normalizeUrl(input.url);
     if (!url) throw new Error('请输入有效的网址');
+    if (url.length > 2048) throw new Error('网址过长，无法同步保存');
+    const icon = sanitizeRemoteUrl(input.icon, true);
+    if (icon.startsWith('data:') && icon.length > MAX_INLINE_ICON_LENGTH) {
+        throw new Error('内嵌图标过大，请改用图标网址');
+    }
     const folder = state.folders.includes(input.folder) ? input.folder : '全部';
     return {
         id,
         url,
         folder,
         name: cleanText(input.name, 160) || new URL(url).hostname,
-        icon: sanitizeRemoteUrl(input.icon, true),
+        icon,
         order: state.bookmarks.filter((bookmark) => bookmark.folder === folder && String(bookmark.id) !== String(id)).length
     };
 }
