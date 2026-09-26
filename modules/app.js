@@ -1345,9 +1345,9 @@
           const preview = form.querySelector(".url-preview");
           const error = form.querySelector(".field-error");
           const updatePreview = () => {
-            const custom = iconInput.value.trim();
+            const custom = sanitizeRemoteUrl(iconInput.value.trim(), true);
             const url = normalizeUrl(urlInput.value);
-            preview.src = custom.startsWith("https://") || custom.startsWith("data:image/") ? custom : url ? faviconUrl(url, 64) : DEFAULT_ICON;
+            preview.src = custom || (url ? faviconUrl(url, 64) : DEFAULT_ICON);
           };
           preview.addEventListener("error", () => {
             preview.src = DEFAULT_ICON;

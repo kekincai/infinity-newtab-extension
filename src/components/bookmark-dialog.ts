@@ -1,6 +1,6 @@
 import { appStore } from '../core/store';
 import type { Bookmark } from '../core/types';
-import { DEFAULT_ICON, escapeHtml, faviconUrl, normalizeUrl } from '../core/utils';
+import { DEFAULT_ICON, escapeHtml, faviconUrl, normalizeUrl, sanitizeRemoteUrl } from '../core/utils';
 import { ICONS } from './icons';
 import { notifyError, pushLayer } from './ui-layer';
 
@@ -72,9 +72,10 @@ export class BookmarkDialog extends HTMLElement {
         const preview = form.querySelector<HTMLImageElement>('.url-preview')!;
         const error = form.querySelector<HTMLElement>('.field-error')!;
         const updatePreview = () => {
-            const custom = iconInput.value.trim();
+            // Only parsed https: or data:image URLs reach the preview, same rule as saving.
+            const custom = sanitizeRemoteUrl(iconInput.value.trim(), true);
             const url = normalizeUrl(urlInput.value);
-            preview.src = custom.startsWith('https://') || custom.startsWith('data:image/') ? custom : url ? faviconUrl(url, 64) : DEFAULT_ICON;
+            preview.src = custom || (url ? faviconUrl(url, 64) : DEFAULT_ICON);
         };
         preview.addEventListener('error', () => { preview.src = DEFAULT_ICON; });
         updatePreview();
