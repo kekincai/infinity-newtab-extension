@@ -280,18 +280,24 @@ status-strip {
 
 .app-shell {
     display: flex;
-    width: min(100% - 48px, 1040px);
+    width: min(100% - 64px, 1680px);
+    height: 100vh;
+    min-height: 640px;
     flex-direction: column;
-    gap: clamp(28px, 5vh, 48px);
+    gap: clamp(20px, 3.5vh, 36px);
     margin: 0 auto;
-    padding: clamp(88px, 16vh, 168px) 0 64px;
+    padding: clamp(56px, 8vh, 96px) 0 28px;
 }
 
 .hero {
+    /* Above the launchpad so the search suggestions can overlap it. */
+    position: relative;
+    z-index: 20;
     display: flex;
+    flex: none;
     flex-direction: column;
     align-items: center;
-    gap: 26px;
+    gap: clamp(16px, 2.6vh, 26px);
     text-shadow: var(--wallpaper-text-shadow);
 }
 
@@ -303,7 +309,7 @@ dashboard-header {
 }
 
 .hero-time {
-    font-size: clamp(64px, 9vw, 108px);
+    font-size: clamp(56px, min(8vw, 11vh), 104px);
     font-variant-numeric: tabular-nums;
     font-weight: 650;
     letter-spacing: -0.035em;
@@ -319,7 +325,7 @@ dashboard-header {
 
 search-command {
     position: relative;
-    width: min(640px, 100%);
+    width: min(720px, 100%);
     text-shadow: none;
 }
 
@@ -445,67 +451,175 @@ search-command {
 
 /* ---- Launchpad ---------------------------------------------------------- */
 
-.launchpad {
-    padding: 14px 18px 22px;
-    border-radius: 28px;
-}
-
-.launchpad-toolbar {
+bookmark-launchpad {
     display: flex;
-    min-height: 44px;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 12px;
+    min-height: 0;
+    flex: 1;
 }
 
-.launchpad-title,
-.crumb-current {
-    padding-left: 8px;
-    font-size: 15px;
-    font-weight: 700;
+.launchpad {
+    display: grid;
+    width: 100%;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
+    border-radius: 30px;
 }
 
-.view-switch {
-    display: inline-flex;
-    gap: 2px;
-    padding: 3px;
-    border-radius: 999px;
+.launchpad.has-nav {
+    grid-template-columns: 232px minmax(0, 1fr);
+}
+
+/* Sidebar */
+
+.launchpad-nav {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    padding: 18px 12px;
+    border-right: 1px solid var(--line);
     background: var(--faint);
 }
 
-.view-tab {
-    height: 34px;
-    padding: 0 18px;
-    border-radius: 999px;
+.nav-group {
+    display: grid;
+    gap: 2px;
+}
+
+.nav-heading {
+    margin: 18px 12px 6px;
     color: var(--muted);
-    font-size: 13.5px;
+    font-size: 12px;
     font-weight: 700;
-    transition: background 160ms ease, color 160ms ease;
+    letter-spacing: 0.06em;
 }
 
-.view-tab.is-active {
-    background: var(--chip-active);
-    box-shadow: 0 2px 8px rgba(24, 33, 59, 0.1);
-    color: var(--ink);
-}
-
-.breadcrumb {
+.nav-item {
     display: flex;
-    min-width: 0;
+    height: 42px;
     align-items: center;
-    gap: 6px;
+    gap: 11px;
+    padding: 0 12px 0 8px;
+    border-radius: 13px;
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 600;
+    text-align: left;
+    transition: background 140ms ease;
 }
 
-.crumb-current {
+.nav-item:hover {
+    background: var(--faint);
+}
+
+.nav-item.is-active {
+    background: var(--chip-active);
+    box-shadow: 0 2px 10px rgba(24, 33, 59, 0.1);
+}
+
+.nav-icon {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    place-items: center;
+    border-radius: 9px;
+    background: var(--faint-strong);
+    color: var(--muted);
+}
+
+.nav-icon .icon {
+    width: 16px;
+    height: 16px;
+}
+
+.nav-item.is-active .nav-icon {
+    background: var(--accent);
+    color: #fff;
+}
+
+.folder-swatch,
+.nav-item.is-active .folder-swatch {
+    background: color-mix(in srgb, var(--folder-color, var(--pink)) 30%, transparent);
+    color: color-mix(in srgb, var(--folder-color, var(--pink)) 75%, var(--ink));
+}
+
+.nav-item.is-active .folder-swatch {
+    background: var(--folder-color, var(--pink));
+    color: #fff;
+}
+
+.nav-label {
+    min-width: 0;
+    flex: 1;
     overflow: hidden;
-    padding-left: 0;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.crumb-separator {
+.nav-item small {
     color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.nav-add {
+    color: var(--muted);
+}
+
+.nav-add .nav-icon {
+    border: 1.5px dashed var(--faint-strong);
+    background: transparent;
+}
+
+.nav-item.drop-target {
+    outline: 2px dashed var(--focus);
+    outline-offset: -2px;
+    background: color-mix(in srgb, var(--focus) 14%, transparent);
+}
+
+/* Main area */
+
+.launchpad-main {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+}
+
+.launchpad-toolbar {
+    display: flex;
+    min-height: 68px;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 18px 4px 28px;
+}
+
+.launchpad-heading-wrap {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.launchpad-heading {
+    overflow: hidden;
+    font-size: 20px;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.launchpad-count {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
 }
 
 .toolbar-actions {
@@ -537,22 +651,39 @@ search-command {
     color: var(--ink);
 }
 
+.toolbar-button.primary-action {
+    background: var(--faint);
+    color: var(--ink);
+}
+
+.toolbar-button.primary-action:hover {
+    background: var(--faint-strong);
+}
+
 .launchpad-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-    gap: 14px 6px;
+    min-height: 0;
+    flex: 1;
+    grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+    grid-auto-rows: max-content;
+    align-content: start;
+    gap: 10px 4px;
     justify-items: center;
+    overflow-y: auto;
+    padding: 10px 18px 24px;
+    scrollbar-color: var(--faint-strong) transparent;
+    scrollbar-width: thin;
 }
 
 .tile {
     position: relative;
     display: flex;
-    width: 96px;
+    width: 112px;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding: 10px 4px 8px;
-    border-radius: 20px;
+    gap: 10px;
+    padding: 12px 4px 10px;
+    border-radius: 22px;
     color: inherit;
     text-decoration: none;
     cursor: pointer;
@@ -565,23 +696,23 @@ search-command {
 
 .tile-icon {
     display: grid;
-    width: 60px;
-    height: 60px;
+    width: 68px;
+    height: 68px;
     place-items: center;
-    border-radius: 18px;
+    border-radius: 20px;
     background: var(--tile-plate);
-    box-shadow: 0 6px 16px rgba(24, 33, 59, 0.14), inset 0 0 0 1px rgba(24, 33, 59, 0.05);
+    box-shadow: 0 8px 20px rgba(24, 33, 59, 0.14), inset 0 0 0 1px rgba(24, 33, 59, 0.05);
 }
 
 .tile-icon img {
-    width: 34px;
-    height: 34px;
+    width: 40px;
+    height: 40px;
     object-fit: contain;
 }
 
 .tile-icon img.icon-raster {
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
 }
 
 .tile-icon img.icon-unavailable {
@@ -592,37 +723,11 @@ search-command {
     display: block;
     width: 100%;
     overflow: hidden;
-    font-size: 12.5px;
+    font-size: 13px;
     font-weight: 600;
     text-align: center;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.folder-icon {
-    background: color-mix(in srgb, var(--folder-color, var(--pink)) 34%, var(--tile-plate));
-    color: color-mix(in srgb, var(--folder-color, var(--pink)) 70%, #18213b);
-}
-
-.folder-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 20px);
-    gap: 4px;
-}
-
-.folder-mini {
-    display: grid;
-    width: 20px;
-    height: 20px;
-    place-items: center;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.92);
-}
-
-.folder-mini img {
-    width: 14px;
-    height: 14px;
-    object-fit: contain;
 }
 
 .add-tile .tile-icon {
@@ -638,11 +743,11 @@ search-command {
 
 .tile-more {
     position: absolute;
-    top: 2px;
-    right: 8px;
+    top: 4px;
+    right: 12px;
     display: grid;
-    width: 24px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
     place-items: center;
     border-radius: 50%;
     background: var(--glass-fill-strong);
@@ -671,13 +776,9 @@ search-command {
     outline-offset: 3px;
 }
 
-.folder-tile.drop-target .tile-icon {
-    transform: scale(1.08);
-}
-
 .launchpad-message {
     grid-column: 1 / -1;
-    padding: 36px 0;
+    padding: 28px 0;
     color: var(--muted);
     font-size: 14px;
     text-align: center;
@@ -1640,41 +1741,107 @@ liquid-glass-system {
 
 /* ---- Responsive --------------------------------------------------------- */
 
-@media (max-width: 720px) {
+@media (min-width: 1680px) and (min-height: 960px) {
+    .launchpad-grid {
+        grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+    }
+
+    .tile {
+        width: 124px;
+    }
+
+    .tile-icon {
+        width: 76px;
+        height: 76px;
+        border-radius: 22px;
+    }
+
+    .tile-icon img {
+        width: 44px;
+        height: 44px;
+    }
+}
+
+@media (max-width: 900px) {
+    .launchpad.has-nav {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    /* The sidebar folds into one scrollable row of chips. */
+    .launchpad-nav {
+        flex-direction: row;
+        align-items: center;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 10px 12px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+    }
+
+    .nav-group {
+        display: flex;
+        gap: 4px;
+    }
+
+    .nav-heading {
+        display: none;
+    }
+
+    .nav-item {
+        flex: none;
+    }
+
+    .nav-item small {
+        display: none;
+    }
+}
+
+@media (max-width: 640px) {
     .top-bar {
         padding: 14px 16px;
     }
 
     .app-shell {
         width: calc(100% - 24px);
-        padding-top: 84px;
     }
 
     .launchpad {
-        padding: 12px 10px 18px;
         border-radius: 22px;
     }
 
+    .launchpad-toolbar {
+        padding-left: 18px;
+    }
+
     .launchpad-grid {
-        grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+        padding: 6px 8px 18px;
     }
 
     .tile {
-        width: 84px;
+        width: 88px;
     }
 
-    .toolbar-button span {
-        display: none;
+    .tile-icon {
+        width: 60px;
+        height: 60px;
     }
 
+    .toolbar-button span,
     .settings-tab span {
         display: none;
     }
 }
 
-@media (max-height: 760px) {
+/* Short windows: let the page scroll instead of squeezing the launchpad. */
+@media (max-height: 640px) {
     .app-shell {
-        padding-top: 84px;
+        height: auto;
+    }
+
+    .launchpad-grid {
+        overflow: visible;
     }
 }
 

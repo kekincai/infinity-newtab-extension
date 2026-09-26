@@ -1247,6 +1247,7 @@
         shuffle: icon('<path d="M3 7h3.5c2 0 3.2 1 4.3 2.6l2.4 4.8c1.1 1.6 2.3 2.6 4.3 2.6H21M17.5 13.5 21 17l-3.5 3.5M3 17h3.5c1.2 0 2.1-.4 2.9-1.1M14.6 8.1c.8-.7 1.7-1.1 2.9-1.1H21M17.5 3.5 21 7l-3.5 3.5"></path>'),
         search: icon('<circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path>'),
         plus: icon('<path d="M12 5v14M5 12h14"></path>'),
+        folder: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path>'),
         folderPlus: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path><path d="M12 11v5M9.5 13.5h5"></path>'),
         back: icon('<path d="M15 5 8 12l7 7"></path>'),
         more: icon('<circle cx="6" cy="12" r="1.2"></circle><circle cx="12" cy="12" r="1.2"></circle><circle cx="18" cy="12" r="1.2"></circle>'),
@@ -1447,10 +1448,6 @@
   });
 
   // src/components/bookmark-launchpad.ts
-  function viewButton(view, label, active) {
-    const selected = view === active;
-    return `<button type="button" role="tab" class="view-tab ${selected ? "is-active" : ""}" data-view="${view}" aria-selected="${selected}" tabindex="${selected ? 0 : -1}" data-liquid-item>${label}</button>`;
-  }
   function readView() {
     try {
       return localStorage.getItem(VIEW_KEY) === "recent" ? "recent" : "bookmarks";
@@ -1502,6 +1499,8 @@
         currentFolder = ROOT;
         view = readView();
         draggingId = null;
+        /** Store-driven re-renders keep the grid scroll position; navigation resets it. */
+        keepScroll = true;
         recent = { sites: [], state: "idle", error: "" };
         render() {
           const { folders, settings } = appStore.state;
@@ -1518,59 +1517,85 @@
             this.recent.state = "loading";
             void this.fetchRecent();
           }
+          const scroll = this.querySelector(".launchpad-grid")?.scrollTop ?? 0;
           this.innerHTML = `
-            <section class="launchpad glass-panel" aria-label="\u542F\u52A8\u53F0">
-                <header class="launchpad-toolbar">
-                    ${this.leadingTemplate(showBookmarks, showRecent)}
-                    <div class="toolbar-actions">${this.actionsTemplate()}</div>
-                </header>
-                <div class="launchpad-grid" data-view="${this.view}">
-                    ${this.view === "recent" ? this.recentTemplate() : this.bookmarksTemplate()}
+            <section class="launchpad glass-panel ${showBookmarks ? "has-nav" : ""}" aria-label="\u542F\u52A8\u53F0">
+                ${showBookmarks ? this.navTemplate(showRecent) : ""}
+                <div class="launchpad-main">
+                    <header class="launchpad-toolbar">
+                        ${this.headingTemplate()}
+                        <div class="toolbar-actions">${this.actionsTemplate()}</div>
+                    </header>
+                    <div class="launchpad-grid" data-view="${this.view}">
+                        ${this.view === "recent" ? this.recentTemplate() : this.bookmarksTemplate()}
+                    </div>
                 </div>
             </section>
         `;
+          const grid = this.querySelector(".launchpad-grid");
+          if (grid && this.keepScroll) grid.scrollTop = scroll;
+          this.keepScroll = true;
           this.bindEvents();
         }
-        leadingTemplate(showBookmarks, showRecent) {
-          if (this.view === "bookmarks" && this.currentFolder !== ROOT) {
+        /** Sidebar: the two views on top, folders below; every folder is also a drop target. */
+        navTemplate(showRecent) {
+          const { bookmarks, folders } = appStore.state;
+          const count = (folder) => bookmarks.filter((bookmark) => bookmark.folder === folder).length;
+          const rootActive = this.view === "bookmarks" && this.currentFolder === ROOT;
+          return `
+            <nav class="launchpad-nav" aria-label="\u4E66\u7B7E\u5206\u7EC4">
+                <div class="nav-group">
+                    <button class="nav-item ${rootActive ? "is-active" : ""}" type="button" data-folder="${ROOT}" data-drop-folder="${ROOT}" data-liquid-item ${rootActive ? 'aria-current="page"' : ""}>
+                        <span class="nav-icon">${ICONS.bookmark}</span><span class="nav-label">\u4E66\u7B7E</span><small>${count(ROOT)}</small>
+                    </button>
+                    ${showRecent ? `
+                    <button class="nav-item ${this.view === "recent" ? "is-active" : ""}" type="button" data-view="recent" data-liquid-item ${this.view === "recent" ? 'aria-current="page"' : ""}>
+                        <span class="nav-icon">${ICONS.pulse}</span><span class="nav-label">\u5E38\u8BBF\u95EE</span>
+                    </button>` : ""}
+                </div>
+                <h3 class="nav-heading">\u6587\u4EF6\u5939</h3>
+                <div class="nav-group nav-folders">
+                    ${folders.filter((folder) => folder !== ROOT).map((folder, index) => {
+            const active = this.view === "bookmarks" && this.currentFolder === folder;
             return `
-                <nav class="breadcrumb" aria-label="\u6587\u4EF6\u5939\u8DEF\u5F84">
-                    <button class="toolbar-button crumb-back" type="button" data-liquid-item data-drop-folder="${ROOT}" title="\u8FD4\u56DE\u5168\u90E8\uFF08\u4E5F\u53EF\u628A\u4E66\u7B7E\u62D6\u5230\u8FD9\u91CC\u79FB\u51FA\u6587\u4EF6\u5939\uFF09">${ICONS.back}<span>${ROOT}</span></button>
-                    <span class="crumb-separator" aria-hidden="true">/</span>
-                    <h2 class="crumb-current">${escapeHtml(this.currentFolder)}</h2>
-                </nav>`;
+                    <button class="nav-item nav-folder ${active ? "is-active" : ""}" type="button" data-folder="${escapeHtml(folder)}" data-drop-folder="${escapeHtml(folder)}" data-liquid-item
+                        style="--folder-color:${FOLDER_COLORS[index % FOLDER_COLORS.length]}" ${active ? 'aria-current="page"' : ""}>
+                        <span class="nav-icon folder-swatch">${ICONS.folder}</span><span class="nav-label">${escapeHtml(folder)}</span><small>${count(folder)}</small>
+                    </button>`;
+          }).join("")}
+                    <button class="nav-item nav-add create-folder" type="button" data-liquid-item>
+                        <span class="nav-icon">${ICONS.plus}</span><span class="nav-label">\u65B0\u5EFA\u6587\u4EF6\u5939</span>
+                    </button>
+                </div>
+            </nav>`;
+        }
+        headingTemplate() {
+          if (this.view === "recent") {
+            return '<div class="launchpad-heading-wrap"><h2 class="launchpad-heading">\u5E38\u8BBF\u95EE</h2><span class="launchpad-count">\u6700\u8FD1 30 \u5929</span></div>';
           }
-          if (showBookmarks && showRecent) {
-            return `
-                <div class="view-switch" role="tablist" aria-label="\u542F\u52A8\u53F0\u89C6\u56FE">
-                    ${viewButton("bookmarks", "\u4E66\u7B7E", this.view)}
-                    ${viewButton("recent", "\u5E38\u8BBF\u95EE", this.view)}
-                </div>`;
-          }
-          return `<h2 class="launchpad-title">${showBookmarks ? "\u4E66\u7B7E" : "\u5E38\u8BBF\u95EE"}</h2>`;
+          const count = appStore.state.bookmarks.filter((bookmark) => bookmark.folder === this.currentFolder).length;
+          const title = this.currentFolder === ROOT ? "\u4E66\u7B7E" : this.currentFolder;
+          return `<div class="launchpad-heading-wrap"><h2 class="launchpad-heading">${escapeHtml(title)}</h2><span class="launchpad-count">${count} \u4E2A</span></div>`;
         }
         actionsTemplate() {
           if (this.view === "recent") {
             return `<button class="toolbar-button refresh-recent" type="button" data-liquid-item title="\u91CD\u65B0\u8BFB\u53D6\u6D4F\u89C8\u8BB0\u5F55">${ICONS.refresh}<span>\u5237\u65B0</span></button>`;
           }
-          if (this.currentFolder !== ROOT) {
-            return `
-                <button class="toolbar-button rename-current" type="button" data-liquid-item>${ICONS.edit}<span>\u91CD\u547D\u540D</span></button>
-                <button class="toolbar-button delete-current" type="button" data-liquid-item>${ICONS.trash}<span>\u5220\u9664\u6587\u4EF6\u5939</span></button>`;
-          }
-          return `<button class="toolbar-button create-folder" type="button" data-liquid-item>${ICONS.folderPlus}<span>\u65B0\u5EFA\u6587\u4EF6\u5939</span></button>`;
+          const folderActions = this.currentFolder === ROOT ? "" : `
+            <button class="toolbar-button rename-current" type="button" data-liquid-item>${ICONS.edit}<span>\u91CD\u547D\u540D</span></button>
+            <button class="toolbar-button delete-current" type="button" data-liquid-item>${ICONS.trash}<span>\u5220\u9664\u6587\u4EF6\u5939</span></button>`;
+          return `${folderActions}<button class="toolbar-button primary-action add-bookmark-action" type="button" data-liquid-item>${ICONS.plus}<span>\u6DFB\u52A0\u4E66\u7B7E</span></button>`;
         }
         bookmarksTemplate() {
-          const { bookmarks, folders } = appStore.state;
-          const visible = bookmarks.filter((bookmark) => bookmark.folder === this.currentFolder).sort(compareBookmarks2);
-          const folderTiles = this.currentFolder === ROOT ? folders.filter((folder) => folder !== ROOT).map((folder, index) => this.folderTemplate(folder, index)).join("") : "";
+          const visible = appStore.state.bookmarks.filter((bookmark) => bookmark.folder === this.currentFolder).sort(compareBookmarks2);
+          const empty = !visible.length ? `<p class="launchpad-message">${this.currentFolder === ROOT ? "\u8FD8\u6CA1\u6709\u4E66\u7B7E\uFF0C\u70B9\u51FB\u4E0B\u65B9\u52A0\u53F7\u6DFB\u52A0\u7B2C\u4E00\u4E2A" : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\uFF0C\u53EF\u4EE5\u628A\u4E66\u7B7E\u62D6\u5230\u5DE6\u4FA7\u7684\u6587\u4EF6\u5939\u4E0A"}</p>` : "";
           return `
-            ${folderTiles}
             ${visible.map((bookmark) => this.bookmarkTemplate(bookmark)).join("")}
             <button class="tile add-tile add-bookmark" type="button" data-liquid-item>
                 <span class="tile-icon">${ICONS.plus}</span>
                 <span class="tile-name">\u6DFB\u52A0\u4E66\u7B7E</span>
             </button>
+            ${empty}
         `;
         }
         bookmarkTemplate(bookmark) {
@@ -1579,22 +1604,10 @@
           return `
             <a class="tile bookmark-tile" href="${escapeHtml(bookmark.url)}" ${newTab ? 'target="_blank"' : ""} rel="noopener noreferrer"
                 data-bookmark-id="${escapeHtml(bookmark.id)}" data-liquid-item draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
-                <span class="tile-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="56px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" data-icon-raster="${bookmarkIconIsRaster(bookmark)}" alt="" decoding="async"></span>
+                <span class="tile-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="64px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" data-icon-raster="${bookmarkIconIsRaster(bookmark)}" alt="" decoding="async"></span>
                 <span class="tile-name">${escapeHtml(name)}</span>
                 <button class="tile-more" type="button" tabindex="-1" aria-label="\u4E66\u7B7E\u64CD\u4F5C">${ICONS.more}</button>
             </a>
-        `;
-        }
-        folderTemplate(folder, index) {
-          const bookmarks = appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks2);
-          const previews = bookmarks.slice(0, 4).map((bookmark) => `<span class="folder-mini"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="20px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" alt="" loading="lazy" decoding="async"></span>`).join("");
-          return `
-            <div class="tile folder-tile" tabindex="0" role="button" data-folder="${escapeHtml(folder)}" data-drop-folder="${escapeHtml(folder)}" data-liquid-item
-                style="--folder-color:${FOLDER_COLORS[index % FOLDER_COLORS.length]}" aria-label="\u6587\u4EF6\u5939 ${escapeHtml(folder)}\uFF0C${bookmarks.length} \u4E2A\u4E66\u7B7E">
-                <span class="tile-icon folder-icon">${previews ? `<span class="folder-grid">${previews}</span>` : ICONS.bookmark}</span>
-                <span class="tile-name">${escapeHtml(folder)}</span>
-                <button class="tile-more" type="button" tabindex="-1" aria-label="\u6587\u4EF6\u5939\u64CD\u4F5C">${ICONS.more}</button>
-            </div>
         `;
         }
         recentTemplate() {
@@ -1604,43 +1617,35 @@
           const newTab = appStore.state.settings.layout.openInNewTab;
           return this.recent.sites.map((site, index) => `
             <a class="tile recent-tile" href="${escapeHtml(site.url)}" ${newTab ? 'target="_blank"' : ""} rel="noopener noreferrer" data-recent-index="${index}" data-liquid-item title="${escapeHtml(site.host)}">
-                <span class="tile-icon"><img src="${escapeHtml(faviconUrl(site.url))}" srcset="${escapeHtml(faviconSrcSet(site.url))}" sizes="56px" alt="" loading="lazy" decoding="async"></span>
+                <span class="tile-icon"><img src="${escapeHtml(faviconUrl(site.url))}" srcset="${escapeHtml(faviconSrcSet(site.url))}" sizes="64px" alt="" loading="lazy" decoding="async"></span>
                 <span class="tile-name">${escapeHtml(site.title)}</span>
             </a>
         `).join("");
         }
         bindEvents() {
-          this.querySelectorAll("[data-view]").forEach((button) => {
+          this.querySelectorAll(".nav-item[data-view]").forEach((button) => {
             button.addEventListener("click", () => this.setView(button.dataset.view));
           });
-          this.querySelector(".view-switch")?.addEventListener("keydown", (event) => {
-            const key = event.key;
-            if (key !== "ArrowLeft" && key !== "ArrowRight") return;
-            this.setView(this.view === "bookmarks" ? "recent" : "bookmarks");
-            this.querySelector(`[data-view="${this.view}"]`)?.focus();
+          this.querySelectorAll(".nav-item[data-folder]").forEach((button) => {
+            button.addEventListener("click", () => this.openFolder(button.dataset.folder ?? ROOT));
           });
-          this.querySelector(".crumb-back")?.addEventListener("click", () => this.openFolder(ROOT));
+          this.querySelector(".launchpad-nav")?.addEventListener("keydown", (event) => {
+            const key = event.key;
+            if (key !== "ArrowDown" && key !== "ArrowUp") return;
+            const items = [...this.querySelectorAll(".nav-item")];
+            const index = items.indexOf(document.activeElement);
+            if (index < 0) return;
+            event.preventDefault();
+            items[(index + (key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+          });
           this.querySelector(".create-folder")?.addEventListener("click", () => void this.createFolder());
           this.querySelector(".rename-current")?.addEventListener("click", () => void this.renameFolder(this.currentFolder));
           this.querySelector(".delete-current")?.addEventListener("click", () => void this.deleteFolder(this.currentFolder));
           this.querySelector(".refresh-recent")?.addEventListener("click", () => void this.loadRecent());
-          this.querySelector(".add-bookmark")?.addEventListener("click", () => this.openDialog());
-          this.querySelectorAll(".bookmark-tile img, .folder-tile img").forEach((image) => bindIconFallback(image));
+          this.querySelectorAll(".add-bookmark, .add-bookmark-action").forEach((button) => button.addEventListener("click", () => this.openDialog()));
+          this.querySelectorAll(".bookmark-tile img").forEach((image) => bindIconFallback(image));
           this.querySelectorAll(".recent-tile img").forEach((image) => {
             image.addEventListener("error", () => image.classList.add("icon-unavailable"), { once: true });
-          });
-          this.querySelectorAll(".folder-tile").forEach((card) => {
-            const folder = card.dataset.folder ?? ROOT;
-            card.addEventListener("click", (event) => {
-              if (event.target.closest(".tile-more")) return;
-              this.openFolder(folder);
-            });
-            card.addEventListener("keydown", (event) => {
-              if (event.target === card && (event.key === "Enter" || event.key === " ")) {
-                event.preventDefault();
-                this.openFolder(folder);
-              }
-            });
           });
           this.querySelectorAll(".bookmark-tile").forEach((card) => this.bindBookmark(card));
           this.querySelectorAll("[data-drop-folder]").forEach((target) => this.bindFolderDrop(target));
@@ -1663,14 +1668,15 @@
           });
           this.querySelector(".launchpad")?.addEventListener("contextmenu", (event) => {
             const mouse = event;
-            const tile = mouse.target.closest(".tile");
-            if (tile?.classList.contains("add-tile")) return;
+            const target = mouse.target;
+            const tile = target.closest(".tile, .nav-folder");
+            if (tile?.classList.contains("add-tile") || !tile && target.closest(".launchpad-nav")) return;
             event.preventDefault();
-            const at = mouse.clientX || mouse.clientY ? { x: mouse.clientX, y: mouse.clientY } : tile ?? mouse.target;
+            const at = mouse.clientX || mouse.clientY ? { x: mouse.clientX, y: mouse.clientY } : tile ?? target;
             if (tile) this.openTileMenu(tile, at);
             else if (this.view === "bookmarks") this.openMenuFor([
               { label: "\u6DFB\u52A0\u4E66\u7B7E", icon: ICONS.plus, action: () => this.openDialog() },
-              ...this.currentFolder === ROOT ? [{ label: "\u65B0\u5EFA\u6587\u4EF6\u5939", icon: ICONS.folderPlus, action: () => void this.createFolder() }] : []
+              { label: "\u65B0\u5EFA\u6587\u4EF6\u5939", icon: ICONS.folderPlus, action: () => void this.createFolder() }
             ], at);
           });
         }
@@ -1728,6 +1734,7 @@
         openTileMenu(tile, at) {
           if (tile.dataset.folder) {
             const folder = tile.dataset.folder;
+            if (folder === ROOT) return;
             this.openMenuFor([
               { label: "\u6253\u5F00", icon: ICONS.open, action: () => this.openFolder(folder) },
               { label: "\u91CD\u547D\u540D", icon: ICONS.edit, action: () => void this.renameFolder(folder) },
@@ -1770,13 +1777,24 @@
             localStorage.setItem(VIEW_KEY, view);
           } catch {
           }
+          this.keepScroll = false;
           this.render();
+          this.querySelector(".nav-item.is-active")?.focus({ preventScroll: true });
         }
         openFolder(folder) {
+          const changed = this.currentFolder !== folder || this.view !== "bookmarks";
           this.currentFolder = folder;
+          if (this.view !== "bookmarks") {
+            this.view = "bookmarks";
+            try {
+              localStorage.setItem(VIEW_KEY, "bookmarks");
+            } catch {
+            }
+          }
+          if (!changed) return;
+          this.keepScroll = false;
           this.render();
-          const focusTarget = folder === ROOT ? ".create-folder" : ".crumb-back";
-          this.querySelector(focusTarget)?.focus({ preventScroll: true });
+          this.querySelector(".nav-item.is-active")?.focus({ preventScroll: true });
         }
         openDialog(bookmark, draft) {
           this.dispatchEvent(new CustomEvent("open-bookmark-dialog", {

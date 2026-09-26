@@ -208,7 +208,7 @@ async function expectRenderedRefraction(page, locator) {
 }
 
 async function showRecent(page) {
-    await page.locator('.view-tab[data-view="recent"]').click();
+    await page.locator('.nav-item[data-view="recent"]').click();
     await expect(page.locator('.recent-tile').first()).toBeVisible();
 }
 
@@ -222,8 +222,8 @@ test('renders the TypeScript Web Component home screen', async ({ page }) => {
     const errors = await openExtension(page);
     await expect(page).toHaveTitle('Infinity New Tab');
     await expect(page.locator('infinity-newtab-app')).toHaveCount(1);
-    await expect(page.locator('.view-tab[data-view="bookmarks"]')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.locator('.folder-tile[data-folder="POM"]')).toHaveCount(1);
+    await expect(page.locator('.nav-item[data-folder="全部"]')).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('.nav-folder[data-folder="POM"]')).toHaveCount(1);
     await expect(page.locator('.battery-chip')).toContainText('82%');
     await expect(page.locator('.cpu-chip, .memory-chip')).toHaveCount(0);
     await expect(page.locator('.is-media, .is-download')).toHaveCount(0);
@@ -232,7 +232,7 @@ test('renders the TypeScript Web Component home screen', async ({ page }) => {
     await expect(page.locator('.launchpad-grid')).toContainText('youtube.com');
     await expect(page.locator('.launchpad-grid')).not.toContainText('google');
     await page.reload();
-    await expect(page.locator('.view-tab[data-view="recent"]')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.nav-item[data-view="recent"]')).toHaveAttribute('aria-current', 'page');
     await expect(page.locator('liquid-glass-system')).toHaveCount(1);
     const coverage = await page.evaluate(() => {
         const items = [...document.querySelectorAll('[data-liquid-item]')];
@@ -281,12 +281,12 @@ test('uses one empty article precision lens over every real component', async ({
     const secondAction = await inspectArticleFilter(page, page.locator('.settings-trigger'));
     expect(secondAction.id).toBeTruthy();
 
-    const folder = await inspectArticleFilter(page, page.locator('.folder-tile[data-folder="POM"]'));
+    const folder = await inspectArticleFilter(page, page.locator('.nav-folder[data-folder="POM"]'));
     const bookmark = await inspectArticleFilter(page, page.locator('.bookmark-tile[data-bookmark-id="1"]'));
     expect(bookmark.id).toBeTruthy();
 
     await inspectArticleFilter(page, page.locator('.add-bookmark'));
-    await inspectArticleFilter(page, page.locator('.view-tab[data-view="recent"]'));
+    await inspectArticleFilter(page, page.locator('.nav-item[data-view="recent"]'));
     await inspectArticleFilter(page, page.locator('.search-shell'));
 
     await page.mouse.move(720, 990);
@@ -301,10 +301,10 @@ test('renders real refraction pixels on hover', async ({ page }) => {
     await page.addStyleTag({ content: `
         body { background: repeating-linear-gradient(90deg, #101828 0 8px, #ff3f9f 8px 16px, #61d8ff 16px 24px) !important; }
         wallpaper-surface { display: none !important; }
-        .search-shell, .folder-tile { transform: none !important; transition: none !important; }
+        .search-shell, .nav-folder { transform: none !important; transition: none !important; }
     ` });
     await expectRenderedRefraction(page, page.locator('.search-shell'));
-    await expectRenderedRefraction(page, page.locator('.folder-tile[data-folder="POM"]'));
+    await expectRenderedRefraction(page, page.locator('.nav-folder[data-folder="POM"]'));
     expect(errors).toEqual([]);
 });
 
@@ -375,7 +375,7 @@ test('does not jump the glass lens to another row when the last row has no neigh
     // Fill exactly one grid row plus one tile so the last row holds a single item.
     const columns = await page.locator('.launchpad-grid').evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(' ').length);
     seed.bookmarks = [
-        ...Array.from({ length: columns - 1 }, (_, index) => ({
+        ...Array.from({ length: columns }, (_, index) => ({
             id: index + 1,
             name: `Site ${index + 1}`,
             url: `https://site-${index + 1}.example.com/`,
@@ -387,7 +387,7 @@ test('does not jump the glass lens to another row when the last row has no neigh
     ];
     await page.evaluate((bookmarks) => new Promise((resolve) => chrome.storage.sync.set({ bookmarks }, resolve)), seed.bookmarks);
     await page.reload();
-    await expect(page.locator('.bookmark-tile')).toHaveCount(columns - 1);
+    await expect(page.locator('.bookmark-tile')).toHaveCount(columns);
     errors = [];
     const items = page.locator('.launchpad-grid > [data-liquid-item]');
     const rows = await items.evaluateAll((elements) => {
@@ -421,13 +421,13 @@ test('does not jump the glass lens to another row when the last row has no neigh
 
 test('moves and reorders bookmarks without duplication', async ({ page }) => {
     const errors = await openExtension(page);
-    await page.locator('.bookmark-tile[data-bookmark-id="1"]').dragTo(page.locator('.folder-tile[data-folder="POM"]'));
+    await page.locator('.bookmark-tile[data-bookmark-id="1"]').dragTo(page.locator('.nav-folder[data-folder="POM"]'));
     await expect(page.locator('.bookmark-tile')).toHaveCount(1);
     let stored = await page.evaluate(() => window.__readMockSync());
     expect(stored.bookmarks).toHaveLength(3);
     expect(stored.bookmarks.find((bookmark) => String(bookmark.id) === '1').folder).toBe('POM');
 
-    await page.locator('.folder-tile[data-folder="POM"]').click();
+    await page.locator('.nav-folder[data-folder="POM"]').click();
     await expect(page.locator('.bookmark-tile')).toHaveCount(2);
     await page.locator('.bookmark-tile[data-bookmark-id="3"]').dragTo(page.locator('.bookmark-tile[data-bookmark-id="1"]'));
     stored = await page.evaluate(() => window.__readMockSync());
@@ -681,14 +681,14 @@ test('manages bookmarks and folders through the context menu and in-page dialogs
     const prompt = page.getByRole('alertdialog');
     await prompt.locator('input').fill('阅读');
     await prompt.getByRole('button', { name: '创建' }).click();
-    await expect(page.locator('.folder-tile[data-folder="阅读"]')).toHaveCount(1);
+    await expect(page.locator('.nav-folder[data-folder="阅读"]')).toHaveCount(1);
 
-    await page.locator('.folder-tile[data-folder="POM"]').click();
-    await expect(page.locator('.crumb-current')).toHaveText('POM');
+    await page.locator('.nav-folder[data-folder="POM"]').click();
+    await expect(page.locator('.launchpad-heading')).toHaveText('POM');
     await page.locator('.rename-current').click();
     await page.getByRole('alertdialog').locator('input').fill('收藏');
     await page.getByRole('alertdialog').getByRole('button', { name: '保存' }).click();
-    await expect(page.locator('.crumb-current')).toHaveText('收藏');
+    await expect(page.locator('.launchpad-heading')).toHaveText('收藏');
     await expect(page.locator('.bookmark-tile')).toHaveCount(2);
 
     await page.locator('.bookmark-tile[data-bookmark-id="3"] .tile-more').click({ force: true });
@@ -696,8 +696,9 @@ test('manages bookmarks and folders through the context menu and in-page dialogs
     await page.getByRole('alertdialog').getByRole('button', { name: '删除' }).click();
     await expect(page.locator('.bookmark-tile')).toHaveCount(1);
 
-    await page.locator('.crumb-back').click();
-    await expect(page.locator('.folder-tile[data-folder="收藏"]')).toHaveCount(1);
+    await page.locator('.nav-item[data-folder="全部"]').click();
+    await expect(page.locator('.launchpad-heading')).toHaveText('书签');
+    await expect(page.locator('.nav-folder[data-folder="收藏"]')).toHaveCount(1);
     expect(errors).toEqual([]);
 });
 
