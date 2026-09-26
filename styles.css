@@ -31,6 +31,8 @@
     --specular-bloom: rgba(255, 255, 255, 0.52);
     --panel-shadow: 0 18px 50px rgba(40, 56, 98, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.7);
     --wallpaper-text-shadow: 0 1px 2px rgba(255, 255, 255, 0.7), 0 0 18px rgba(255, 255, 255, 0.55);
+    /* Tighter halo for small labels sitting directly on busy wallpapers. */
+    --label-shadow: 0 0 2px rgba(255, 255, 255, 0.95), 0 0 6px rgba(255, 255, 255, 0.8), 0 1px 10px rgba(255, 255, 255, 0.6);
     --font: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
 }
 
@@ -52,6 +54,7 @@ body.theme-dark {
     --specular-bloom: rgba(255, 255, 255, 0.48);
     --panel-shadow: 0 18px 50px rgba(4, 8, 20, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.12);
     --wallpaper-text-shadow: 0 1px 3px rgba(4, 8, 20, 0.7), 0 0 20px rgba(4, 8, 20, 0.5);
+    --label-shadow: 0 0 2px rgba(4, 8, 20, 0.9), 0 1px 4px rgba(4, 8, 20, 0.75), 0 0 10px rgba(4, 8, 20, 0.5);
 }
 
 html,
@@ -457,30 +460,33 @@ bookmark-launchpad {
     flex: 1;
 }
 
+/* Like an iPhone home screen: a floating glass dock beside icons that sit
+   straight on the wallpaper. */
 .launchpad {
     display: grid;
     width: 100%;
     min-height: 0;
     grid-template-columns: minmax(0, 1fr);
-    overflow: hidden;
-    border-radius: 30px;
+    gap: clamp(16px, 2vw, 32px);
 }
 
 .launchpad.has-nav {
     grid-template-columns: 232px minmax(0, 1fr);
 }
 
-/* Sidebar */
+/* Dock */
 
 .launchpad-nav {
     display: flex;
+    max-height: 100%;
     min-height: 0;
+    align-self: start;
     flex-direction: column;
     gap: 4px;
     overflow-y: auto;
-    padding: 18px 12px;
-    border-right: 1px solid var(--line);
-    background: var(--faint);
+    padding: 14px 10px;
+    border-radius: 28px;
+    scrollbar-width: none;
 }
 
 .nav-group {
@@ -592,12 +598,13 @@ bookmark-launchpad {
 
 .launchpad-toolbar {
     display: flex;
-    min-height: 68px;
+    min-height: 56px;
     flex: none;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 12px 18px 4px 28px;
+    padding: 0 4px 4px 16px;
+    text-shadow: var(--label-shadow);
 }
 
 .launchpad-heading-wrap {
@@ -632,13 +639,18 @@ bookmark-launchpad {
     height: 36px;
     align-items: center;
     gap: 7px;
-    padding: 0 13px;
-    border-radius: 12px;
-    color: var(--muted);
+    padding: 0 14px;
+    border: 1px solid var(--glass-line);
+    border-radius: 999px;
+    background: var(--glass-fill);
+    color: var(--ink);
     font-size: 13px;
     font-weight: 650;
+    text-shadow: none;
     white-space: nowrap;
-    transition: background 140ms ease, color 140ms ease;
+    backdrop-filter: blur(18px) saturate(1.4);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    transition: background 140ms ease;
 }
 
 .toolbar-button .icon {
@@ -647,17 +659,7 @@ bookmark-launchpad {
 }
 
 .toolbar-button:hover {
-    background: var(--faint);
-    color: var(--ink);
-}
-
-.toolbar-button.primary-action {
-    background: var(--faint);
-    color: var(--ink);
-}
-
-.toolbar-button.primary-action:hover {
-    background: var(--faint-strong);
+    background: var(--glass-fill-strong);
 }
 
 .launchpad-grid {
@@ -670,7 +672,9 @@ bookmark-launchpad {
     gap: 10px 4px;
     justify-items: center;
     overflow-y: auto;
-    padding: 10px 18px 24px;
+    padding: 8px 0 40px;
+    /* Fade the last row into the wallpaper so it reads as scrollable. */
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
     scrollbar-color: var(--faint-strong) transparent;
     scrollbar-width: thin;
 }
@@ -727,18 +731,17 @@ bookmark-launchpad {
     font-weight: 600;
     text-align: center;
     text-overflow: ellipsis;
+    text-shadow: var(--label-shadow);
     white-space: nowrap;
 }
 
 .add-tile .tile-icon {
-    border: 1.5px dashed var(--faint-strong);
-    background: var(--faint);
+    border: 1.5px dashed var(--glass-line);
+    background: var(--glass-fill);
     box-shadow: none;
-    color: var(--muted);
-}
-
-.add-tile .tile-name {
-    color: var(--muted);
+    color: var(--ink);
+    backdrop-filter: blur(18px) saturate(1.4);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
 }
 
 .tile-more {
@@ -779,7 +782,8 @@ bookmark-launchpad {
 .launchpad-message {
     grid-column: 1 / -1;
     padding: 28px 0;
-    color: var(--muted);
+    color: var(--ink);
+    text-shadow: var(--wallpaper-text-shadow);
     font-size: 14px;
     text-align: center;
 }
@@ -1770,13 +1774,14 @@ liquid-glass-system {
 
     /* The sidebar folds into one scrollable row of chips. */
     .launchpad-nav {
+        max-width: 100%;
         flex-direction: row;
         align-items: center;
+        justify-self: start;
         overflow-x: auto;
         overflow-y: hidden;
-        padding: 10px 12px;
-        border-right: 0;
-        border-bottom: 1px solid var(--line);
+        padding: 6px;
+        border-radius: 22px;
     }
 
     .nav-group {
@@ -1806,17 +1811,12 @@ liquid-glass-system {
         width: calc(100% - 24px);
     }
 
-    .launchpad {
-        border-radius: 22px;
-    }
-
     .launchpad-toolbar {
-        padding-left: 18px;
+        padding-left: 8px;
     }
 
     .launchpad-grid {
         grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-        padding: 6px 8px 18px;
     }
 
     .tile {

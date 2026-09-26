@@ -49,7 +49,7 @@ export class BookmarkLaunchpad extends StoreElement {
         const scroll = this.querySelector('.launchpad-grid')?.scrollTop ?? 0;
 
         this.innerHTML = `
-            <section class="launchpad glass-panel ${showBookmarks ? 'has-nav' : ''}" aria-label="启动台">
+            <section class="launchpad ${showBookmarks ? 'has-nav' : ''}" aria-label="启动台">
                 ${showBookmarks ? this.navTemplate(showRecent) : ''}
                 <div class="launchpad-main">
                     <header class="launchpad-toolbar">
@@ -74,7 +74,7 @@ export class BookmarkLaunchpad extends StoreElement {
         const count = (folder: string) => bookmarks.filter((bookmark) => bookmark.folder === folder).length;
         const rootActive = this.view === 'bookmarks' && this.currentFolder === ROOT;
         return `
-            <nav class="launchpad-nav" aria-label="书签分组">
+            <nav class="launchpad-nav glass-panel" aria-label="书签分组">
                 <div class="nav-group">
                     <button class="nav-item ${rootActive ? 'is-active' : ''}" type="button" data-folder="${ROOT}" data-drop-folder="${ROOT}" data-liquid-item ${rootActive ? 'aria-current="page"' : ''}>
                         <span class="nav-icon">${ICONS.bookmark}</span><span class="nav-label">书签</span><small>${count(ROOT)}</small>
