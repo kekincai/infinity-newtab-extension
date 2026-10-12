@@ -24,7 +24,9 @@ export class HomeDock extends StoreElement {
     private sites: RecentSite[] | null = null;
 
     protected render(): void {
-        const { showBookmarks, dockSource, dockSize, dockMagnify, openInNewTab } = appStore.state.settings.layout;
+        const { showBookmarks, showRecent, dockSize, dockMagnify, openInNewTab } = appStore.state.settings.layout;
+        // Nothing history-based appears once frequent sites are turned off.
+        const dockSource = showRecent ? appStore.state.settings.layout.dockSource : 'bookmarks';
         this.hidden = !showBookmarks;
         if (this.hidden) {
             this.innerHTML = '';
@@ -58,10 +60,10 @@ export class HomeDock extends StoreElement {
             <nav class="glass dock" aria-label="常用书签">
                 ${items}
                 <span class="dock-divider" aria-hidden="true"></span>
-                    <button class="dock-item dock-recent" type="button" data-liquid-item aria-label="常访问">
+                    ${showRecent ? `<button class="dock-item dock-recent" type="button" data-liquid-item aria-label="常访问">
                         <span class="app-icon app-icon-glass">${ICONS.clock}</span>
                         <span class="dock-label glass glass-dark" aria-hidden="true">常访问</span>
-                    </button>
+                    </button>` : ''}
                     <button class="dock-item dock-all" type="button" data-liquid-item aria-label="全部书签">
                         <span class="app-icon app-icon-glass">${ICONS.grid}</span>
                         <span class="dock-label glass glass-dark" aria-hidden="true">全部书签</span>

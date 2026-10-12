@@ -77,6 +77,7 @@ export class BookmarkLaunchpad extends StoreElement {
     protected render(): void {
         if (!this.isOpen) return;
         if (!appStore.state.folders.includes(this.folder)) this.folder = ROOT_FOLDER;
+        if (!appStore.state.settings.layout.showRecent) this.view = 'bookmarks';
         if (this.view === 'recent' && this.recent.state === 'idle') void this.loadRecent();
         if (!this.querySelector('.launchpad')) this.renderShell();
         const grid = this.querySelector<HTMLElement>('.launchpad-grid')!;
@@ -115,7 +116,7 @@ export class BookmarkLaunchpad extends StoreElement {
         const browsing = !this.query;
         return `
                 ${tab(`全部 · ${bookmarks.length}`, browsing && this.view === 'bookmarks' && this.folder === ROOT_FOLDER, `data-folder="${ROOT_FOLDER}" data-drop-folder="${ROOT_FOLDER}"`)}
-                ${tab('常访问', browsing && this.view === 'recent', 'data-view="recent"')}
+                ${appStore.state.settings.layout.showRecent ? tab('常访问', browsing && this.view === 'recent', 'data-view="recent"') : ''}
                 ${folders.filter((folder) => folder !== ROOT_FOLDER).map((folder) => tab(
                     escapeHtml(folder),
                     browsing && this.view === 'bookmarks' && this.folder === folder,

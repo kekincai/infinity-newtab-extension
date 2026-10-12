@@ -810,3 +810,26 @@ test('fades to the clock alone when idle', async ({ page }) => {
     await expect(page.locator('body')).not.toHaveClass(/is-idle/);
     expect(errors).toEqual([]);
 });
+
+test('keeps history out of every view when frequent sites are turned off', async ({ page }) => {
+    const seed = structuredClone(initialData);
+    seed.settings.layout = { ...seed.settings.layout, showRecent: false, dockSource: 'recent' };
+    const errors = await openExtension(page, seed);
+    await expect(page.locator('.dock-recent, .dock-item[data-site-index]')).toHaveCount(0);
+    await openLaunchpad(page);
+    await expect(page.locator('.launchpad-tab[data-view="recent"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('/');
+    await expect(page.locator('.spotlight-field input')).toBeFocused();
+    await page.locator('.spotlight-field input').fill('youtube');
+    await expect(page.locator('.spotlight-heading', { hasText: '常访问' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await openSettings(page, 'widgets');
+    await expect(page.locator('[data-segment="dockSource"]').locator('xpath=ancestor::*[contains(@class,"setting-row")]')).toHaveClass(/is-disabled/);
+    await page.locator('input[data-toggle="showRecent"]').check();
+    await expect(page.locator('.dock-item[data-site-index]')).toHaveCount(2);
+    await expect(page.locator('.dock-recent')).toHaveCount(1);
+    expect((await page.evaluate(() => window.__readMockSync())).settings.layout.showRecent).toBe(true);
+    expect(errors).toEqual([]);
+});

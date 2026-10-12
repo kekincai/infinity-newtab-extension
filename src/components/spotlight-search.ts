@@ -119,6 +119,8 @@ export class SpotlightSearch extends HTMLElement {
         this.syncEngines();
         this.renderResults();
         requestAnimationFrame(() => this.input.focus());
+        this.sites = [];
+        if (!appStore.state.settings.layout.showRecent) return;
         void loadRecentSites().then((sites) => {
             this.sites = sites;
             if (this.isOpen) this.renderResults();

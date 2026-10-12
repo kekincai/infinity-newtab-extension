@@ -1736,6 +1736,7 @@
         render() {
           if (!this.isOpen) return;
           if (!appStore.state.folders.includes(this.folder)) this.folder = ROOT_FOLDER;
+          if (!appStore.state.settings.layout.showRecent) this.view = "bookmarks";
           if (this.view === "recent" && this.recent.state === "idle") void this.loadRecent();
           if (!this.querySelector(".launchpad")) this.renderShell();
           const grid = this.querySelector(".launchpad-grid");
@@ -1772,7 +1773,7 @@
           const browsing = !this.query;
           return `
                 ${tab(`\u5168\u90E8 \xB7 ${bookmarks.length}`, browsing && this.view === "bookmarks" && this.folder === ROOT_FOLDER, `data-folder="${ROOT_FOLDER}" data-drop-folder="${ROOT_FOLDER}"`)}
-                ${tab("\u5E38\u8BBF\u95EE", browsing && this.view === "recent", 'data-view="recent"')}
+                ${appStore.state.settings.layout.showRecent ? tab("\u5E38\u8BBF\u95EE", browsing && this.view === "recent", 'data-view="recent"') : ""}
                 ${folders.filter((folder) => folder !== ROOT_FOLDER).map((folder) => tab(
             escapeHtml(folder),
             browsing && this.view === "bookmarks" && this.folder === folder,
@@ -2068,7 +2069,8 @@
         observedChanges = ["bookmarks", "settings.layout"];
         sites = null;
         render() {
-          const { showBookmarks, dockSource, dockSize, dockMagnify, openInNewTab: openInNewTab2 } = appStore.state.settings.layout;
+          const { showBookmarks, showRecent, dockSize, dockMagnify, openInNewTab: openInNewTab2 } = appStore.state.settings.layout;
+          const dockSource = showRecent ? appStore.state.settings.layout.dockSource : "bookmarks";
           this.hidden = !showBookmarks;
           if (this.hidden) {
             this.innerHTML = "";
@@ -2102,10 +2104,10 @@
             <nav class="glass dock" aria-label="\u5E38\u7528\u4E66\u7B7E">
                 ${items}
                 <span class="dock-divider" aria-hidden="true"></span>
-                    <button class="dock-item dock-recent" type="button" data-liquid-item aria-label="\u5E38\u8BBF\u95EE">
+                    ${showRecent ? `<button class="dock-item dock-recent" type="button" data-liquid-item aria-label="\u5E38\u8BBF\u95EE">
                         <span class="app-icon app-icon-glass">${ICONS.clock}</span>
                         <span class="dock-label glass glass-dark" aria-hidden="true">\u5E38\u8BBF\u95EE</span>
-                    </button>
+                    </button>` : ""}
                     <button class="dock-item dock-all" type="button" data-liquid-item aria-label="\u5168\u90E8\u4E66\u7B7E">
                         <span class="app-icon app-icon-glass">${ICONS.grid}</span>
                         <span class="dock-label glass glass-dark" aria-hidden="true">\u5168\u90E8\u4E66\u7B7E</span>
@@ -3291,6 +3293,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.syncEngines();
           this.renderResults();
           requestAnimationFrame(() => this.input.focus());
+          this.sites = [];
+          if (!appStore.state.settings.layout.showRecent) return;
           void loadRecentSites().then((sites) => {
             this.sites = sites;
             if (this.isOpen) this.renderResults();
@@ -3650,9 +3654,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                 ${toggleRow("showSearch", "\u641C\u7D22\u680F", `\u5173\u95ED\u540E\u4ECD\u53EF\u7528 ${SHORTCUT_LABEL} \u547C\u51FA`)}
                 ${toggleRow("showBookmarks", "Dock")}
                 ${toggleRow("showStatus", "\u72B6\u6001\u80F6\u56CA", "\u53EA\u5728\u64AD\u653E\u5A92\u4F53\u3001\u4E0B\u8F7D\u6216\u4F7F\u7528\u7535\u6C60\u65F6\u51FA\u73B0")}
+                ${toggleRow("showRecent", "\u5E38\u8BBF\u95EE\u7F51\u7AD9", "\u6839\u636E\u672C\u673A\u6700\u8FD1 30 \u5929\u7684\u6D4F\u89C8\u8BB0\u5F55\u751F\u6210\uFF0C\u51FA\u73B0\u5728 Dock\u3001\u542F\u52A8\u53F0\u548C\u641C\u7D22\u4E2D")}
             `)}
             ${group("Dock", `
-                ${segmentRow("dockSource", "\u663E\u793A\u7684\u4E66\u7B7E", layout.dockSource, [["bookmarks", "\u56FA\u5B9A\u7684\u4E66\u7B7E"], ["recent", "\u5E38\u8BBF\u95EE"]], "\u56FA\u5B9A\u7684\u4E66\u7B7E\u5C31\u662F\u201C\u5168\u90E8\u201D\u91CC\u7684\u4E66\u7B7E\uFF0C\u53EF\u5728\u542F\u52A8\u53F0\u4E2D\u62D6\u52A8\u6392\u5E8F", "showBookmarks")}
+                ${segmentRow("dockSource", "\u663E\u793A\u7684\u4E66\u7B7E", layout.dockSource, [["bookmarks", "\u56FA\u5B9A\u7684\u4E66\u7B7E"], ["recent", "\u5E38\u8BBF\u95EE"]], "\u56FA\u5B9A\u7684\u4E66\u7B7E\u5C31\u662F\u201C\u5168\u90E8\u201D\u91CC\u7684\u4E66\u7B7E\uFF0C\u53EF\u5728\u542F\u52A8\u53F0\u4E2D\u62D6\u52A8\u6392\u5E8F", "showBookmarks showRecent")}
                 ${rangeRow("dockSize", "\u56FE\u6807\u5927\u5C0F", layout.dockSize, 40, 72, "", "showBookmarks")}
                 ${toggleRow("dockMagnify", "\u60AC\u505C\u653E\u5927", "", "showBookmarks")}
                 ${toggleRow("openInNewTab", "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00\u4E66\u7B7E")}
@@ -3870,6 +3875,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             showSearch: layout.showSearch,
             showBookmarks: layout.showBookmarks,
             showStatus: layout.showStatus,
+            showRecent: layout.showRecent,
             dockMagnify: layout.dockMagnify,
             openInNewTab: layout.openInNewTab,
             saveSearches: layout.saveSearches,
@@ -3884,7 +3890,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             input.closest("liquid-toggle")?.classList.toggle("is-checked", input.checked);
           });
           this.querySelectorAll("[data-depends]").forEach((row) => {
-            row.classList.toggle("is-disabled", !toggles[row.dataset.depends ?? ""]);
+            row.classList.toggle("is-disabled", (row.dataset.depends ?? "").split(" ").some((name) => !toggles[name]));
           });
           const ranges = { blur: wallpaper.blur, overlay: wallpaper.overlay, dockSize: layout.dockSize };
           this.querySelectorAll('input[type="range"]').forEach((input) => {

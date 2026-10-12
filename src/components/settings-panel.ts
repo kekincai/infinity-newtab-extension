@@ -122,9 +122,10 @@ export class SettingsPanel extends StoreElement {
                 ${toggleRow('showSearch', '搜索栏', `关闭后仍可用 ${SHORTCUT_LABEL} 呼出`)}
                 ${toggleRow('showBookmarks', 'Dock')}
                 ${toggleRow('showStatus', '状态胶囊', '只在播放媒体、下载或使用电池时出现')}
+                ${toggleRow('showRecent', '常访问网站', '根据本机最近 30 天的浏览记录生成，出现在 Dock、启动台和搜索中')}
             `)}
             ${group('Dock', `
-                ${segmentRow('dockSource', '显示的书签', layout.dockSource, [['bookmarks', '固定的书签'], ['recent', '常访问']], '固定的书签就是“全部”里的书签，可在启动台中拖动排序', 'showBookmarks')}
+                ${segmentRow('dockSource', '显示的书签', layout.dockSource, [['bookmarks', '固定的书签'], ['recent', '常访问']], '固定的书签就是“全部”里的书签，可在启动台中拖动排序', 'showBookmarks showRecent')}
                 ${rangeRow('dockSize', '图标大小', layout.dockSize, 40, 72, '', 'showBookmarks')}
                 ${toggleRow('dockMagnify', '悬停放大', '', 'showBookmarks')}
                 ${toggleRow('openInNewTab', '在新标签页打开书签')}
@@ -355,6 +356,7 @@ export class SettingsPanel extends StoreElement {
             showSearch: layout.showSearch,
             showBookmarks: layout.showBookmarks,
             showStatus: layout.showStatus,
+            showRecent: layout.showRecent,
             dockMagnify: layout.dockMagnify,
             openInNewTab: layout.openInNewTab,
             saveSearches: layout.saveSearches,
@@ -369,7 +371,7 @@ export class SettingsPanel extends StoreElement {
             input.closest('liquid-toggle')?.classList.toggle('is-checked', input.checked);
         });
         this.querySelectorAll<HTMLElement>('[data-depends]').forEach((row) => {
-            row.classList.toggle('is-disabled', !toggles[row.dataset.depends ?? '']);
+            row.classList.toggle('is-disabled', (row.dataset.depends ?? '').split(' ').some((name) => !toggles[name]));
         });
 
         const ranges: Record<string, number> = { blur: wallpaper.blur, overlay: wallpaper.overlay, dockSize: layout.dockSize };
