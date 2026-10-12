@@ -168,20 +168,31 @@
         showStatus: booleanOr(layout.showStatus, true),
         showRecent: booleanOr(layout.showRecent, true),
         openInNewTab: booleanOr(layout.openInNewTab, false),
-        searchEngine: searchEngines.includes(String(layout.searchEngine)) ? layout.searchEngine : "google"
+        searchEngine: searchEngines.includes(String(layout.searchEngine)) ? layout.searchEngine : "google",
+        dockSource: layout.dockSource === "recent" ? "recent" : "bookmarks",
+        dockSize: Math.round(clampNumber(layout.dockSize, 40, 72, 56)),
+        dockMagnify: booleanOr(layout.dockMagnify, true),
+        saveSearches: booleanOr(layout.saveSearches, true),
+        backupReminder: booleanOr(layout.backupReminder, true)
       },
       wallpaper: {
         type: wallpaperTypes.includes(String(wallpaper.type)) ? wallpaper.type : "gradient",
         value: sanitizeWallpaperValue(wallpaper.value),
-        blur: clampNumber(wallpaper.blur, 0, 10, 0),
-        overlay: clampNumber(wallpaper.overlay, 0, 80, 30)
+        blur: clampNumber(wallpaper.blur, 0, 40, 0),
+        overlay: clampNumber(wallpaper.overlay, 0, 60, 12),
+        idleHide: booleanOr(wallpaper.idleHide, true),
+        pauseOnBattery: booleanOr(wallpaper.pauseOnBattery, true),
+        pauseWhenHidden: booleanOr(wallpaper.pauseWhenHidden, true),
+        sound: booleanOr(wallpaper.sound, false)
       },
       appearance: {
         clockFormat: appearance.clockFormat === "12h" ? "12h" : "24h",
         dateFormat: appearance.dateFormat === "short" ? "short" : "long",
         enhancedAnimations: booleanOr(appearance.enhancedAnimations, true),
         hdrHighlights: booleanOr(appearance.hdrHighlights, true),
-        theme: sanitizeTheme(appearance.theme, layout)
+        theme: sanitizeTheme(appearance.theme, layout),
+        glass: appearance.glass === "tinted" ? "tinted" : "clear",
+        reduceTransparency: booleanOr(appearance.reduceTransparency, false)
       }
     };
   }
@@ -239,20 +250,31 @@
           showStatus: true,
           showRecent: true,
           openInNewTab: false,
-          searchEngine: "google"
+          searchEngine: "google",
+          dockSource: "bookmarks",
+          dockSize: 56,
+          dockMagnify: true,
+          saveSearches: true,
+          backupReminder: true
         },
         wallpaper: {
           type: "gradient",
           value: "",
           blur: 0,
-          overlay: 30
+          overlay: 12,
+          idleHide: true,
+          pauseOnBattery: true,
+          pauseWhenHidden: true,
+          sound: false
         },
         appearance: {
           clockFormat: "24h",
           dateFormat: "long",
           enhancedAnimations: true,
           hdrHighlights: true,
-          theme: "auto"
+          theme: "auto",
+          glass: "clear",
+          reduceTransparency: false
         }
       };
       MAX_INLINE_ICON_LENGTH = 4096;
@@ -1049,7 +1071,7 @@
       const backdrop = document.createElement("div");
       backdrop.className = "modal-backdrop is-open";
       backdrop.innerHTML = `
-            <form class="modal glass-panel" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
+            <form class="modal glass glass-thick" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
                 <header class="modal-header">
                     <h2 id="modal-title">${escapeHtml(options.title)}</h2>
                     <button class="icon-close" type="button" aria-label="\u5173\u95ED" data-action="cancel">${CLOSE_ICON}</button>
@@ -1057,8 +1079,8 @@
                 ${options.body ? `<p class="modal-body">${escapeHtml(options.body)}</p>` : ""}
                 ${options.input ? `<label class="field"><span>${escapeHtml(options.input.label)}</span><input name="value" type="text" autocomplete="off" maxlength="${options.input.maxLength ?? 80}" placeholder="${escapeHtml(options.input.placeholder ?? "")}" value="${escapeHtml(options.input.value ?? "")}"></label>` : ""}
                 <footer class="modal-actions">
-                    <button class="glass-button" type="button" data-action="cancel" data-liquid-item>${escapeHtml(options.cancelText ?? "\u53D6\u6D88")}</button>
-                    <button class="glass-button ${options.danger ? "danger" : "primary"}" type="submit" data-liquid-item>${escapeHtml(options.confirmText ?? "\u786E\u5B9A")}</button>
+                    <button class="pill-button" type="button" data-action="cancel" data-liquid-item>${escapeHtml(options.cancelText ?? "\u53D6\u6D88")}</button>
+                    <button class="pill-button ${options.danger ? "danger" : "primary"}" type="submit" data-liquid-item>${escapeHtml(options.confirmText ?? "\u786E\u5B9A")}</button>
                 </footer>
             </form>`;
       document.body.append(backdrop);
@@ -1107,7 +1129,7 @@
       document.body.append(region);
     }
     const toast = document.createElement("div");
-    toast.className = `toast app-notice is-${kind}`;
+    toast.className = `toast glass glass-thick app-notice is-${kind}`;
     toast.textContent = message;
     region.append(toast);
     window.setTimeout(() => {
@@ -1121,7 +1143,7 @@
   function openMenu(items, at) {
     document.querySelector(".context-menu")?.dispatchEvent(new Event("menu-close"));
     const menu = document.createElement("div");
-    menu.className = "context-menu glass-panel";
+    menu.className = "context-menu glass glass-thick";
     menu.setAttribute("role", "menu");
     menu.innerHTML = items.map((item, index) => {
       if ("separator" in item) return "<hr>";
@@ -1169,6 +1191,16 @@
     });
     buttons[0]?.focus({ preventScroll: true });
   }
+  function afterMotion(element, run) {
+    requestAnimationFrame(() => {
+      const running = element.getAnimations({ subtree: true });
+      if (!running.length) {
+        run();
+        return;
+      }
+      void Promise.all(running.map((animation) => animation.finished.catch(() => void 0))).then(run);
+    });
+  }
   var layers, FOCUSABLE, CLOSE_ICON;
   var init_ui_layer = __esm({
     "src/components/ui-layer.ts"() {
@@ -1200,23 +1232,23 @@
       init_store();
       init_base();
       init_ui_layer();
-      REMINDER_INTERVAL = 7 * 24 * 60 * 60 * 1e3;
+      REMINDER_INTERVAL = 30 * 24 * 60 * 60 * 1e3;
       BackupToast = class extends StoreElement {
-        observedChanges = ["lastBackupPrompt", "bookmarks"];
+        observedChanges = ["lastBackupPrompt", "bookmarks", "settings.layout"];
         dismissed = false;
         render() {
           const due = Date.now() - appStore.state.lastBackupPrompt >= REMINDER_INTERVAL;
-          this.hidden = !due || this.dismissed || !appStore.state.bookmarks.length;
+          this.hidden = !due || this.dismissed || !appStore.state.bookmarks.length || !appStore.state.settings.layout.backupReminder;
           if (this.hidden) {
             this.innerHTML = "";
             return;
           }
           this.innerHTML = `
-            <div class="backup-toast glass-panel" role="status">
-                <span>\u5DF2\u7ECF\u4E00\u5468\u6CA1\u5907\u4EFD\u4E86\uFF0C\u5BFC\u51FA\u4E00\u4EFD\u4E66\u7B7E\u66F4\u5B89\u5FC3</span>
+            <div class="backup-toast glass glass-thick" role="status">
+                <span>\u5DF2\u7ECF\u4E00\u4E2A\u6708\u6CA1\u5907\u4EFD\u4E86\uFF0C\u5BFC\u51FA\u4E00\u4EFD\u4E66\u7B7E\u66F4\u5B89\u5FC3</span>
                 <div class="backup-actions">
-                    <button class="glass-button backup-later" type="button" data-liquid-item>\u7A0D\u540E</button>
-                    <button class="glass-button primary backup-now" type="button" data-liquid-item>\u7ACB\u5373\u5BFC\u51FA</button>
+                    <button class="pill-button backup-later" type="button" data-liquid-item>\u7A0D\u540E</button>
+                    <button class="pill-button primary backup-now" type="button" data-liquid-item>\u7ACB\u5373\u5BFC\u51FA</button>
                 </div>
             </div>
         `;
@@ -1237,38 +1269,38 @@
   });
 
   // src/components/icons.ts
-  var icon, ICONS;
+  var icon, solid, ICONS;
   var init_icons = __esm({
     "src/components/icons.ts"() {
       "use strict";
       icon = (paths) => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+      solid = (paths) => `<svg class="icon icon-solid" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
       ICONS = {
-        settings: icon('<path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"></path><circle cx="16" cy="6" r="2"></circle><circle cx="8" cy="12" r="2"></circle><circle cx="13" cy="18" r="2"></circle>'),
-        shuffle: icon('<path d="M3 7h3.5c2 0 3.2 1 4.3 2.6l2.4 4.8c1.1 1.6 2.3 2.6 4.3 2.6H21M17.5 13.5 21 17l-3.5 3.5M3 17h3.5c1.2 0 2.1-.4 2.9-1.1M14.6 8.1c.8-.7 1.7-1.1 2.9-1.1H21M17.5 3.5 21 7l-3.5 3.5"></path>'),
-        search: icon('<circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path>'),
+        settings: icon('<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>'),
+        sparkle: icon('<path d="M12 3l1.8 4.6L18 9.4l-4.2 1.8L12 16l-1.8-4.8L6 9.4l4.2-1.8z"></path><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"></path>'),
+        search: icon('<circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>'),
         plus: icon('<path d="M12 5v14M5 12h14"></path>'),
         folder: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path>'),
         folderPlus: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path><path d="M12 11v5M9.5 13.5h5"></path>'),
-        back: icon('<path d="M15 5 8 12l7 7"></path>'),
         more: icon('<circle cx="6" cy="12" r="1.2"></circle><circle cx="12" cy="12" r="1.2"></circle><circle cx="18" cy="12" r="1.2"></circle>'),
         edit: icon('<path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="m13.5 6.5 4 4"></path>'),
         trash: icon('<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"></path>'),
         open: icon('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path>'),
         move: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path><path d="M10 13.5h6M13.5 11l2.5 2.5-2.5 2.5"></path>'),
         refresh: icon('<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"></path>'),
-        upload: icon('<path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path>'),
         download: icon('<path d="M12 4v12M7 11l5 5 5-5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path>'),
-        reset: icon('<path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v5h5"></path>'),
-        play: icon('<path d="M8 5.5v13l10-6.5z"></path>'),
+        pause: solid('<rect x="6" y="4.5" width="4" height="15" rx="1.3"></rect><rect x="14" y="4.5" width="4" height="15" rx="1.3"></rect>'),
+        play: solid('<path d="M8 5.2v13.6a1 1 0 0 0 1.5.86l11-6.8a1 1 0 0 0 0-1.72l-11-6.8A1 1 0 0 0 8 5.2z"></path>'),
+        speaker: icon('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 9a4.5 4.5 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11"></path>'),
+        muted: icon('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="m16 9.5 5 5M21 9.5l-5 5"></path>'),
         battery: icon('<rect x="3" y="7.5" width="16" height="9" rx="2"></rect><path d="M21 11v2"></path>'),
         bolt: icon('<path d="m13 3-7 10h5l-1 8 7-10h-5z"></path>'),
-        palette: icon('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.7 0-1.2-1-1.6-1-2.6 0-.9.7-1.7 1.7-1.7H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3z"></path><circle cx="7.5" cy="11" r="1"></circle><circle cx="10" cy="7" r="1"></circle><circle cx="15" cy="7.5" r="1"></circle>'),
-        widgets: icon('<rect x="4" y="4" width="7" height="7" rx="2"></rect><rect x="13" y="4" width="7" height="7" rx="2"></rect><rect x="4" y="13" width="7" height="7" rx="2"></rect><rect x="13" y="13" width="7" height="7" rx="2"></rect>'),
-        image: icon('<rect x="3" y="5" width="18" height="14" rx="2.5"></rect><circle cx="9" cy="10" r="1.8"></circle><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"></path>'),
-        database: icon('<ellipse cx="12" cy="6" rx="7" ry="2.8"></ellipse><path d="M5 6v12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8"></path>'),
         clock: icon('<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>'),
-        bookmark: icon('<path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1z"></path>'),
-        pulse: icon('<path d="M3 12h4l2.5-6 4 12 2.5-6H21"></path>'),
+        grid: solid('<rect x="4" y="4" width="4" height="4" rx="1.2"></rect><rect x="10" y="4" width="4" height="4" rx="1.2"></rect><rect x="16" y="4" width="4" height="4" rx="1.2"></rect><rect x="4" y="10" width="4" height="4" rx="1.2"></rect><rect x="10" y="10" width="4" height="4" rx="1.2"></rect><rect x="16" y="10" width="4" height="4" rx="1.2"></rect><rect x="4" y="16" width="4" height="4" rx="1.2"></rect><rect x="10" y="16" width="4" height="4" rx="1.2"></rect><rect x="16" y="16" width="4" height="4" rx="1.2"></rect>'),
+        look: icon('<circle cx="12" cy="12" r="8"></circle><path class="icon-fill" d="M12 4a8 8 0 0 0 0 16z"></path>'),
+        widgets: solid('<rect x="4" y="4" width="7" height="7" rx="2"></rect><rect x="13" y="4" width="7" height="7" rx="2"></rect><rect x="4" y="13" width="7" height="7" rx="2"></rect><rect x="13" y="13" width="7" height="7" rx="2"></rect>'),
+        wallpaper: icon('<rect x="3" y="5" width="18" height="14" rx="3"></rect><path class="icon-fill" d="M10 9.5v5l4.5-2.5z"></path>'),
+        database: icon('<ellipse cx="12" cy="6" rx="7" ry="2.5"></ellipse><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"></path>'),
         close: icon('<path d="M6 6l12 12M18 6 6 18"></path>')
       };
     }
@@ -1303,7 +1335,7 @@
           const title = bookmark ? "\u7F16\u8F91\u4E66\u7B7E" : "\u6DFB\u52A0\u4E66\u7B7E";
           this.innerHTML = `
             <div class="modal-backdrop dialog-backdrop is-open">
-                <form class="modal bookmark-dialog glass-panel" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
+                <form class="modal bookmark-dialog glass glass-thick" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
                     <header class="modal-header">
                         <h2>${title}</h2>
                         <button class="icon-close dialog-close" type="button" aria-label="\u5173\u95ED">${ICONS.close}</button>
@@ -1332,8 +1364,8 @@
                     </details>
                     <p class="field-error" role="alert" hidden></p>
                     <footer class="modal-actions">
-                        <button class="glass-button cancel-dialog" type="button" data-liquid-item>\u53D6\u6D88</button>
-                        <button class="glass-button primary" type="submit" data-liquid-item>\u4FDD\u5B58</button>
+                        <button class="pill-button cancel-dialog" type="button" data-liquid-item>\u53D6\u6D88</button>
+                        <button class="pill-button primary" type="submit" data-liquid-item>\u4FDD\u5B58</button>
                     </footer>
                 </form>
             </div>
@@ -1441,47 +1473,209 @@
     if (cleaned && cleaned.length <= 18) return cleaned;
     return host;
   }
+  function loadRecentSites(refresh = false) {
+    if (!recentSites || refresh) {
+      recentSites = new Promise((resolve, reject) => {
+        if (!chrome.history?.search) {
+          reject(new Error("\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u5386\u53F2\u8BB0\u5F55\u8BBF\u95EE"));
+          return;
+        }
+        chrome.history.search({ text: "", startTime: Date.now() - 30 * 24 * 60 * 60 * 1e3, maxResults: 3e3 }, (items) => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve(rankSites(items ?? []));
+        });
+      });
+      recentSites.catch(() => {
+        recentSites = null;
+      });
+    }
+    return recentSites;
+  }
+  var recentSites;
   var init_history = __esm({
     "src/core/history.ts"() {
       "use strict";
+      recentSites = null;
     }
   });
 
-  // src/components/bookmark-launchpad.ts
-  function readView() {
-    try {
-      return localStorage.getItem(VIEW_KEY) === "recent" ? "recent" : "bookmarks";
-    } catch {
-      return "bookmarks";
-    }
-  }
+  // src/components/bookmark-actions.ts
   function findBookmark(id) {
     return appStore.state.bookmarks.find((item) => String(item.id) === String(id));
-  }
-  function bindIconFallback(image) {
-    const fallback = image.dataset.iconFallback;
-    if (!fallback) return;
-    const useFallback = () => {
-      if (image.dataset.fallbackUsed === "true") {
-        image.classList.add("icon-unavailable");
-        return;
-      }
-      image.dataset.fallbackUsed = "true";
-      image.removeAttribute("srcset");
-      image.src = fallback;
-    };
-    image.addEventListener("load", () => {
-      if (image.dataset.iconRaster === "true") image.classList.add("icon-raster");
-      if (image.dataset.iconCanUpgrade === "true" && image.dataset.fallbackUsed !== "true" && image.naturalWidth > 0 && image.naturalWidth < 64) {
-        useFallback();
-      }
-    });
-    image.addEventListener("error", useFallback);
   }
   function compareBookmarks2(left, right) {
     return left.order - right.order || String(left.id).localeCompare(String(right.id));
   }
-  var ROOT, FOLDER_COLORS, VIEW_KEY, BookmarkLaunchpad;
+  function bookmarksIn(folder) {
+    return appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks2);
+  }
+  function bookmarkName(bookmark) {
+    return cleanDisplayName(bookmark.name) || cleanDisplayName(new URL(bookmark.url).hostname);
+  }
+  function interceptExtensionLink(event, url) {
+    if (event.defaultPrevented || new URL(url).protocol !== "chrome-extension:") return;
+    event.preventDefault();
+    void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
+  }
+  function openInNewTab(url) {
+    void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
+  }
+  function openBookmarkDialog(source, detail) {
+    source.dispatchEvent(new CustomEvent("open-bookmark-dialog", { bubbles: true, composed: true, detail }));
+  }
+  function bookmarkMenu(source, bookmark, at) {
+    const destinations = appStore.state.folders.filter((folder) => folder !== bookmark.folder);
+    openMenu([
+      { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => openInNewTab(bookmark.url) },
+      { label: "\u7F16\u8F91\u2026", icon: ICONS.edit, action: () => openBookmarkDialog(source, { bookmark }) },
+      ...destinations.length ? [
+        { separator: true },
+        { heading: "\u79FB\u52A8\u5230\u6587\u4EF6\u5939" },
+        ...destinations.map((folder) => ({ label: folder, icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder) }))
+      ] : [],
+      { separator: true },
+      { label: "\u5220\u9664\u4E66\u7B7E", icon: ICONS.trash, danger: true, action: () => void deleteBookmark(bookmark) }
+    ], at);
+  }
+  function siteMenu(source, site, at) {
+    openMenu([
+      { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => openInNewTab(site.url) },
+      { label: "\u6DFB\u52A0\u5230\u4E66\u7B7E", icon: ICONS.plus, action: () => openBookmarkDialog(source, { draft: { url: site.url, name: site.title } }) }
+    ], at);
+  }
+  async function moveBookmark(id, folder, targetId) {
+    try {
+      await appStore.moveBookmark(id, folder, targetId);
+    } catch (error) {
+      notifyError(error);
+    }
+  }
+  async function deleteBookmark(bookmark) {
+    const confirmed = await confirmAction({
+      title: `\u5220\u9664\u201C${bookmarkName(bookmark) || bookmark.url}\u201D\uFF1F`,
+      confirmText: "\u5220\u9664",
+      danger: true
+    });
+    if (confirmed) await appStore.deleteBookmark(bookmark.id).catch(notifyError);
+  }
+  async function createFolder() {
+    const name = await promptText("\u65B0\u5EFA\u6587\u4EF6\u5939", { label: "\u540D\u79F0", placeholder: "\u4F8B\u5982\uFF1A\u5DE5\u4F5C\u3001\u5A31\u4E50" }, "\u521B\u5EFA");
+    if (!name) return null;
+    try {
+      if (await appStore.addFolder(name)) return name;
+      notifyError(new Error(`\u5DF2\u7ECF\u6709\u540D\u4E3A\u201C${name}\u201D\u7684\u6587\u4EF6\u5939`));
+    } catch (error) {
+      notifyError(error);
+    }
+    return null;
+  }
+  async function renameFolder(folder, follow = () => void 0) {
+    const name = await promptText("\u91CD\u547D\u540D\u6587\u4EF6\u5939", { label: "\u540D\u79F0", value: folder });
+    if (!name || name === folder) return;
+    follow(name);
+    try {
+      if (await appStore.renameFolder(folder, name)) return;
+      follow(folder);
+      notifyError(new Error(`\u5DF2\u7ECF\u6709\u540D\u4E3A\u201C${name}\u201D\u7684\u6587\u4EF6\u5939`));
+    } catch (error) {
+      follow(folder);
+      notifyError(error);
+    }
+  }
+  async function deleteFolder(folder) {
+    const count = bookmarksIn(folder).length;
+    const confirmed = await confirmAction({
+      title: `\u5220\u9664\u6587\u4EF6\u5939\u201C${folder}\u201D\uFF1F`,
+      body: count ? `\u5176\u4E2D\u7684 ${count} \u4E2A\u4E66\u7B7E\u4F1A\u79FB\u56DE\u201C${ROOT_FOLDER}\u201D\uFF0C\u4E0D\u4F1A\u88AB\u5220\u9664\u3002` : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\u3002",
+      confirmText: "\u5220\u9664",
+      danger: true
+    });
+    if (!confirmed) return false;
+    try {
+      await appStore.deleteFolder(folder);
+      return true;
+    } catch (error) {
+      notifyError(error);
+      return false;
+    }
+  }
+  var ROOT_FOLDER;
+  var init_bookmark_actions = __esm({
+    "src/components/bookmark-actions.ts"() {
+      "use strict";
+      init_store();
+      init_utils();
+      init_icons();
+      init_ui_layer();
+      ROOT_FOLDER = "\u5168\u90E8";
+    }
+  });
+
+  // src/components/site-icon.ts
+  function siteIcon({ url, name, bookmark }, className = "") {
+    const host = hostOf(url);
+    const letter = Array.from(cleanDisplayName(name) || host || "?")[0]?.toUpperCase() ?? "?";
+    const [from, to, ink] = TILE_COLORS[hash(host) % TILE_COLORS.length];
+    const image = bookmark ? `<img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="96px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" data-icon-raster="${bookmarkIconIsRaster(bookmark)}" alt="" decoding="async" draggable="false">` : `<img src="${escapeHtml(faviconUrl(url))}" srcset="${escapeHtml(faviconSrcSet(url))}" sizes="96px" alt="" loading="lazy" decoding="async" draggable="false">`;
+    return `<span class="app-icon ${className}" style="--tile-from:${from};--tile-to:${to};--tile-ink:${ink}">${image}<span class="app-letter" aria-hidden="true">${escapeHtml(letter)}</span></span>`;
+  }
+  function bindSiteIcons(root) {
+    root.querySelectorAll(".app-icon > img").forEach((image) => {
+      if (image.dataset.bound) return;
+      image.dataset.bound = "true";
+      const tile = image.parentElement;
+      const fallback = image.dataset.iconFallback;
+      const useFallback = () => {
+        if (!fallback || image.dataset.fallbackUsed === "true" || fallback.startsWith("data:")) {
+          tile.classList.add("is-letter");
+          return;
+        }
+        image.dataset.fallbackUsed = "true";
+        image.removeAttribute("srcset");
+        image.src = fallback;
+      };
+      image.addEventListener("load", () => {
+        if (image.dataset.iconCanUpgrade === "true" && image.dataset.fallbackUsed !== "true" && image.naturalWidth > 0 && image.naturalWidth < 64) {
+          useFallback();
+        }
+      });
+      image.addEventListener("error", useFallback);
+      if (image.complete && image.naturalWidth === 0 && image.getAttribute("src")) useFallback();
+    });
+  }
+  function hostOf(url) {
+    try {
+      return new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      return "";
+    }
+  }
+  function hash(value) {
+    let result = 0;
+    for (const character of value) result = result * 31 + character.charCodeAt(0) >>> 0;
+    return result;
+  }
+  var TILE_COLORS;
+  var init_site_icon = __esm({
+    "src/components/site-icon.ts"() {
+      "use strict";
+      init_utils();
+      TILE_COLORS = [
+        ["#3a414a", "#0d1117", "#ffffff"],
+        ["#ff5f57", "#d42a22", "#ffffff"],
+        ["#ffd76a", "#f4a320", "#5a3800"],
+        ["#ff8db8", "#e0447c", "#ffffff"],
+        ["#b9a2ff", "#7446f5", "#ffffff"],
+        ["#4fb0ff", "#0a68ec", "#ffffff"],
+        ["#53d891", "#169a55", "#ffffff"],
+        ["#ffa35c", "#f06a12", "#ffffff"],
+        ["#8b8ff8", "#5056d8", "#ffffff"]
+      ];
+    }
+  });
+
+  // src/components/bookmark-launchpad.ts
+  var BookmarkLaunchpad;
   var init_bookmark_launchpad = __esm({
     "src/components/bookmark-launchpad.ts"() {
       "use strict";
@@ -1489,126 +1683,138 @@
       init_store();
       init_utils();
       init_base();
+      init_bookmark_actions();
       init_icons();
+      init_site_icon();
       init_ui_layer();
-      ROOT = "\u5168\u90E8";
-      FOLDER_COLORS = ["#ff8cc6", "#6fd3ff", "#ffc86b", "#86e0bd", "#b3a2ff"];
-      VIEW_KEY = "infinity-launchpad-view";
       BookmarkLaunchpad = class extends StoreElement {
         observedChanges = ["bookmarks", "folders", "settings.layout"];
-        currentFolder = ROOT;
-        view = readView();
+        view = "bookmarks";
+        folder = ROOT_FOLDER;
+        query = "";
         draggingId = null;
-        /** Store-driven re-renders keep the grid scroll position; navigation resets it. */
-        keepScroll = true;
         recent = { sites: [], state: "idle", error: "" };
+        releaseLayer = null;
+        connectedCallback() {
+          this.hidden = true;
+          super.connectedCallback();
+        }
+        disconnectedCallback() {
+          super.disconnectedCallback();
+          this.close();
+        }
+        get isOpen() {
+          return !this.hidden;
+        }
+        open(view = "bookmarks", folder = ROOT_FOLDER) {
+          this.view = view;
+          this.folder = folder;
+          this.query = "";
+          this.innerHTML = "";
+          if (!this.isOpen) {
+            this.hidden = false;
+            document.body.classList.add("launchpad-open");
+            this.releaseLayer = pushLayer(this, () => this.close());
+          }
+          this.render();
+          afterMotion(this, () => {
+            if (this.isOpen && !this.contains(document.activeElement)) this.querySelector(".launchpad-tab.is-active")?.focus({ preventScroll: true });
+          });
+        }
+        close() {
+          if (!this.isOpen) return;
+          this.hidden = true;
+          document.body.classList.remove("launchpad-open");
+          this.innerHTML = "";
+          const release = this.releaseLayer;
+          this.releaseLayer = null;
+          release?.();
+        }
         render() {
-          const { folders, settings } = appStore.state;
-          const { showBookmarks, showRecent } = settings.layout;
-          this.hidden = !showBookmarks && !showRecent;
-          if (this.hidden) {
-            this.innerHTML = "";
-            return;
-          }
-          if (!folders.includes(this.currentFolder)) this.currentFolder = ROOT;
-          if (!showRecent) this.view = "bookmarks";
-          if (!showBookmarks) this.view = "recent";
-          if (this.view === "recent" && this.recent.state === "idle") {
-            this.recent.state = "loading";
-            void this.fetchRecent();
-          }
-          const scroll = this.querySelector(".launchpad-grid")?.scrollTop ?? 0;
-          this.innerHTML = `
-            <section class="launchpad ${showBookmarks ? "has-nav" : ""}" aria-label="\u542F\u52A8\u53F0">
-                ${showBookmarks ? this.navTemplate(showRecent) : ""}
-                <div class="launchpad-main">
-                    <header class="launchpad-toolbar">
-                        ${this.headingTemplate()}
-                        <div class="toolbar-actions">${this.actionsTemplate()}</div>
-                    </header>
-                    <div class="launchpad-grid" data-view="${this.view}">
-                        ${this.view === "recent" ? this.recentTemplate() : this.bookmarksTemplate()}
-                    </div>
-                </div>
-            </section>
-        `;
+          if (!this.isOpen) return;
+          if (!appStore.state.folders.includes(this.folder)) this.folder = ROOT_FOLDER;
+          if (this.view === "recent" && this.recent.state === "idle") void this.loadRecent();
+          if (!this.querySelector(".launchpad")) this.renderShell();
           const grid = this.querySelector(".launchpad-grid");
-          if (grid && this.keepScroll) grid.scrollTop = scroll;
-          this.keepScroll = true;
-          this.bindEvents();
+          const scroll = grid.scrollTop;
+          this.querySelector(".launchpad-tabs").innerHTML = this.tabsTemplate();
+          grid.dataset.view = this.query ? "search" : this.view;
+          grid.innerHTML = this.gridTemplate();
+          grid.scrollTop = scroll;
+          bindSiteIcons(this);
+          this.querySelectorAll(".bookmark-tile").forEach((card) => this.bindBookmark(card));
+          this.querySelectorAll("[data-drop-folder]").forEach((target) => this.bindFolderDrop(target));
         }
-        /** Sidebar: the two views on top, folders below; every folder is also a drop target. */
-        navTemplate(showRecent) {
+        /** The shell (and its search field) is built once per opening so typing, including IME input, is never interrupted. */
+        renderShell() {
+          this.innerHTML = `
+            <div class="launchpad-backdrop" aria-hidden="true"></div>
+            <section class="launchpad" role="dialog" aria-modal="true" aria-label="\u542F\u52A8\u53F0">
+                <header class="launchpad-top">
+                    <label class="glass launchpad-search">
+                        ${ICONS.search}
+                        <input type="search" placeholder="\u5728\u4E66\u7B7E\u4E2D\u641C\u7D22" aria-label="\u5728\u4E66\u7B7E\u4E2D\u641C\u7D22" autocomplete="off" spellcheck="false">
+                    </label>
+                    <div class="glass launchpad-tabs" role="tablist" aria-label="\u4E66\u7B7E\u5206\u7EC4"></div>
+                </header>
+                <button class="glass launchpad-done" type="button" data-liquid-item>\u5B8C\u6210</button>
+                <div class="launchpad-grid"></div>
+            </section>`;
+          this.bindShell();
+        }
+        tabsTemplate() {
           const { bookmarks, folders } = appStore.state;
-          const count = (folder) => bookmarks.filter((bookmark) => bookmark.folder === folder).length;
-          const rootActive = this.view === "bookmarks" && this.currentFolder === ROOT;
+          const tab = (label, active, attributes) => `
+            <button class="launchpad-tab ${active ? "is-active" : ""}" type="button" role="tab" aria-selected="${active}" tabindex="${active ? 0 : -1}" data-liquid-item ${attributes}>${label}</button>`;
+          const browsing = !this.query;
           return `
-            <nav class="launchpad-nav glass-panel" aria-label="\u4E66\u7B7E\u5206\u7EC4">
-                <div class="nav-group">
-                    <button class="nav-item ${rootActive ? "is-active" : ""}" type="button" data-folder="${ROOT}" data-drop-folder="${ROOT}" data-liquid-item ${rootActive ? 'aria-current="page"' : ""}>
-                        <span class="nav-icon">${ICONS.bookmark}</span><span class="nav-label">\u4E66\u7B7E</span><small>${count(ROOT)}</small>
-                    </button>
-                    ${showRecent ? `
-                    <button class="nav-item ${this.view === "recent" ? "is-active" : ""}" type="button" data-view="recent" data-liquid-item ${this.view === "recent" ? 'aria-current="page"' : ""}>
-                        <span class="nav-icon">${ICONS.pulse}</span><span class="nav-label">\u5E38\u8BBF\u95EE</span>
-                    </button>` : ""}
-                </div>
-                <h3 class="nav-heading">\u6587\u4EF6\u5939</h3>
-                <div class="nav-group nav-folders">
-                    ${folders.filter((folder) => folder !== ROOT).map((folder, index) => {
-            const active = this.view === "bookmarks" && this.currentFolder === folder;
-            return `
-                    <button class="nav-item nav-folder ${active ? "is-active" : ""}" type="button" data-folder="${escapeHtml(folder)}" data-drop-folder="${escapeHtml(folder)}" data-liquid-item
-                        style="--folder-color:${FOLDER_COLORS[index % FOLDER_COLORS.length]}" ${active ? 'aria-current="page"' : ""}>
-                        <span class="nav-icon folder-swatch">${ICONS.folder}</span><span class="nav-label">${escapeHtml(folder)}</span><small>${count(folder)}</small>
-                    </button>`;
-          }).join("")}
-                    <button class="nav-item nav-add create-folder" type="button" data-liquid-item>
-                        <span class="nav-icon">${ICONS.plus}</span><span class="nav-label">\u65B0\u5EFA\u6587\u4EF6\u5939</span>
-                    </button>
-                </div>
-            </nav>`;
+                ${tab(`\u5168\u90E8 \xB7 ${bookmarks.length}`, browsing && this.view === "bookmarks" && this.folder === ROOT_FOLDER, `data-folder="${ROOT_FOLDER}" data-drop-folder="${ROOT_FOLDER}"`)}
+                ${tab("\u5E38\u8BBF\u95EE", browsing && this.view === "recent", 'data-view="recent"')}
+                ${folders.filter((folder) => folder !== ROOT_FOLDER).map((folder) => tab(
+            escapeHtml(folder),
+            browsing && this.view === "bookmarks" && this.folder === folder,
+            `data-folder="${escapeHtml(folder)}" data-drop-folder="${escapeHtml(folder)}"`
+          )).join("")}
+                <button class="launchpad-tab create-folder" type="button" data-liquid-item aria-label="\u65B0\u5EFA\u6587\u4EF6\u5939" title="\u65B0\u5EFA\u6587\u4EF6\u5939">${ICONS.plus}</button>`;
         }
-        headingTemplate() {
-          if (this.view === "recent") {
-            return '<div class="launchpad-heading-wrap"><h2 class="launchpad-heading">\u5E38\u8BBF\u95EE</h2><span class="launchpad-count">\u6700\u8FD1 30 \u5929</span></div>';
+        gridTemplate() {
+          if (this.query) {
+            const query = this.query.toLowerCase();
+            const matches = [...appStore.state.bookmarks].sort(compareBookmarks2).filter((bookmark) => bookmarkName(bookmark).toLowerCase().includes(query) || bookmark.url.toLowerCase().includes(query));
+            return matches.map((bookmark) => this.bookmarkTemplate(bookmark)).join("") || `<p class="launchpad-message">\u6CA1\u6709\u627E\u5230\u201C${escapeHtml(this.query)}\u201D</p>`;
           }
-          const count = appStore.state.bookmarks.filter((bookmark) => bookmark.folder === this.currentFolder).length;
-          const title = this.currentFolder === ROOT ? "\u4E66\u7B7E" : this.currentFolder;
-          return `<div class="launchpad-heading-wrap"><h2 class="launchpad-heading">${escapeHtml(title)}</h2><span class="launchpad-count">${count} \u4E2A</span></div>`;
-        }
-        actionsTemplate() {
-          if (this.view === "recent") {
-            return `<button class="toolbar-button refresh-recent" type="button" data-liquid-item title="\u91CD\u65B0\u8BFB\u53D6\u6D4F\u89C8\u8BB0\u5F55">${ICONS.refresh}<span>\u5237\u65B0</span></button>`;
-          }
-          const folderActions = this.currentFolder === ROOT ? "" : `
-            <button class="toolbar-button rename-current" type="button" data-liquid-item>${ICONS.edit}<span>\u91CD\u547D\u540D</span></button>
-            <button class="toolbar-button delete-current" type="button" data-liquid-item>${ICONS.trash}<span>\u5220\u9664\u6587\u4EF6\u5939</span></button>`;
-          return `${folderActions}<button class="toolbar-button primary-action add-bookmark-action" type="button" data-liquid-item>${ICONS.plus}<span>\u6DFB\u52A0\u4E66\u7B7E</span></button>`;
-        }
-        bookmarksTemplate() {
-          const visible = appStore.state.bookmarks.filter((bookmark) => bookmark.folder === this.currentFolder).sort(compareBookmarks2);
-          const empty = !visible.length ? `<p class="launchpad-message">${this.currentFolder === ROOT ? "\u8FD8\u6CA1\u6709\u4E66\u7B7E\uFF0C\u70B9\u51FB\u4E0B\u65B9\u52A0\u53F7\u6DFB\u52A0\u7B2C\u4E00\u4E2A" : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\uFF0C\u53EF\u4EE5\u628A\u4E66\u7B7E\u62D6\u5230\u5DE6\u4FA7\u7684\u6587\u4EF6\u5939\u4E0A"}</p>` : "";
+          if (this.view === "recent") return this.recentTemplate();
+          const folders = this.folder === ROOT_FOLDER ? appStore.state.folders.filter((folder) => folder !== ROOT_FOLDER).map((folder) => this.folderTemplate(folder)).join("") : "";
+          const bookmarks = bookmarksIn(this.folder);
+          const empty = !bookmarks.length && !folders ? `<p class="launchpad-message">${this.folder === ROOT_FOLDER ? "\u8FD8\u6CA1\u6709\u4E66\u7B7E\uFF0C\u70B9\u51FB\u52A0\u53F7\u6DFB\u52A0\u7B2C\u4E00\u4E2A" : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\uFF0C\u53EF\u4EE5\u628A\u4E66\u7B7E\u62D6\u5230\u4E0A\u65B9\u7684\u6587\u4EF6\u5939\u6807\u7B7E\u4E0A"}</p>` : "";
           return `
-            ${visible.map((bookmark) => this.bookmarkTemplate(bookmark)).join("")}
+            ${folders}
+            ${bookmarks.map((bookmark) => this.bookmarkTemplate(bookmark)).join("")}
             <button class="tile add-tile add-bookmark" type="button" data-liquid-item>
-                <span class="tile-icon">${ICONS.plus}</span>
+                <span class="app-icon app-icon-glass">${ICONS.plus}</span>
                 <span class="tile-name">\u6DFB\u52A0\u4E66\u7B7E</span>
             </button>
-            ${empty}
-        `;
+            ${empty}`;
+        }
+        folderTemplate(folder) {
+          const items = bookmarksIn(folder);
+          const minis = items.slice(0, 4).map((bookmark) => siteIcon({ url: bookmark.url, name: bookmark.name, bookmark }, "mini-icon")).join("");
+          return `
+            <button class="tile folder-tile" type="button" data-folder="${escapeHtml(folder)}" data-drop-folder="${escapeHtml(folder)}" data-liquid-item title="${escapeHtml(folder)} \xB7 ${items.length} \u4E2A\u4E66\u7B7E">
+                <span class="app-icon app-icon-glass folder-icon">${minis || ICONS.folder}</span>
+                <span class="tile-name">${escapeHtml(folder)}</span>
+            </button>`;
         }
         bookmarkTemplate(bookmark) {
-          const name = cleanDisplayName(bookmark.name) || cleanDisplayName(new URL(bookmark.url).hostname);
+          const name = bookmarkName(bookmark);
           const newTab = appStore.state.settings.layout.openInNewTab;
           return `
             <a class="tile bookmark-tile" href="${escapeHtml(bookmark.url)}" ${newTab ? 'target="_blank"' : ""} rel="noopener noreferrer"
                 data-bookmark-id="${escapeHtml(bookmark.id)}" data-liquid-item draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
-                <span class="tile-icon"><img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="64px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" data-icon-raster="${bookmarkIconIsRaster(bookmark)}" alt="" decoding="async"></span>
+                ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark })}
                 <span class="tile-name">${escapeHtml(name)}</span>
                 <button class="tile-more" type="button" tabindex="-1" aria-label="\u4E66\u7B7E\u64CD\u4F5C">${ICONS.more}</button>
-            </a>
-        `;
+            </a>`;
         }
         recentTemplate() {
           if (this.recent.state === "loading" || this.recent.state === "idle") return '<p class="launchpad-message">\u6B63\u5728\u6574\u7406\u6D4F\u89C8\u8BB0\u5F55\u2026</p>';
@@ -1616,78 +1822,82 @@
           if (!this.recent.sites.length) return '<p class="launchpad-message">\u6700\u8FD1 30 \u5929\u8FD8\u6CA1\u6709\u53EF\u5C55\u793A\u7684\u7F51\u7AD9</p>';
           const newTab = appStore.state.settings.layout.openInNewTab;
           return this.recent.sites.map((site, index) => `
-            <a class="tile recent-tile" href="${escapeHtml(site.url)}" ${newTab ? 'target="_blank"' : ""} rel="noopener noreferrer" data-recent-index="${index}" data-liquid-item title="${escapeHtml(site.host)}">
-                <span class="tile-icon"><img src="${escapeHtml(faviconUrl(site.url))}" srcset="${escapeHtml(faviconSrcSet(site.url))}" sizes="64px" alt="" loading="lazy" decoding="async"></span>
+            <a class="tile recent-tile" href="${escapeHtml(site.url)}" ${newTab ? 'target="_blank"' : ""} rel="noopener noreferrer" data-recent-index="${index}" data-liquid-item title="${escapeHtml(hostOf(site.url))}">
+                ${siteIcon({ url: site.url, name: site.title })}
                 <span class="tile-name">${escapeHtml(site.title)}</span>
-            </a>
-        `).join("");
+            </a>`).join("");
         }
-        bindEvents() {
-          this.querySelectorAll(".nav-item[data-view]").forEach((button) => {
-            button.addEventListener("click", () => this.setView(button.dataset.view));
+        bindShell() {
+          this.querySelector(".launchpad-done")?.addEventListener("click", () => this.close());
+          this.querySelector(".launchpad-backdrop")?.addEventListener("click", () => this.close());
+          this.querySelector(".launchpad")?.addEventListener("click", (event) => {
+            if (event.target.matches(".launchpad, .launchpad-top")) this.close();
           });
-          this.querySelectorAll(".nav-item[data-folder]").forEach((button) => {
-            button.addEventListener("click", () => this.openFolder(button.dataset.folder ?? ROOT));
+          const search = this.querySelector(".launchpad-search input");
+          search.addEventListener("input", () => {
+            this.query = search.value.trim();
+            this.render();
           });
-          this.querySelector(".launchpad-nav")?.addEventListener("keydown", (event) => {
-            const key = event.key;
-            if (key !== "ArrowDown" && key !== "ArrowUp") return;
-            const items = [...this.querySelectorAll(".nav-item")];
+          const tabs = this.querySelector(".launchpad-tabs");
+          tabs.addEventListener("click", (event) => {
+            const button = event.target.closest(".launchpad-tab");
+            if (!button) return;
+            if (button.classList.contains("create-folder")) void createFolder();
+            else if (button.dataset.view === "recent") this.show("recent", ROOT_FOLDER);
+            else this.show("bookmarks", button.dataset.folder ?? ROOT_FOLDER);
+          });
+          tabs.addEventListener("keydown", (event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            const items = [...tabs.querySelectorAll(".launchpad-tab")];
             const index = items.indexOf(document.activeElement);
             if (index < 0) return;
             event.preventDefault();
-            items[(index + (key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+            items[(index + (event.key === "ArrowRight" ? 1 : -1) + items.length) % items.length].focus();
           });
-          this.querySelector(".create-folder")?.addEventListener("click", () => void this.createFolder());
-          this.querySelector(".rename-current")?.addEventListener("click", () => void this.renameFolder(this.currentFolder));
-          this.querySelector(".delete-current")?.addEventListener("click", () => void this.deleteFolder(this.currentFolder));
-          this.querySelector(".refresh-recent")?.addEventListener("click", () => void this.loadRecent());
-          this.querySelectorAll(".add-bookmark, .add-bookmark-action").forEach((button) => button.addEventListener("click", () => this.openDialog()));
-          this.querySelectorAll(".bookmark-tile img").forEach((image) => bindIconFallback(image));
-          this.querySelectorAll(".recent-tile img").forEach((image) => {
-            image.addEventListener("error", () => image.classList.add("icon-unavailable"), { once: true });
-          });
-          this.querySelectorAll(".bookmark-tile").forEach((card) => this.bindBookmark(card));
-          this.querySelectorAll("[data-drop-folder]").forEach((target) => this.bindFolderDrop(target));
           const grid = this.querySelector(".launchpad-grid");
-          grid?.addEventListener("dragover", (event) => {
+          grid.addEventListener("click", (event) => {
+            const target = event.target;
+            if (target === grid) {
+              this.close();
+              return;
+            }
+            const more = target.closest(".tile-more");
+            if (more) {
+              event.preventDefault();
+              event.stopPropagation();
+              this.openTileMenu(more.closest(".tile"), more);
+              return;
+            }
+            const folder = target.closest(".folder-tile");
+            if (folder) this.show("bookmarks", folder.dataset.folder ?? ROOT_FOLDER);
+            else if (target.closest(".add-bookmark")) openBookmarkDialog(this, { folder: this.folder });
+          });
+          grid.addEventListener("dragover", (event) => {
             if (this.draggingId !== null) event.preventDefault();
           });
-          grid?.addEventListener("drop", (event) => {
+          grid.addEventListener("drop", (event) => {
             if (event.target.closest(".bookmark-tile, [data-drop-folder]")) return;
             event.preventDefault();
             const id = this.dragId(event);
-            if (id !== null) void this.moveBookmark(id, this.currentFolder);
-          });
-          this.querySelectorAll(".tile-more").forEach((button) => {
-            button.addEventListener("click", (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              this.openTileMenu(button.closest(".tile"), button);
-            });
+            if (id !== null) void moveBookmark(id, this.folder);
           });
           this.querySelector(".launchpad")?.addEventListener("contextmenu", (event) => {
             const mouse = event;
             const target = mouse.target;
-            const tile = target.closest(".tile, .nav-folder");
-            if (tile?.classList.contains("add-tile") || !tile && target.closest(".launchpad-nav")) return;
+            const tile = target.closest(".tile:not(.add-tile), .launchpad-tab[data-folder]");
+            if (!tile && !target.closest(".launchpad-grid")) return;
             event.preventDefault();
             const at = mouse.clientX || mouse.clientY ? { x: mouse.clientX, y: mouse.clientY } : tile ?? target;
             if (tile) this.openTileMenu(tile, at);
-            else if (this.view === "bookmarks") this.openMenuFor([
-              { label: "\u6DFB\u52A0\u4E66\u7B7E", icon: ICONS.plus, action: () => this.openDialog() },
-              { label: "\u65B0\u5EFA\u6587\u4EF6\u5939", icon: ICONS.folderPlus, action: () => void this.createFolder() }
+            else if (this.view === "bookmarks" && !this.query) openMenu([
+              { label: "\u6DFB\u52A0\u4E66\u7B7E", icon: ICONS.plus, action: () => openBookmarkDialog(this, { folder: this.folder }) },
+              { label: "\u65B0\u5EFA\u6587\u4EF6\u5939", icon: ICONS.folderPlus, action: () => void createFolder() }
             ], at);
           });
         }
         bindBookmark(card) {
           const id = card.dataset.bookmarkId ?? "";
-          card.addEventListener("click", (event) => {
-            const bookmark = findBookmark(id);
-            if (!bookmark || event.defaultPrevented || new URL(bookmark.url).protocol !== "chrome-extension:") return;
-            event.preventDefault();
-            void Promise.resolve(chrome.tabs.create({ url: bookmark.url })).catch(notifyError);
-          });
+          card.addEventListener("click", (event) => interceptExtensionLink(event, card.href));
           card.addEventListener("dragstart", (event) => {
             this.draggingId = id;
             event.dataTransfer?.setData("text/plain", id);
@@ -1712,11 +1922,12 @@
             event.stopPropagation();
             card.classList.remove("drop-target");
             const sourceId = this.dragId(event);
-            if (sourceId !== null && sourceId !== id) void this.moveBookmark(sourceId, this.currentFolder, id);
+            const target = findBookmark(id);
+            if (sourceId !== null && sourceId !== id && target) void moveBookmark(sourceId, target.folder, id);
           });
         }
         bindFolderDrop(target) {
-          const folder = target.dataset.dropFolder ?? ROOT;
+          const folder = target.dataset.dropFolder ?? ROOT_FOLDER;
           target.addEventListener("dragover", (event) => {
             if (this.draggingId === null) return;
             event.preventDefault();
@@ -1728,155 +1939,49 @@
             event.stopPropagation();
             target.classList.remove("drop-target");
             const id = this.dragId(event);
-            if (id !== null) void this.moveBookmark(id, folder);
+            if (id !== null) void moveBookmark(id, folder);
           });
         }
         openTileMenu(tile, at) {
-          if (tile.dataset.folder) {
-            const folder = tile.dataset.folder;
-            if (folder === ROOT) return;
-            this.openMenuFor([
-              { label: "\u6253\u5F00", icon: ICONS.open, action: () => this.openFolder(folder) },
-              { label: "\u91CD\u547D\u540D", icon: ICONS.edit, action: () => void this.renameFolder(folder) },
+          const folder = tile.dataset.folder;
+          if (folder !== void 0) {
+            if (folder === ROOT_FOLDER) return;
+            openMenu([
+              { label: "\u6253\u5F00", icon: ICONS.open, action: () => this.show("bookmarks", folder) },
+              { label: "\u91CD\u547D\u540D\u2026", icon: ICONS.edit, action: () => void renameFolder(folder, (name) => {
+                if (this.folder === folder || this.folder === name) this.folder = name;
+              }) },
               { separator: true },
-              { label: "\u5220\u9664\u6587\u4EF6\u5939", icon: ICONS.trash, danger: true, action: () => void this.deleteFolder(folder) }
+              { label: "\u5220\u9664\u6587\u4EF6\u5939", icon: ICONS.trash, danger: true, action: () => void deleteFolder(folder) }
             ], at);
             return;
           }
           if (tile.dataset.recentIndex !== void 0) {
             const site = this.recent.sites[Number(tile.dataset.recentIndex)];
-            if (!site) return;
-            this.openMenuFor([
-              { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => window.open(site.url, "_blank", "noopener") },
-              { label: "\u6DFB\u52A0\u5230\u4E66\u7B7E", icon: ICONS.plus, action: () => this.openDialog(void 0, { url: site.url, name: site.title }) }
-            ], at);
+            if (site) siteMenu(this, site, at);
             return;
           }
           const bookmark = findBookmark(tile.dataset.bookmarkId ?? "");
-          if (!bookmark) return;
-          const destinations = appStore.state.folders.filter((folder) => folder !== bookmark.folder);
-          this.openMenuFor([
-            { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => void Promise.resolve(chrome.tabs.create({ url: bookmark.url })).catch(notifyError) },
-            { label: "\u7F16\u8F91", icon: ICONS.edit, action: () => this.openDialog(bookmark) },
-            ...destinations.length ? [
-              { separator: true },
-              { heading: "\u79FB\u52A8\u5230" },
-              ...destinations.map((folder) => ({ label: folder, icon: ICONS.move, action: () => void this.moveBookmark(bookmark.id, folder) }))
-            ] : [],
-            { separator: true },
-            { label: "\u5220\u9664", icon: ICONS.trash, danger: true, action: () => void this.deleteBookmark(bookmark) }
-          ], at);
+          if (bookmark) bookmarkMenu(this, bookmark, at);
         }
-        openMenuFor(items, at) {
-          openMenu(items, at);
-        }
-        setView(view) {
-          if (view === this.view) return;
+        show(view, folder) {
+          if (view === this.view && folder === this.folder && !this.query) return;
           this.view = view;
-          try {
-            localStorage.setItem(VIEW_KEY, view);
-          } catch {
-          }
-          this.keepScroll = false;
+          this.folder = folder;
+          this.query = "";
+          const search = this.querySelector(".launchpad-search input");
+          if (search) search.value = "";
           this.render();
-          this.querySelector(".nav-item.is-active")?.focus({ preventScroll: true });
-        }
-        openFolder(folder) {
-          const changed = this.currentFolder !== folder || this.view !== "bookmarks";
-          this.currentFolder = folder;
-          if (this.view !== "bookmarks") {
-            this.view = "bookmarks";
-            try {
-              localStorage.setItem(VIEW_KEY, "bookmarks");
-            } catch {
-            }
-          }
-          if (!changed) return;
-          this.keepScroll = false;
-          this.render();
-          this.querySelector(".nav-item.is-active")?.focus({ preventScroll: true });
-        }
-        openDialog(bookmark, draft) {
-          this.dispatchEvent(new CustomEvent("open-bookmark-dialog", {
-            bubbles: true,
-            composed: true,
-            detail: { bookmark, draft, folder: this.currentFolder }
-          }));
+          this.querySelector(".launchpad-tab.is-active")?.focus({ preventScroll: true });
         }
         async loadRecent() {
           this.recent = { ...this.recent, state: "loading", error: "" };
-          this.render();
-          await this.fetchRecent();
-        }
-        async fetchRecent() {
           try {
-            if (!chrome.history?.search) throw new Error("\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u5386\u53F2\u8BB0\u5F55\u8BBF\u95EE");
-            const items = await new Promise((resolve, reject) => {
-              chrome.history.search({ text: "", startTime: Date.now() - 30 * 24 * 60 * 60 * 1e3, maxResults: 3e3 }, (result) => {
-                if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-                else resolve(result ?? []);
-              });
-            });
-            this.recent = { sites: rankSites(items), state: "ready", error: "" };
+            this.recent = { sites: await loadRecentSites(), state: "ready", error: "" };
           } catch (error) {
             this.recent = { sites: [], state: "error", error: error instanceof Error && error.message ? error.message : "\u8BFB\u53D6\u6D4F\u89C8\u8BB0\u5F55\u5931\u8D25" };
           }
           if (this.view === "recent") this.render();
-        }
-        async createFolder() {
-          const name = await promptText("\u65B0\u5EFA\u6587\u4EF6\u5939", { label: "\u540D\u79F0", placeholder: "\u4F8B\u5982\uFF1A\u5DE5\u4F5C\u3001\u5A31\u4E50" }, "\u521B\u5EFA");
-          if (!name) return;
-          try {
-            if (!await appStore.addFolder(name)) notifyError(new Error(`\u5DF2\u7ECF\u6709\u540D\u4E3A\u201C${name}\u201D\u7684\u6587\u4EF6\u5939`));
-          } catch (error) {
-            notifyError(error);
-          }
-        }
-        async renameFolder(folder) {
-          const name = await promptText("\u91CD\u547D\u540D\u6587\u4EF6\u5939", { label: "\u540D\u79F0", value: folder });
-          if (!name || name === folder) return;
-          const inside = this.currentFolder === folder;
-          if (inside) this.currentFolder = name;
-          try {
-            if (!await appStore.renameFolder(folder, name)) {
-              if (inside) this.currentFolder = folder;
-              notifyError(new Error(`\u5DF2\u7ECF\u6709\u540D\u4E3A\u201C${name}\u201D\u7684\u6587\u4EF6\u5939`));
-            }
-          } catch (error) {
-            if (inside) this.currentFolder = folder;
-            notifyError(error);
-          }
-        }
-        async deleteFolder(folder) {
-          const count = appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).length;
-          const confirmed = await confirmAction({
-            title: `\u5220\u9664\u6587\u4EF6\u5939\u201C${folder}\u201D\uFF1F`,
-            body: count ? `\u5176\u4E2D\u7684 ${count} \u4E2A\u4E66\u7B7E\u4F1A\u79FB\u56DE\u201C${ROOT}\u201D\uFF0C\u4E0D\u4F1A\u88AB\u5220\u9664\u3002` : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\u3002",
-            confirmText: "\u5220\u9664",
-            danger: true
-          });
-          if (!confirmed) return;
-          try {
-            await appStore.deleteFolder(folder);
-            if (this.currentFolder === folder) this.openFolder(ROOT);
-          } catch (error) {
-            notifyError(error);
-          }
-        }
-        async deleteBookmark(bookmark) {
-          const confirmed = await confirmAction({
-            title: `\u5220\u9664\u201C${cleanDisplayName(bookmark.name) || bookmark.url}\u201D\uFF1F`,
-            confirmText: "\u5220\u9664",
-            danger: true
-          });
-          if (confirmed) await appStore.deleteBookmark(bookmark.id).catch(notifyError);
-        }
-        async moveBookmark(id, folder, targetId) {
-          try {
-            await appStore.moveBookmark(id, folder, targetId);
-          } catch (error) {
-            notifyError(error);
-          }
         }
         dragId(event) {
           return event.dataTransfer?.getData("text/plain") || this.draggingId;
@@ -1886,6 +1991,11 @@
   });
 
   // src/components/dashboard-header.ts
+  function formatDate(date, format) {
+    const weekday = date.toLocaleDateString("zh-CN", { weekday: format === "long" ? "long" : "short" });
+    const month = date.getMonth() + 1;
+    return format === "long" ? `${month}\u6708${date.getDate()}\u65E5 ${weekday}` : `${month}/${date.getDate()} ${weekday}`;
+  }
   var DashboardHeader;
   var init_dashboard_header = __esm({
     "src/components/dashboard-header.ts"() {
@@ -1906,7 +2016,7 @@
         render() {
           this.hidden = !appStore.state.settings.layout.showClock;
           if (!this.querySelector(".hero-time")) {
-            this.innerHTML = '<time class="hero-time" id="time">--:--</time><span class="hero-date" id="date"></span>';
+            this.innerHTML = '<p class="hero-date" id="date"></p><time class="hero-time" id="time">--:--</time>';
           }
           this.updateClock();
         }
@@ -1932,7 +2042,106 @@
             minute: "2-digit",
             hour12: clockFormat === "12h"
           });
-          date.textContent = now.toLocaleDateString("zh-CN", dateFormat === "long" ? { month: "long", day: "numeric", weekday: "long" } : { month: "numeric", day: "numeric", weekday: "short" });
+          date.textContent = formatDate(now, dateFormat);
+        }
+      };
+    }
+  });
+
+  // src/components/home-dock.ts
+  var MAX_ITEMS, HomeDock;
+  var init_home_dock = __esm({
+    "src/components/home-dock.ts"() {
+      "use strict";
+      init_history();
+      init_store();
+      init_utils();
+      init_base();
+      init_bookmark_actions();
+      init_icons();
+      init_site_icon();
+      MAX_ITEMS = 12;
+      HomeDock = class extends StoreElement {
+        observedChanges = ["bookmarks", "settings.layout"];
+        sites = null;
+        render() {
+          const { showBookmarks, dockSource, dockSize, dockMagnify, openInNewTab: openInNewTab2 } = appStore.state.settings.layout;
+          this.hidden = !showBookmarks;
+          if (this.hidden) {
+            this.innerHTML = "";
+            return;
+          }
+          this.style.setProperty("--dock-size", `${dockSize}px`);
+          this.classList.toggle("is-magnifying", dockMagnify);
+          const target = openInNewTab2 ? 'target="_blank"' : "";
+          let items = "";
+          if (dockSource === "recent") {
+            if (!this.sites) void this.loadSites();
+            items = (this.sites ?? []).slice(0, MAX_ITEMS).map((site, index) => `
+                <a class="dock-item" href="${escapeHtml(site.url)}" ${target} rel="noopener noreferrer" data-site-index="${index}" data-liquid-item aria-label="${escapeHtml(site.title)}" draggable="false">
+                    ${siteIcon({ url: site.url, name: site.title })}
+                    <span class="dock-label glass glass-dark" aria-hidden="true">${escapeHtml(site.title)}</span>
+                </a>`).join("");
+          } else {
+            const bookmarks = bookmarksIn(ROOT_FOLDER).slice(0, MAX_ITEMS);
+            items = bookmarks.map((bookmark) => `
+                <a class="dock-item" href="${escapeHtml(bookmark.url)}" ${target} rel="noopener noreferrer" data-bookmark-id="${escapeHtml(bookmark.id)}" data-liquid-item aria-label="${escapeHtml(bookmarkName(bookmark))}" draggable="false">
+                    ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark })}
+                    <span class="dock-label glass glass-dark" aria-hidden="true">${escapeHtml(bookmarkName(bookmark))}</span>
+                </a>`).join("");
+            if (!bookmarks.length) items = `
+                <button class="dock-item dock-add" type="button" data-liquid-item aria-label="\u6DFB\u52A0\u4E66\u7B7E">
+                    <span class="app-icon app-icon-glass">${ICONS.plus}</span>
+                    <span class="dock-label glass glass-dark" aria-hidden="true">\u6DFB\u52A0\u4E66\u7B7E</span>
+                </button>`;
+          }
+          this.innerHTML = `
+            <nav class="glass dock" aria-label="\u5E38\u7528\u4E66\u7B7E">
+                ${items}
+                <span class="dock-divider" aria-hidden="true"></span>
+                    <button class="dock-item dock-recent" type="button" data-liquid-item aria-label="\u5E38\u8BBF\u95EE">
+                        <span class="app-icon app-icon-glass">${ICONS.clock}</span>
+                        <span class="dock-label glass glass-dark" aria-hidden="true">\u5E38\u8BBF\u95EE</span>
+                    </button>
+                    <button class="dock-item dock-all" type="button" data-liquid-item aria-label="\u5168\u90E8\u4E66\u7B7E">
+                        <span class="app-icon app-icon-glass">${ICONS.grid}</span>
+                        <span class="dock-label glass glass-dark" aria-hidden="true">\u5168\u90E8\u4E66\u7B7E</span>
+                    </button>
+            </nav>`;
+          bindSiteIcons(this);
+          this.bindEvents();
+        }
+        bindEvents() {
+          this.querySelector(".dock-recent")?.addEventListener("click", () => this.openLaunchpad("recent"));
+          this.querySelector(".dock-all")?.addEventListener("click", () => this.openLaunchpad("bookmarks"));
+          this.querySelector(".dock-add")?.addEventListener("click", (event) => openBookmarkDialog(event.currentTarget, { folder: ROOT_FOLDER }));
+          this.querySelectorAll(".dock-item[data-bookmark-id]").forEach((item) => {
+            item.addEventListener("click", (event) => interceptExtensionLink(event, item.href));
+          });
+          this.querySelector(".dock")?.addEventListener("contextmenu", (event) => {
+            const mouse = event;
+            const item = mouse.target.closest(".dock-item");
+            const at = mouse.clientX || mouse.clientY ? { x: mouse.clientX, y: mouse.clientY } : item;
+            if (!item || !at) return;
+            const bookmark = item.dataset.bookmarkId ? findBookmark(item.dataset.bookmarkId) : void 0;
+            const site = item.dataset.siteIndex !== void 0 ? this.sites?.[Number(item.dataset.siteIndex)] : void 0;
+            if (!bookmark && !site) return;
+            event.preventDefault();
+            if (bookmark) bookmarkMenu(this, bookmark, at);
+            else if (site) siteMenu(this, site, at);
+          });
+        }
+        openLaunchpad(view) {
+          this.dispatchEvent(new CustomEvent("open-launchpad", { bubbles: true, composed: true, detail: { view } }));
+        }
+        async loadSites() {
+          this.sites = [];
+          try {
+            this.sites = await loadRecentSites();
+          } catch {
+            this.sites = [];
+          }
+          this.render();
         }
       };
     }
@@ -2950,195 +3159,419 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
   });
 
-  // src/components/search-command.ts
-  var ENGINES, ENGINE_ORDER, MAX_SUGGESTIONS, SearchCommand;
-  var init_search_command = __esm({
-    "src/components/search-command.ts"() {
+  // src/components/spotlight-search.ts
+  function siteRow(site) {
+    return { kind: "site", title: site.title, subtitle: `${site.host} \xB7 \u8FD1 30 \u5929 ${site.count} \u6B21`, url: site.url, site };
+  }
+  function rowIcon(row) {
+    if (row.kind === "web") return `<span class="row-icon row-icon-plain">${ICONS.search}</span>`;
+    if (row.kind === "recent") return `<span class="row-icon row-icon-plain">${ICONS.clock}</span>`;
+    if (row.kind === "url") return `<span class="row-icon row-icon-plain">${ICONS.open}</span>`;
+    if (row.kind === "bookmark") return siteIcon({ url: row.url, name: row.title, bookmark: row.bookmark }, "row-icon");
+    return siteIcon({ url: row.url, name: row.title }, "row-icon");
+  }
+  function matchScore(query, name, url) {
+    const host = hostOf(url).toLowerCase();
+    const title = name.toLowerCase();
+    if (host.startsWith(query) || title.startsWith(query)) return 3;
+    if (host.includes(query) || title.includes(query)) return 2;
+    return url.toLowerCase().includes(query) ? 1 : 0;
+  }
+  function looksLikeUrl(value) {
+    if (/\s/.test(value)) return false;
+    return /^[a-z][a-z\d+.-]*:\/\//i.test(value) || /^localhost(:\d+)?(\/|$)/i.test(value) || /^[\w-]+(\.[\w-]+)*\.[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(value);
+  }
+  var ENGINES, SHORTCUT_LABEL, ENGINE_ORDER, GROUP_TITLES, SpotlightSearch;
+  var init_spotlight_search = __esm({
+    "src/components/spotlight-search.ts"() {
       "use strict";
+      init_history();
       init_store();
       init_utils();
-      init_base();
+      init_bookmark_actions();
       init_icons();
+      init_site_icon();
+      init_ui_layer();
       ENGINES = {
         google: { label: "Google", url: "https://www.google.com/search?q=" },
         bing: { label: "Bing", url: "https://www.bing.com/search?q=" },
         baidu: { label: "\u767E\u5EA6", url: "https://www.baidu.com/s?wd=" },
         duckduckgo: { label: "DuckDuckGo", url: "https://duckduckgo.com/?q=" }
       };
+      SHORTCUT_LABEL = /Mac|iPhone|iPad/.test(navigator.platform) ? "\u2318K" : "Ctrl K";
       ENGINE_ORDER = Object.keys(ENGINES);
-      MAX_SUGGESTIONS = 6;
-      SearchCommand = class extends StoreElement {
-        observedChanges = ["settings.layout", "recentSearches"];
-        activeIndex = -1;
-        handleStoreChange() {
-          if (!this.querySelector("form")) return this.render();
-          const { layout } = appStore.state.settings;
-          this.hidden = !layout.showSearch;
-          const engine = this.querySelector(".search-engine");
-          if (engine) engine.textContent = ENGINES[layout.searchEngine].label;
-          if (this.contains(document.activeElement)) this.renderSuggestions();
-        }
-        render() {
-          const { layout } = appStore.state.settings;
-          this.hidden = !layout.showSearch;
+      GROUP_TITLES = { url: "\u7F51\u5740", bookmark: "\u4E66\u7B7E", site: "\u5E38\u8BBF\u95EE", web: "\u641C\u7D22\u7F51\u7EDC", recent: "\u6700\u8FD1\u641C\u7D22" };
+      SpotlightSearch = class extends HTMLElement {
+        engine = "google";
+        rows = [];
+        selected = 0;
+        sites = [];
+        releaseLayer = null;
+        connectedCallback() {
+          this.hidden = true;
           this.innerHTML = `
-            <form class="search-shell glass-panel" role="search" data-liquid-item>
-                ${ICONS.search}
-                <input name="query" type="search" autocomplete="off" spellcheck="false" placeholder="\u641C\u7D22\u7F51\u7EDC\uFF0C\u6216\u6309 / \u805A\u7126" aria-label="\u641C\u7D22\u7F51\u7EDC"
-                    role="combobox" aria-expanded="false" aria-controls="search-suggestions" aria-autocomplete="list">
-                <button class="search-engine" type="button" title="\u5207\u6362\u641C\u7D22\u5F15\u64CE">${ENGINES[layout.searchEngine].label}</button>
-            </form>
-            <ul class="search-suggestions glass-panel" id="search-suggestions" role="listbox" hidden></ul>
-        `;
-          const form = this.querySelector("form");
-          const input = this.querySelector('input[name="query"]');
-          form.addEventListener("submit", (event) => {
-            event.preventDefault();
-            this.search(input.value);
-          });
-          input.addEventListener("focus", () => this.renderSuggestions());
+            <div class="spotlight-backdrop" aria-hidden="true"></div>
+            <section class="glass glass-thick spotlight" role="dialog" aria-modal="true" aria-label="\u641C\u7D22">
+                <div class="spotlight-field">
+                    ${ICONS.search}
+                    <div class="spotlight-input">
+                        <span class="spotlight-ghost" aria-hidden="true"><span class="ghost-typed"></span><span class="ghost-rest"></span></span>
+                        <input type="text" autocomplete="off" spellcheck="false" placeholder="\u641C\u7D22\u6216\u8F93\u5165\u7F51\u5740" aria-label="\u641C\u7D22\u6216\u8F93\u5165\u7F51\u5740"
+                            role="combobox" aria-expanded="true" aria-controls="spotlight-results" aria-autocomplete="list">
+                    </div>
+                    <span class="spotlight-scope"></span>
+                </div>
+                <div class="spotlight-results" id="spotlight-results" role="listbox" aria-label="\u641C\u7D22\u7ED3\u679C"></div>
+                <footer class="spotlight-footer">
+                    <div class="segmented spotlight-engines" role="radiogroup" aria-label="\u641C\u7D22\u5F15\u64CE">
+                        ${ENGINE_ORDER.map((key) => `<button type="button" role="radio" data-engine="${key}" data-liquid-item>${ENGINES[key].label}</button>`).join("")}
+                    </div>
+                    <div class="spotlight-hints" aria-hidden="true">
+                        <span><kbd>\u2191</kbd><kbd>\u2193</kbd> \u9009\u62E9</span>
+                        <span><kbd>\u21E5</kbd> \u5207\u6362\u5F15\u64CE</span>
+                        <span><kbd>esc</kbd> \u5173\u95ED</span>
+                    </div>
+                </footer>
+            </section>`;
+          const input = this.input;
           input.addEventListener("input", () => {
-            this.activeIndex = -1;
-            this.renderSuggestions();
+            this.selected = 0;
+            this.renderResults();
           });
-          input.addEventListener("keydown", (event) => this.onKeyDown(event));
-          this.addEventListener("focusout", (event) => {
-            if (!this.contains(event.relatedTarget)) this.hideSuggestions();
-          });
-          this.querySelector(".search-engine")?.addEventListener("click", () => {
-            const next = ENGINE_ORDER[(ENGINE_ORDER.indexOf(appStore.state.settings.layout.searchEngine) + 1) % ENGINE_ORDER.length];
-            void appStore.updateSettings("layout", { searchEngine: next });
-          });
-          this.querySelector(".search-suggestions")?.addEventListener("pointerdown", (event) => {
-            event.preventDefault();
+          input.addEventListener("keydown", this.onKeyDown);
+          this.querySelector(".spotlight-backdrop")?.addEventListener("pointerdown", () => this.close());
+          const results = this.querySelector(".spotlight-results");
+          results.addEventListener("pointerdown", (event) => event.preventDefault());
+          results.addEventListener("click", (event) => {
             const target = event.target;
-            const item = target.closest("[data-query]");
-            if (!item) return;
-            if (target.closest(".suggestion-remove")) void appStore.removeRecentSearch(item.dataset.query ?? "");
-            else this.search(item.dataset.query ?? "");
+            const row = target.closest("[data-index]");
+            if (!row) return;
+            const item = this.rows[Number(row.dataset.index)];
+            if (target.closest(".row-remove") && item?.kind === "recent") {
+              void appStore.removeRecentSearch(item.query).then(() => this.renderResults());
+              return;
+            }
+            this.activate(Number(row.dataset.index), event.metaKey || event.ctrlKey);
+          });
+          results.addEventListener("pointermove", (event) => {
+            const row = event.target.closest("[data-index]");
+            const index = row ? Number(row.dataset.index) : -1;
+            if (index >= 0 && index !== this.selected) this.select(index);
+          });
+          const engines = this.querySelector(".spotlight-engines");
+          engines.addEventListener("pointerdown", (event) => event.preventDefault());
+          engines.addEventListener("click", (event) => {
+            const button = event.target.closest("[data-engine]");
+            if (button) this.setEngine(button.dataset.engine);
+          });
+          engines.addEventListener("keydown", (event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            this.cycleEngine(event.key === "ArrowRight" ? 1 : -1);
+            this.querySelector(`[data-engine="${this.engine}"]`)?.focus();
           });
         }
-        suggestions() {
-          const query = this.querySelector('input[name="query"]')?.value.trim().toLowerCase() ?? "";
-          return appStore.state.recentSearches.filter((item) => !query || item.toLowerCase().includes(query) && item.toLowerCase() !== query).slice(0, MAX_SUGGESTIONS);
+        disconnectedCallback() {
+          this.close();
         }
-        renderSuggestions() {
-          const list = this.querySelector(".search-suggestions");
-          const input = this.querySelector('input[name="query"]');
-          if (!list || !input) return;
-          const items = this.suggestions();
-          this.activeIndex = Math.min(this.activeIndex, items.length - 1);
-          list.hidden = !items.length;
-          input.setAttribute("aria-expanded", String(Boolean(items.length)));
-          list.innerHTML = items.map((item, index) => `
-            <li role="option" id="suggestion-${index}" data-query="${escapeHtml(item)}" aria-selected="${index === this.activeIndex}" class="${index === this.activeIndex ? "is-active" : ""}">
-                ${ICONS.clock}<span>${escapeHtml(item)}</span>
-                <button class="suggestion-remove" type="button" tabindex="-1" aria-label="\u5220\u9664\u8FD9\u6761\u8BB0\u5F55">${ICONS.close}</button>
-            </li>`).join("");
-          if (this.activeIndex >= 0) input.setAttribute("aria-activedescendant", `suggestion-${this.activeIndex}`);
-          else input.removeAttribute("aria-activedescendant");
+        get isOpen() {
+          return !this.hidden;
         }
-        hideSuggestions() {
-          const list = this.querySelector(".search-suggestions");
-          if (list) list.hidden = true;
-          this.querySelector('input[name="query"]')?.setAttribute("aria-expanded", "false");
-          this.activeIndex = -1;
+        open() {
+          if (this.isOpen) return;
+          this.engine = appStore.state.settings.layout.searchEngine;
+          this.input.value = "";
+          this.selected = 0;
+          this.hidden = false;
+          document.body.classList.add("spotlight-open");
+          this.releaseLayer = pushLayer(this.querySelector(".spotlight"), () => this.close());
+          this.syncEngines();
+          this.renderResults();
+          requestAnimationFrame(() => this.input.focus());
+          void loadRecentSites().then((sites) => {
+            this.sites = sites;
+            if (this.isOpen) this.renderResults();
+          }).catch(() => void 0);
         }
-        onKeyDown(event) {
-          const items = this.suggestions();
-          const input = event.target;
+        close() {
+          if (!this.isOpen) return;
+          this.hidden = true;
+          document.body.classList.remove("spotlight-open");
+          const release = this.releaseLayer;
+          this.releaseLayer = null;
+          release?.();
+        }
+        get input() {
+          return this.querySelector(".spotlight-field input");
+        }
+        onKeyDown = (event) => {
+          if (event.isComposing) return;
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            if (!items.length) return;
             event.preventDefault();
-            const step = event.key === "ArrowDown" ? 1 : -1;
-            this.activeIndex = (this.activeIndex + step + items.length + 1) % (items.length + 1);
-            if (this.activeIndex === items.length) this.activeIndex = -1;
-            this.renderSuggestions();
-          } else if (event.key === "Enter" && this.activeIndex >= 0 && items[this.activeIndex]) {
+            if (this.rows.length) this.select((this.selected + (event.key === "ArrowDown" ? 1 : -1) + this.rows.length) % this.rows.length);
+          } else if (event.key === "Enter") {
             event.preventDefault();
-            this.search(items[this.activeIndex]);
-          } else if (event.key === "Escape") {
-            if (!this.querySelector(".search-suggestions")?.hidden) {
-              event.preventDefault();
-              this.hideSuggestions();
-            } else if (input.value) {
-              input.value = "";
-            } else {
-              input.blur();
-            }
+            this.activate(this.selected, event.metaKey || event.ctrlKey);
+          } else if (event.key === "Tab" && !event.shiftKey) {
+            event.preventDefault();
+            this.cycleEngine(1);
+          } else if (event.key === "ArrowRight" && this.ghostRest() && this.input.selectionStart === this.input.value.length) {
+            event.preventDefault();
+            this.input.value += this.ghostRest();
+            this.selected = 0;
+            this.renderResults();
+          }
+        };
+        buildRows() {
+          const raw = this.input.value.trim();
+          const query = raw.toLowerCase();
+          const rows = [];
+          const engine = ENGINES[this.engine].label;
+          if (!query) {
+            this.sites.slice(0, 4).forEach((site) => rows.push(siteRow(site)));
+            appStore.state.recentSearches.slice(0, 5).forEach((item) => rows.push({ kind: "recent", title: item, subtitle: "", query: item }));
+            return rows;
+          }
+          if (looksLikeUrl(raw)) {
+            const url = normalizeUrl(raw);
+            if (url) rows.push({ kind: "url", title: hostOf(url) || url, subtitle: url, url });
+          }
+          const bookmarks = appStore.state.bookmarks.map((bookmark) => ({ bookmark, score: matchScore(query, bookmarkName(bookmark), bookmark.url) })).filter((item) => item.score > 0).sort((left, right) => right.score - left.score).slice(0, 5);
+          bookmarks.forEach(({ bookmark }) => rows.push({
+            kind: "bookmark",
+            title: bookmarkName(bookmark),
+            subtitle: `${hostOf(bookmark.url)}${bookmark.folder !== "\u5168\u90E8" ? ` \xB7 ${bookmark.folder} \u6587\u4EF6\u5939` : ""}`,
+            url: bookmark.url,
+            bookmark
+          }));
+          const bookmarkedHosts = new Set(bookmarks.map(({ bookmark }) => hostOf(bookmark.url)));
+          this.sites.filter((site) => !bookmarkedHosts.has(site.host) && matchScore(query, site.title, site.url) > 0).slice(0, 3).forEach((site) => rows.push(siteRow(site)));
+          rows.push({ kind: "web", title: raw, subtitle: `\u5728 ${engine} \u4E2D\u641C\u7D22`, query: raw });
+          appStore.state.recentSearches.filter((item) => item.toLowerCase().includes(query) && item.toLowerCase() !== query).slice(0, 4).forEach((item) => rows.push({ kind: "recent", title: item, subtitle: "", query: item }));
+          return rows;
+        }
+        renderResults() {
+          this.rows = this.buildRows();
+          this.selected = Math.min(this.selected, Math.max(0, this.rows.length - 1));
+          const results = this.querySelector(".spotlight-results");
+          let previous = "";
+          results.innerHTML = this.rows.map((row, index) => {
+            const heading = row.kind !== previous ? `<h3 class="spotlight-heading" role="presentation">${GROUP_TITLES[row.kind]}</h3>` : "";
+            previous = row.kind;
+            return `${heading}
+                <div class="spotlight-row" role="option" id="spotlight-option-${index}" data-index="${index}" aria-selected="false">
+                    ${rowIcon(row)}
+                    <span class="row-text"><strong>${escapeHtml(row.title)}</strong>${row.subtitle ? `<small>${escapeHtml(row.subtitle)}</small>` : ""}</span>
+                    <span class="row-hint">${row.kind === "web" || row.kind === "recent" ? "\u641C\u7D22" : "\u6253\u5F00"} <kbd>\u21B5</kbd></span>
+                    ${row.kind === "recent" ? '<button class="row-remove" type="button" tabindex="-1" aria-label="\u5220\u9664\u8FD9\u6761\u8BB0\u5F55">\u5220\u9664</button>' : ""}
+                </div>`;
+          }).join("") || '<p class="spotlight-empty">\u8F93\u5165\u5173\u952E\u8BCD\u641C\u7D22\u4E66\u7B7E\u4E0E\u7F51\u9875</p>';
+          results.hidden = false;
+          bindSiteIcons(results);
+          this.select(this.selected);
+        }
+        select(index) {
+          this.selected = index;
+          this.querySelectorAll(".spotlight-row").forEach((row2) => {
+            const active = Number(row2.dataset.index) === index;
+            row2.classList.toggle("is-selected", active);
+            row2.setAttribute("aria-selected", String(active));
+            if (active) row2.scrollIntoView({ block: "nearest" });
+          });
+          const row = this.rows[index];
+          if (row) this.input.setAttribute("aria-activedescendant", `spotlight-option-${index}`);
+          else this.input.removeAttribute("aria-activedescendant");
+          const scope = this.querySelector(".spotlight-scope");
+          scope.textContent = row && this.input.value.trim() ? GROUP_TITLES[row.kind] : "";
+          scope.hidden = !scope.textContent;
+          const typed = this.input.value;
+          const rest = this.ghostRest();
+          this.querySelector(".ghost-typed").textContent = rest ? typed : "";
+          this.querySelector(".ghost-rest").textContent = rest;
+        }
+        /** Inline completion of the top hit's host name, accepted with →. */
+        ghostRest() {
+          const typed = this.input.value;
+          const row = this.rows[this.selected];
+          if (this.selected !== 0 || !typed || /\s/.test(typed) || !row || row.kind !== "bookmark" && row.kind !== "site") return "";
+          const host = hostOf(row.url);
+          return host.toLowerCase().startsWith(typed.toLowerCase()) && host.length > typed.length ? host.slice(typed.length) : "";
+        }
+        activate(index, background) {
+          const row = this.rows[index];
+          if (!row) {
+            const query = this.input.value.trim();
+            if (query) this.search(query);
+            return;
+          }
+          if (row.kind === "web" || row.kind === "recent") {
+            this.search(row.query);
+            return;
+          }
+          const { openInNewTab: newTab } = appStore.state.settings.layout;
+          if (background || newTab || new URL(row.url).protocol === "chrome-extension:") {
+            openInNewTab(row.url);
+            this.close();
+          } else {
+            window.location.href = row.url;
           }
         }
-        search(value) {
-          const query = value.trim();
-          if (!query) return;
-          const engine = ENGINES[appStore.state.settings.layout.searchEngine];
-          void appStore.saveRecentSearch(query).finally(() => {
-            window.location.href = `${engine.url}${encodeURIComponent(query)}`;
+        search(query) {
+          const target = `${ENGINES[this.engine].url}${encodeURIComponent(query)}`;
+          const save = appStore.state.settings.layout.saveSearches ? appStore.saveRecentSearch(query) : Promise.resolve();
+          void save.finally(() => {
+            window.location.href = target;
+          });
+        }
+        setEngine(engine) {
+          this.engine = engine;
+          this.syncEngines();
+          this.renderResults();
+        }
+        cycleEngine(step) {
+          const index = ENGINE_ORDER.indexOf(this.engine);
+          this.setEngine(ENGINE_ORDER[(index + step + ENGINE_ORDER.length) % ENGINE_ORDER.length]);
+        }
+        syncEngines() {
+          this.querySelectorAll("[data-engine]").forEach((button) => {
+            const checked = button.dataset.engine === this.engine;
+            button.classList.toggle("is-active", checked);
+            button.setAttribute("aria-checked", String(checked));
+            button.tabIndex = checked ? 0 : -1;
           });
         }
       };
     }
   });
 
-  // src/components/settings-drawer.ts
-  function group(title, body, className = "") {
-    return `<section class="settings-group ${className}"><h3>${title}</h3><div class="settings-card">${body}</div></section>`;
+  // src/components/search-pill.ts
+  var SearchPill;
+  var init_search_pill = __esm({
+    "src/components/search-pill.ts"() {
+      "use strict";
+      init_store();
+      init_base();
+      init_icons();
+      init_spotlight_search();
+      SearchPill = class extends StoreElement {
+        observedChanges = ["settings.layout"];
+        render() {
+          const { showSearch, searchEngine } = appStore.state.settings.layout;
+          this.hidden = !showSearch;
+          this.innerHTML = `
+            <button class="glass search-pill" type="button" data-liquid-item aria-label="\u641C\u7D22\u6216\u8F93\u5165\u7F51\u5740" aria-keyshortcuts="${SHORTCUT_LABEL === "\u2318K" ? "Meta+K" : "Control+K"} /">
+                ${ICONS.search}
+                <span class="search-pill-text">\u641C\u7D22\u6216\u8F93\u5165\u7F51\u5740</span>
+                <span class="pill-chip">${ENGINES[searchEngine].label}</span>
+                <span class="pill-chip">${SHORTCUT_LABEL}</span>
+            </button>`;
+          this.querySelector("button")?.addEventListener("click", () => {
+            this.dispatchEvent(new CustomEvent("open-spotlight", { bubbles: true, composed: true }));
+          });
+        }
+      };
+    }
+  });
+
+  // src/components/settings-panel.ts
+  function pane(name, title, body) {
+    return `<section class="settings-pane" data-pane="${name}" aria-label="${title}" hidden><h2 class="settings-pane-title">${title}</h2>${body}</section>`;
   }
-  function segmentRow(name, label, value, options) {
+  function group(title, body) {
+    return `${title ? `<h3 class="settings-heading">${title}</h3>` : ""}<div class="settings-group">${body}</div>`;
+  }
+  function rowLabel(label, sub) {
+    return `<span class="row-label"><span class="row-title">${label}</span>${sub ? `<span class="row-sub">${sub}</span>` : ""}</span>`;
+  }
+  function depends(on) {
+    return on ? `data-depends="${on}"` : "";
+  }
+  function infoRow(label, sub, control) {
+    return `<div class="setting-row">${rowLabel(label, sub)}${control}</div>`;
+  }
+  function segmentRow(name, label, value, options, sub = "", dependsOn = "") {
     return `
-        <div class="segment-row">
-            <span class="segment-label" id="segment-${name}">${label}</span>
-            <div class="segmented" role="radiogroup" aria-labelledby="segment-${name}" data-segment="${name}" style="--segments:${options.length}">
+        <div class="setting-row segment-row" ${depends(dependsOn)}>
+            <span class="row-label"><span class="row-title" id="segment-${name}">${label}</span>${sub ? `<span class="row-sub">${sub}</span>` : ""}</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="segment-${name}" data-segment="${name}">
                 ${options.map(([optionValue, optionLabel]) => {
       const checked = optionValue === value;
-      return `<button type="button" role="radio" aria-checked="${checked}" tabindex="${checked ? 0 : -1}" class="${checked ? "is-active" : ""}" data-value="${optionValue}" data-liquid-item>${optionLabel}</button>`;
+      return `<button type="button" role="radio" aria-checked="${checked}" tabindex="${checked ? 0 : -1}" class="${checked ? "is-active" : ""}" data-value="${optionValue}" data-liquid-item>${escapeHtml(optionLabel)}</button>`;
     }).join("")}
             </div>
         </div>`;
   }
-  function toggle(name, label, checked, description = "") {
-    return `<label class="toggle-row"><span class="toggle-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ""}</span><liquid-toggle><input type="checkbox" role="switch" data-toggle="${name}" ${checked ? "checked" : ""}><span class="liquid-toggle-track" aria-hidden="true"><span class="liquid-toggle-thumb"></span></span></liquid-toggle></label>`;
+  function toggleRow(name, label, sub = "", dependsOn = "") {
+    return `<label class="setting-row toggle-row" ${depends(dependsOn)}>${rowLabel(label, sub)}<liquid-toggle><input type="checkbox" role="switch" data-toggle="${name}"><span class="liquid-toggle-track" aria-hidden="true"><span class="liquid-toggle-thumb"></span></span></liquid-toggle></label>`;
+  }
+  function rangeRow(name, label, value, min, max, unit, dependsOn = "", sub = "") {
+    return `
+        <div class="setting-row" ${depends(dependsOn)}>
+            ${rowLabel(label, sub)}
+            <span class="range-control">
+                <span class="range-row"><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}"></liquid-range></span>
+                <output>${value}${unit}</output>
+            </span>
+        </div>`;
+  }
+  function wallpaperKind({ type, value }) {
+    if (type === "video") return "video";
+    if (type === "preset" || type === "local" && value.startsWith("online")) return "online";
+    return type === "local" ? "image" : "";
   }
   function hdrDescription() {
     const hdrDisplay = window.matchMedia("(dynamic-range: high)").matches && CSS.supports("dynamic-range-limit", "no-limit");
     if (!hdrDisplay) return "\u5F53\u524D\u4E3A SDR \u5C4F\u5E55\uFF0C\u8FDE\u63A5 HDR \u5C4F\u5E55\u540E\u81EA\u52A8\u751F\u6548";
-    return "gpu" in navigator ? "HDR \u5A92\u4F53\u4E0E WebGPU \u73BB\u7483\u9AD8\u5149\u5747\u5DF2\u542F\u7528" : "HDR \u5A92\u4F53\u5DF2\u542F\u7528\uFF0C\u5F53\u524D\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u52A8\u6001 HDR \u9AD8\u5149";
+    return "gpu" in navigator ? "\u5F53\u524D\u5C4F\u5E55\u652F\u6301 HDR \xB7 WebGPU \u5DF2\u542F\u7528" : "\u5F53\u524D\u5C4F\u5E55\u652F\u6301 HDR \xB7 \u6D4F\u89C8\u5668\u672A\u5F00\u653E WebGPU \u9AD8\u5149";
   }
-  function range(name, label, value, min, max, unit) {
-    return `<label class="range-row"><span>${label}<output>${value}${unit}</output></span><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}"></liquid-range></label>`;
+  function formatBytes(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
   }
-  var TABS, SettingsDrawer;
-  var init_settings_drawer = __esm({
-    "src/components/settings-drawer.ts"() {
+  function formatDuration(seconds) {
+    const total = Math.round(seconds);
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+  }
+  var PANES, SettingsPanel;
+  var init_settings_panel = __esm({
+    "src/components/settings-panel.ts"() {
       "use strict";
       init_backup_service();
       init_media_store();
       init_store();
+      init_utils();
       init_wallpaper_service();
       init_base();
+      init_dashboard_header();
       init_icons();
-      init_search_command();
+      init_spotlight_search();
       init_ui_layer();
-      TABS = [
-        ["appearance", "\u5916\u89C2", ICONS.palette],
-        ["widgets", "\u7EC4\u4EF6", ICONS.widgets],
-        ["wallpaper", "\u58C1\u7EB8", ICONS.image],
-        ["data", "\u6570\u636E", ICONS.database]
+      PANES = [
+        ["appearance", "\u5916\u89C2", ICONS.look, "#0a84ff"],
+        ["widgets", "\u7EC4\u4EF6", ICONS.widgets, "#ff9f0a"],
+        ["wallpaper", "\u58C1\u7EB8", ICONS.wallpaper, "#30b0c7"],
+        ["data", "\u6570\u636E", ICONS.database, "#8e8e93"]
       ];
-      SettingsDrawer = class extends StoreElement {
-        observedChanges = ["settings.appearance", "settings.wallpaper", "settings.layout"];
+      SettingsPanel = class extends StoreElement {
+        observedChanges = ["settings.appearance", "settings.wallpaper", "settings.layout", "bookmarks", "folders"];
         openState = false;
-        activeTab = "appearance";
+        activePane = "appearance";
         releaseLayer = null;
         previewUrl = "";
         previewToken = 0;
-        open() {
+        open(pane2) {
+          if (pane2) this.selectPane(pane2);
           if (this.openState) return;
           this.openState = true;
           this.syncOpenState();
-          this.releaseLayer = pushLayer(this.querySelector(".settings-drawer"), () => this.close());
+          this.releaseLayer = pushLayer(this.querySelector(".settings-window"), () => this.close());
           void this.refreshPreview();
-          window.requestAnimationFrame(() => this.querySelector(".settings-tab.is-active")?.focus());
+          void this.refreshData();
+          const windowElement = this.querySelector(".settings-window");
+          afterMotion(windowElement, () => {
+            if (this.openState && !windowElement.contains(document.activeElement)) this.querySelector(".settings-nav-item.is-active")?.focus();
+          });
         }
         close() {
           if (!this.openState) return;
@@ -3154,178 +3587,147 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         handleStoreChange() {
           this.syncControls(appStore.state.settings);
+          if (this.openState) void this.refreshData();
         }
         render() {
+          const settings = appStore.state.settings;
           this.innerHTML = `
-            <aside class="settings-drawer glass-panel" aria-label="\u8BBE\u7F6E" aria-hidden="true" inert>
-                <header class="settings-header">
-                    <h2>\u8BBE\u7F6E</h2>
-                    <button class="icon-close settings-close" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E">${CLOSE_ICON}</button>
-                </header>
-                <nav class="settings-tabs" role="tablist" aria-label="\u8BBE\u7F6E\u5206\u7C7B">
-                    ${TABS.map(([tab, label, icon2]) => `<button type="button" role="tab" id="settings-tab-${tab}" aria-controls="settings-pane" data-tab="${tab}" data-liquid-item class="settings-tab">${icon2}<span>${label}</span></button>`).join("")}
-                </nav>
-                <div class="settings-pane" id="settings-pane" role="tabpanel"></div>
-            </aside>
             <div class="settings-scrim" aria-hidden="true"></div>
-        `;
-          this.querySelector(".settings-close")?.addEventListener("click", () => this.close());
-          this.querySelector(".settings-scrim")?.addEventListener("click", () => this.close());
-          this.querySelectorAll("[data-tab]").forEach((button) => {
-            button.addEventListener("click", () => this.selectTab(button.dataset.tab));
-          });
-          this.querySelector(".settings-tabs")?.addEventListener("keydown", (event) => {
-            const key = event.key;
-            if (key !== "ArrowLeft" && key !== "ArrowRight") return;
-            const index = TABS.findIndex(([tab]) => tab === this.activeTab);
-            const next = TABS[(index + (key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length][0];
-            this.selectTab(next);
-            this.querySelector(`[data-tab="${next}"]`)?.focus();
-          });
-          this.renderPane();
+            <section class="glass glass-window settings-window" role="dialog" aria-modal="true" aria-label="\u8BBE\u7F6E" aria-hidden="true" inert>
+                <aside class="settings-sidebar">
+                    <div class="settings-title">
+                        <button class="settings-close" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E">${ICONS.close}</button>
+                        <h2>\u8BBE\u7F6E</h2>
+                    </div>
+                    <label class="settings-search">
+                        ${ICONS.search}
+                        <input type="search" placeholder="\u641C\u7D22" aria-label="\u641C\u7D22\u8BBE\u7F6E" autocomplete="off">
+                    </label>
+                    <nav class="settings-nav" aria-label="\u8BBE\u7F6E\u5206\u7C7B">
+                        ${PANES.map(([pane2, label, icon2, color]) => `
+                            <button class="settings-nav-item" type="button" data-pane="${pane2}" data-liquid-item>
+                                <span class="nav-glyph" style="background:${color}">${icon2}</span><span>${label}</span>
+                            </button>`).join("")}
+                    </nav>
+                    <span class="settings-version">Infinity New Tab ${escapeHtml(chrome.runtime?.getManifest?.().version ?? "")}</span>
+                </aside>
+                <div class="settings-content">
+                    ${this.appearancePane(settings)}
+                    ${this.widgetsPane(settings)}
+                    ${this.wallpaperPane(settings)}
+                    ${this.dataPane(settings)}
+                    <p class="settings-empty" hidden></p>
+                </div>
+            </section>`;
+          this.bindChrome();
+          this.bindControls();
+          this.syncControls(settings);
+          this.selectPane(this.activePane);
           this.syncOpenState();
         }
-        /** Only the pane is rebuilt; the drawer shell and its listeners stay put. */
-        selectTab(tab) {
-          if (tab === this.activeTab) return;
-          this.activeTab = tab;
-          this.renderPane();
-        }
-        renderPane() {
-          const pane = this.querySelector(".settings-pane");
-          if (!pane) return;
-          this.querySelectorAll("[data-tab]").forEach((button) => {
-            const active = button.dataset.tab === this.activeTab;
-            button.classList.toggle("is-active", active);
-            button.setAttribute("aria-selected", String(active));
-            button.tabIndex = active ? 0 : -1;
-          });
-          pane.setAttribute("aria-labelledby", `settings-tab-${this.activeTab}`);
-          pane.innerHTML = this.paneTemplate(appStore.state.settings);
-          pane.scrollTop = 0;
-          this.bindPane(pane);
-          if (this.activeTab === "wallpaper") void this.refreshPreview();
-        }
-        syncOpenState() {
-          const drawer = this.querySelector(".settings-drawer");
-          drawer?.classList.toggle("is-open", this.openState);
-          drawer?.setAttribute("aria-hidden", String(!this.openState));
-          drawer?.toggleAttribute("inert", !this.openState);
-          this.querySelector(".settings-scrim")?.classList.toggle("is-open", this.openState);
-          document.body.classList.toggle("settings-open", this.openState);
-        }
-        syncControls(settings) {
-          const segments = {
-            theme: settings.appearance.theme,
-            clockFormat: settings.appearance.clockFormat,
-            dateFormat: settings.appearance.dateFormat,
-            searchEngine: settings.layout.searchEngine
-          };
-          this.querySelectorAll("[data-segment]").forEach((group2) => {
-            const value = segments[group2.dataset.segment ?? ""];
-            group2.querySelectorAll("[data-value]").forEach((button) => {
-              const checked = button.dataset.value === value;
-              button.classList.toggle("is-active", checked);
-              button.setAttribute("aria-checked", String(checked));
-              button.tabIndex = checked ? 0 : -1;
-            });
-          });
-          const toggles = {
-            enhancedAnimations: settings.appearance.enhancedAnimations,
-            hdrHighlights: settings.appearance.hdrHighlights,
-            showClock: settings.layout.showClock,
-            showSearch: settings.layout.showSearch,
-            showBookmarks: settings.layout.showBookmarks,
-            showStatus: settings.layout.showStatus,
-            showRecent: settings.layout.showRecent,
-            openInNewTab: settings.layout.openInNewTab
-          };
-          this.querySelectorAll("input[data-toggle]").forEach((input) => {
-            input.checked = toggles[input.dataset.toggle ?? ""] ?? input.checked;
-            input.closest("liquid-toggle")?.classList.toggle("is-checked", input.checked);
-          });
-          this.querySelectorAll("[data-depends]").forEach((row) => {
-            row.classList.toggle("is-disabled", !toggles[row.dataset.depends ?? ""]);
-          });
-          const ranges = { blur: settings.wallpaper.blur, overlay: settings.wallpaper.overlay };
-          this.querySelectorAll('input[type="range"]').forEach((input) => {
-            const value = ranges[input.name];
-            if (!Number.isFinite(value) || Number(input.value) === value) return;
-            input.value = String(value);
-            input.dispatchEvent(new Event("input", { bubbles: false }));
-          });
-          const label = this.querySelector(".wallpaper-kind");
-          if (label) label.textContent = wallpaperLabel(settings.wallpaper);
-          if (this.activeTab === "wallpaper") void this.refreshPreview();
-        }
-        paneTemplate(settings) {
-          const { appearance, layout, wallpaper } = settings;
-          if (this.activeTab === "appearance") return `
-            ${group("\u4E3B\u9898", `
-                ${segmentRow("theme", "\u6587\u5B57\u914D\u8272", appearance.theme, [["auto", "\u81EA\u52A8"], ["light", "\u6DF1\u8272\u6587\u5B57"], ["dark", "\u6D45\u8272\u6587\u5B57"]])}
-                <p class="setting-hint">\u201C\u81EA\u52A8\u201D\u4F1A\u6839\u636E\u58C1\u7EB8\u660E\u6697\u9009\u62E9\u6587\u5B57\u989C\u8272\u3002</p>
+        appearancePane({ appearance }) {
+          const now = /* @__PURE__ */ new Date();
+          return pane("appearance", "\u5916\u89C2", `
+            ${group("", `
+                ${segmentRow("theme", "\u6587\u5B57\u989C\u8272", appearance.theme, [["auto", "\u81EA\u52A8"], ["dark", "\u6D45\u8272"], ["light", "\u6DF1\u8272"]], "\u81EA\u52A8\uFF1A\u6839\u636E\u58C1\u7EB8\u660E\u6697\u9009\u62E9")}
+                ${segmentRow("glass", "\u73BB\u7483\u6750\u8D28", appearance.glass, [["clear", "\u6E05\u900F"], ["tinted", "\u7740\u8272"]])}
+                ${toggleRow("hdrHighlights", "HDR \u9AD8\u5149", hdrDescription())}
+                ${toggleRow("reduceTransparency", "\u964D\u4F4E\u900F\u660E\u5EA6", "\u73BB\u7483\u6539\u4E3A\u4E0D\u900F\u660E\u5E95\u8272\uFF0C\u6587\u5B57\u66F4\u6613\u8BFB")}
             `)}
-            ${group("\u6548\u679C", `
-                ${toggle("enhancedAnimations", "\u589E\u5F3A\u52A8\u753B", appearance.enhancedAnimations, "\u8FDB\u573A\u52A8\u753B\u4E0E Liquid Glass \u5F62\u53D8")}
-                ${toggle("hdrHighlights", "HDR \u9AD8\u5149", appearance.hdrHighlights, hdrDescription())}
+            ${group("\u65F6\u95F4", `
+                ${segmentRow("clockFormat", "\u65F6\u949F", appearance.clockFormat, [["24h", "24 \u5C0F\u65F6"], ["12h", "12 \u5C0F\u65F6"]])}
+                ${segmentRow("dateFormat", "\u65E5\u671F", appearance.dateFormat, [["long", formatDate(now, "long")], ["short", formatDate(now, "short")]])}
             `)}
-        `;
-          if (this.activeTab === "widgets") return `
-            ${group("\u65F6\u949F", `
-                ${toggle("showClock", "\u663E\u793A\u65F6\u949F", layout.showClock)}
-                <div class="setting-sub" data-depends="showClock">
-                    ${segmentRow("clockFormat", "\u65F6\u95F4\u683C\u5F0F", appearance.clockFormat, [["24h", "24 \u5C0F\u65F6"], ["12h", "12 \u5C0F\u65F6"]])}
-                    ${segmentRow("dateFormat", "\u65E5\u671F\u683C\u5F0F", appearance.dateFormat, [["long", "9\u670826\u65E5 \u661F\u671F\u516D"], ["short", "9/26 \u5468\u516D"]])}
-                </div>
+        `);
+        }
+        widgetsPane({ layout }) {
+          return pane("widgets", "\u7EC4\u4EF6", `
+            ${group("", `
+                ${toggleRow("showClock", "\u65F6\u95F4\u4E0E\u65E5\u671F")}
+                ${toggleRow("showSearch", "\u641C\u7D22\u680F", `\u5173\u95ED\u540E\u4ECD\u53EF\u7528 ${SHORTCUT_LABEL} \u547C\u51FA`)}
+                ${toggleRow("showBookmarks", "Dock")}
+                ${toggleRow("showStatus", "\u72B6\u6001\u80F6\u56CA", "\u53EA\u5728\u64AD\u653E\u5A92\u4F53\u3001\u4E0B\u8F7D\u6216\u4F7F\u7528\u7535\u6C60\u65F6\u51FA\u73B0")}
+            `)}
+            ${group("Dock", `
+                ${segmentRow("dockSource", "\u663E\u793A\u7684\u4E66\u7B7E", layout.dockSource, [["bookmarks", "\u56FA\u5B9A\u7684\u4E66\u7B7E"], ["recent", "\u5E38\u8BBF\u95EE"]], "\u56FA\u5B9A\u7684\u4E66\u7B7E\u5C31\u662F\u201C\u5168\u90E8\u201D\u91CC\u7684\u4E66\u7B7E\uFF0C\u53EF\u5728\u542F\u52A8\u53F0\u4E2D\u62D6\u52A8\u6392\u5E8F", "showBookmarks")}
+                ${rangeRow("dockSize", "\u56FE\u6807\u5927\u5C0F", layout.dockSize, 40, 72, "", "showBookmarks")}
+                ${toggleRow("dockMagnify", "\u60AC\u505C\u653E\u5927", "", "showBookmarks")}
+                ${toggleRow("openInNewTab", "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00\u4E66\u7B7E")}
             `)}
             ${group("\u641C\u7D22", `
-                ${toggle("showSearch", "\u663E\u793A\u641C\u7D22\u6846", layout.showSearch, "\u6309 / \u952E\u968F\u65F6\u805A\u7126")}
-                <div class="setting-sub" data-depends="showSearch">
-                    ${segmentRow("searchEngine", "\u641C\u7D22\u5F15\u64CE", layout.searchEngine, Object.entries(ENGINES).map(([key, engine]) => [key, engine.label]))}
-                </div>
+                ${segmentRow("searchEngine", "\u9ED8\u8BA4\u641C\u7D22\u5F15\u64CE", layout.searchEngine, Object.entries(ENGINES).map(([key, engine]) => [key, engine.label]))}
+                ${toggleRow("saveSearches", "\u4FDD\u5B58\u6700\u8FD1\u641C\u7D22")}
             `)}
-            ${group("\u542F\u52A8\u53F0", `
-                ${toggle("showBookmarks", "\u4E66\u7B7E\u4E0E\u6587\u4EF6\u5939", layout.showBookmarks)}
-                ${toggle("showRecent", "\u5E38\u8BBF\u95EE\u7F51\u7AD9", layout.showRecent, "\u6839\u636E\u6700\u8FD1 30 \u5929\u6D4F\u89C8\u8BB0\u5F55\u751F\u6210")}
-                ${toggle("openInNewTab", "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", layout.openInNewTab, "\u70B9\u51FB\u4E66\u7B7E\u65F6\u4FDD\u7559\u5F53\u524D\u9875\u9762")}
-            `)}
-            ${group("\u72B6\u6001", `
-                ${toggle("showStatus", "\u6D3B\u52A8\u72B6\u6001", layout.showStatus, "\u6709\u5A92\u4F53\u64AD\u653E\u3001\u4E0B\u8F7D\u6216\u4F7F\u7528\u7535\u6C60\u65F6\u663E\u793A\u5728\u5DE6\u4E0A\u89D2")}
-            `)}
-        `;
-          if (this.activeTab === "wallpaper") return `
-            <section class="wallpaper-preview" aria-label="\u5F53\u524D\u58C1\u7EB8">
-                <div class="wallpaper-preview-media"></div>
-                <span class="wallpaper-kind">${wallpaperLabel(wallpaper)}</span>
-            </section>
-            ${group("\u66F4\u6362", `
-                <div class="settings-actions">
-                    <button class="settings-action random-wallpaper" type="button" data-liquid-item>${ICONS.shuffle}<span>\u968F\u673A\u4E8C\u6B21\u5143\u58C1\u7EB8<small>\u4E0B\u8F7D\u540E\u4FDD\u5B58\u5728\u672C\u5730\uFF0C\u6253\u5F00\u65B0\u6807\u7B7E\u9875\u4E0D\u518D\u95EA\u70C1</small></span></button>
-                    <label class="settings-action upload-wallpaper" data-liquid-item>${ICONS.upload}<span>\u4E0A\u4F20\u56FE\u7247\u6216\u89C6\u9891<small>\u89C6\u9891\u4F1A\u9759\u97F3\u5FAA\u73AF\u64AD\u653E</small></span><input type="file" accept="image/*,video/*" hidden></label>
-                    <button class="settings-action reset-wallpaper" type="button" data-liquid-item>${ICONS.reset}<span>\u6062\u590D\u9ED8\u8BA4\u6E10\u53D8</span></button>
-                </div>
-            `)}
-            ${group("\u8C03\u8282", `
-                ${range("blur", "\u6A21\u7CCA", wallpaper.blur, 0, 10, "px")}
-                ${range("overlay", "\u906E\u7F69", wallpaper.overlay, 0, 80, "%")}
-            `)}
-        `;
-          return `
-            ${group("\u5907\u4EFD", `
-                <div class="settings-actions">
-                    <button class="settings-action export-data" type="button" data-liquid-item>${ICONS.download}<span>\u5BFC\u51FA\u5907\u4EFD<small>\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\uFF0C\u4FDD\u5B58\u4E3A JSON</small></span></button>
-                    <label class="settings-action import-data" data-liquid-item>${ICONS.upload}<span>\u4ECE\u5907\u4EFD\u6062\u590D<small>\u652F\u6301 1.0 \u4E0E 2.0 \u5907\u4EFD\uFF0C\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E</small></span><input type="file" accept="application/json,.json" hidden></label>
-                </div>
-            `)}
-            ${group("\u5371\u9669\u64CD\u4F5C", `
-                <div class="settings-actions">
-                    <button class="settings-action danger reset-data" type="button" data-liquid-item>${ICONS.trash}<span>\u6E05\u7A7A\u6240\u6709\u6570\u636E<small>\u5220\u9664\u5168\u90E8\u4E66\u7B7E\u3001\u6587\u4EF6\u5939\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8</small></span></button>
-                </div>
-            `, "is-danger")}
-        `;
+        `);
         }
-        bindPane(pane) {
-          pane.querySelectorAll("[data-segment]").forEach((groupElement) => {
+        wallpaperPane({ wallpaper }) {
+          return pane("wallpaper", "\u58C1\u7EB8", `
+            <div class="settings-group wallpaper-card setting-row" data-search="\u58C1\u7EB8 \u89C6\u9891 \u56FE\u7247 \u5728\u7EBF \u9009\u62E9 \u6062\u590D\u9ED8\u8BA4">
+                <div class="wallpaper-preview" aria-hidden="true"><div class="wallpaper-preview-media"></div><span class="wallpaper-duration" hidden></span></div>
+                <div class="wallpaper-info">
+                    <strong class="wallpaper-name"></strong>
+                    <span class="row-sub wallpaper-meta"></span>
+                    <div class="wallpaper-actions">
+                        <label class="pill-button primary upload-wallpaper" data-liquid-item>\u9009\u62E9\u89C6\u9891\u6216\u56FE\u7247\u2026<input type="file" accept="image/*,video/*" hidden></label>
+                        <button class="pill-button random-wallpaper" type="button" data-liquid-item>\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8</button>
+                        <button class="pill-button reset-wallpaper" type="button" data-liquid-item>\u6062\u590D\u9ED8\u8BA4</button>
+                    </div>
+                </div>
+            </div>
+            ${group("\u663E\u793A", `
+                ${segmentRow("wallpaperKind", "\u7C7B\u578B", wallpaperKind(wallpaper), [["video", "\u89C6\u9891"], ["image", "\u56FE\u7247"], ["online", "\u5728\u7EBF"]], "\u9ED8\u8BA4\u662F\u5185\u7F6E\u7684\u52A8\u6001\u573A\u666F Twilight Bay")}
+                ${rangeRow("blur", "\u6A21\u7CCA", wallpaper.blur, 0, 40, "px")}
+                ${rangeRow("overlay", "\u6697\u5316", wallpaper.overlay, 0, 60, "%", "", "\u8BA9\u767D\u8272\u6587\u5B57\u5728\u4EAE\u58C1\u7EB8\u4E0A\u4E5F\u6E05\u695A")}
+            `)}
+            ${group("\u64AD\u653E", `
+                ${toggleRow("idleHide", "\u9759\u6B62\u65F6\u9690\u85CF\u754C\u9762", "8 \u79D2\u65E0\u64CD\u4F5C\u540E\u53EA\u4FDD\u7559\u65F6\u95F4\uFF0C\u79FB\u52A8\u9F20\u6807\u5373\u6062\u590D")}
+                ${toggleRow("pauseOnBattery", "\u4F7F\u7528\u7535\u6C60\u65F6\u6682\u505C\u52A8\u6001\u58C1\u7EB8")}
+                ${toggleRow("pauseWhenHidden", "\u6807\u7B7E\u9875\u4E0D\u53EF\u89C1\u65F6\u6682\u505C")}
+                ${toggleRow("sound", "\u64AD\u653E\u89C6\u9891\u58F0\u97F3")}
+            `)}
+        `);
+        }
+        dataPane(_settings) {
+          return pane("data", "\u6570\u636E", `
+            ${group("", `
+                ${infoRow("Chrome \u540C\u6B65", '<span class="sync-summary"></span>', '<span class="row-value sync-usage"></span>')}
+                ${infoRow("\u672C\u5730\u5A92\u4F53", "\u89C6\u9891\u4E0E\u56FE\u7247\u58C1\u7EB8\u4FDD\u5B58\u5728\u672C\u673A\uFF0C\u4E0D\u5360\u7528\u540C\u6B65\u7A7A\u95F4", '<span class="row-value media-usage"></span>')}
+            `)}
+            ${group("\u5907\u4EFD", `
+                ${infoRow("\u5BFC\u51FA\u5907\u4EFD", "\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\uFF0C\u4E00\u4E2A JSON \u6587\u4EF6", '<button class="pill-button export-data" type="button" data-liquid-item>\u5BFC\u51FA\u2026</button>')}
+                ${infoRow("\u4ECE\u5907\u4EFD\u6062\u590D", "\u652F\u6301 1.0 / 2.0 \u5907\u4EFD\uFF0C\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E", '<label class="pill-button import-data" data-liquid-item>\u5BFC\u5165\u2026<input type="file" accept="application/json,.json" hidden></label>')}
+                ${toggleRow("backupReminder", "\u6BCF\u6708\u63D0\u9192\u6211\u5907\u4EFD")}
+            `)}
+            ${group("", `
+                ${infoRow("\u6E05\u7A7A\u6240\u6709\u6570\u636E", "\u5220\u9664\u4E66\u7B7E\u3001\u8BBE\u7F6E\u4E0E\u672C\u5730\u58C1\u7EB8\uFF0C\u65E0\u6CD5\u64A4\u9500", '<button class="pill-button danger reset-data" type="button" data-liquid-item>\u6E05\u7A7A\u2026</button>')}
+            `)}
+        `);
+        }
+        bindChrome() {
+          this.querySelector(".settings-close")?.addEventListener("click", () => this.close());
+          this.querySelector(".settings-scrim")?.addEventListener("click", () => this.close());
+          const nav = this.querySelector(".settings-nav");
+          nav.addEventListener("click", (event) => {
+            const button = event.target.closest("[data-pane]");
+            if (!button) return;
+            this.clearSearch();
+            this.selectPane(button.dataset.pane);
+          });
+          nav.addEventListener("keydown", (event) => {
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+            event.preventDefault();
+            const index = PANES.findIndex(([pane2]) => pane2 === this.activePane);
+            const next = PANES[(index + (event.key === "ArrowDown" ? 1 : -1) + PANES.length) % PANES.length][0];
+            this.clearSearch();
+            this.selectPane(next);
+            this.querySelector(`[data-pane="${next}"]`)?.focus();
+          });
+          this.querySelector(".settings-search input")?.addEventListener("input", (event) => {
+            this.filter(event.target.value);
+          });
+        }
+        bindControls() {
+          this.querySelectorAll("[data-segment]").forEach((groupElement) => {
             const buttons = [...groupElement.querySelectorAll("[data-value]")];
             buttons.forEach((button) => button.addEventListener("click", () => {
               void this.applySegment(groupElement.dataset.segment ?? "", button.dataset.value ?? "");
@@ -3339,39 +3741,158 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               next.click();
             });
           });
-          pane.querySelectorAll("input[data-toggle]").forEach((input) => {
+          this.querySelectorAll("input[data-toggle]").forEach((input) => {
             input.addEventListener("change", () => void this.applyToggle(input.dataset.toggle ?? "", input.checked));
           });
-          pane.querySelectorAll('input[type="range"]').forEach((input) => {
+          this.querySelectorAll('input[type="range"]').forEach((input) => {
             input.addEventListener("input", () => {
-              const output = input.closest(".range-row")?.querySelector("output");
+              const output = input.closest(".setting-row")?.querySelector("output");
               if (output) output.textContent = `${input.value}${input.dataset.unit ?? ""}`;
-              document.querySelector("wallpaper-surface")?.style.setProperty(
-                input.name === "blur" ? "--wallpaper-blur" : "--wallpaper-overlay",
-                input.name === "blur" ? `${input.value}px` : String(Number(input.value) / 100)
-              );
+              const [selector, property, value] = input.name === "dockSize" ? ["home-dock", "--dock-size", `${input.value}px`] : input.name === "blur" ? ["wallpaper-surface", "--wallpaper-blur", `${input.value}px`] : ["wallpaper-surface", "--wallpaper-overlay", String(Number(input.value) / 100)];
+              document.querySelector(selector)?.style.setProperty(property, value);
             });
-            input.addEventListener("change", () => void appStore.updateSettings("wallpaper", {
-              [input.name]: Number(input.value)
-            }).catch(notifyError));
+            input.addEventListener("change", () => {
+              const section = input.name === "dockSize" ? "layout" : "wallpaper";
+              void appStore.updateSettings(section, { [input.name]: Number(input.value) }).catch(notifyError);
+            });
           });
-          pane.querySelector(".random-wallpaper")?.addEventListener("click", (event) => void this.withBusy(event.currentTarget, useOnlineWallpaper));
-          pane.querySelector(".upload-wallpaper input")?.addEventListener("change", (event) => {
-            const input = event.target;
-            const file = input.files?.[0];
-            input.value = "";
-            if (file) void this.withBusy(input.closest("label"), () => useLocalWallpaper(file));
+          const upload = this.querySelector(".upload-wallpaper input");
+          upload.addEventListener("change", () => {
+            const file = upload.files?.[0];
+            upload.value = "";
+            if (file) void this.withBusy(upload.closest("label"), () => useLocalWallpaper(file));
           });
-          pane.querySelector(".reset-wallpaper")?.addEventListener("click", () => void resetWallpaper().catch(notifyError));
-          pane.querySelector(".export-data")?.addEventListener("click", () => void backupService.createBackup().catch(notifyError));
-          pane.querySelector(".import-data input")?.addEventListener("change", (event) => {
+          this.querySelector(".random-wallpaper")?.addEventListener("click", (event) => void this.withBusy(event.currentTarget, useOnlineWallpaper));
+          this.querySelector(".reset-wallpaper")?.addEventListener("click", () => void resetWallpaper().catch(notifyError));
+          this.querySelector(".export-data")?.addEventListener("click", () => void backupService.createBackup().catch(notifyError));
+          this.querySelector(".import-data input")?.addEventListener("change", (event) => {
             const input = event.target;
             const file = input.files?.[0];
             input.value = "";
             if (file) void this.importData(file);
           });
-          pane.querySelector(".reset-data")?.addEventListener("click", () => void this.resetData());
-          this.syncControls(appStore.state.settings);
+          this.querySelector(".reset-data")?.addEventListener("click", () => void this.resetData());
+        }
+        selectPane(target) {
+          this.activePane = target;
+          this.querySelectorAll(".settings-nav-item").forEach((button) => {
+            const active = button.dataset.pane === target;
+            button.classList.toggle("is-active", active);
+            if (active) button.setAttribute("aria-current", "page");
+            else button.removeAttribute("aria-current");
+          });
+          this.querySelectorAll(".settings-pane").forEach((element) => {
+            element.hidden = element.dataset.pane !== target;
+          });
+          const content = this.querySelector(".settings-content");
+          if (content) content.scrollTop = 0;
+          if (target === "wallpaper") void this.refreshPreview();
+        }
+        /** Searching shows matching rows from every pane at once. */
+        filter(value) {
+          const query = value.trim().toLowerCase();
+          if (!query) {
+            this.querySelectorAll(".setting-row, .settings-group, .settings-heading").forEach((element) => {
+              element.hidden = false;
+            });
+            this.querySelector(".settings-empty").hidden = true;
+            this.selectPane(this.activePane);
+            return;
+          }
+          this.querySelectorAll(".settings-nav-item").forEach((button) => {
+            button.classList.remove("is-active");
+            button.removeAttribute("aria-current");
+          });
+          let total = 0;
+          this.querySelectorAll(".settings-pane").forEach((paneElement) => {
+            let paneMatches = 0;
+            paneElement.querySelectorAll(".setting-row").forEach((row) => {
+              const match = (row.dataset.search ?? row.textContent ?? "").toLowerCase().includes(query);
+              row.hidden = !match;
+              if (match) paneMatches += 1;
+            });
+            paneElement.querySelectorAll(".settings-group").forEach((groupElement) => {
+              const visible = groupElement.matches(".setting-row") ? !groupElement.hidden : Boolean(groupElement.querySelector(".setting-row:not([hidden])"));
+              groupElement.hidden = !visible;
+              const heading = groupElement.previousElementSibling;
+              if (heading instanceof HTMLElement && heading.matches(".settings-heading")) heading.hidden = !visible;
+            });
+            paneElement.hidden = !paneMatches;
+            total += paneMatches;
+          });
+          const empty = this.querySelector(".settings-empty");
+          empty.hidden = total > 0;
+          empty.textContent = `\u6CA1\u6709\u627E\u5230\u201C${value.trim()}\u201D`;
+        }
+        clearSearch() {
+          const input = this.querySelector(".settings-search input");
+          if (!input?.value) return;
+          input.value = "";
+          this.filter("");
+        }
+        syncOpenState() {
+          const windowElement = this.querySelector(".settings-window");
+          windowElement?.classList.toggle("is-open", this.openState);
+          windowElement?.setAttribute("aria-hidden", String(!this.openState));
+          windowElement?.toggleAttribute("inert", !this.openState);
+          this.querySelector(".settings-scrim")?.classList.toggle("is-open", this.openState);
+          document.body.classList.toggle("settings-open", this.openState);
+        }
+        syncControls(settings) {
+          const { appearance, layout, wallpaper } = settings;
+          const segments = {
+            theme: appearance.theme,
+            glass: appearance.glass,
+            clockFormat: appearance.clockFormat,
+            dateFormat: appearance.dateFormat,
+            dockSource: layout.dockSource,
+            searchEngine: layout.searchEngine,
+            wallpaperKind: wallpaperKind(wallpaper)
+          };
+          this.querySelectorAll("[data-segment]").forEach((groupElement) => {
+            const value = segments[groupElement.dataset.segment ?? ""];
+            const buttons = [...groupElement.querySelectorAll("[data-value]")];
+            const hasValue = buttons.some((button) => button.dataset.value === value);
+            buttons.forEach((button, index) => {
+              const checked = button.dataset.value === value;
+              button.classList.toggle("is-active", checked);
+              button.setAttribute("aria-checked", String(checked));
+              button.tabIndex = checked || !hasValue && index === 0 ? 0 : -1;
+            });
+          });
+          const toggles = {
+            hdrHighlights: appearance.hdrHighlights,
+            reduceTransparency: appearance.reduceTransparency,
+            showClock: layout.showClock,
+            showSearch: layout.showSearch,
+            showBookmarks: layout.showBookmarks,
+            showStatus: layout.showStatus,
+            dockMagnify: layout.dockMagnify,
+            openInNewTab: layout.openInNewTab,
+            saveSearches: layout.saveSearches,
+            backupReminder: layout.backupReminder,
+            idleHide: wallpaper.idleHide,
+            pauseOnBattery: wallpaper.pauseOnBattery,
+            pauseWhenHidden: wallpaper.pauseWhenHidden,
+            sound: wallpaper.sound
+          };
+          this.querySelectorAll("input[data-toggle]").forEach((input) => {
+            input.checked = toggles[input.dataset.toggle ?? ""] ?? input.checked;
+            input.closest("liquid-toggle")?.classList.toggle("is-checked", input.checked);
+          });
+          this.querySelectorAll("[data-depends]").forEach((row) => {
+            row.classList.toggle("is-disabled", !toggles[row.dataset.depends ?? ""]);
+          });
+          const ranges = { blur: wallpaper.blur, overlay: wallpaper.overlay, dockSize: layout.dockSize };
+          this.querySelectorAll('input[type="range"]').forEach((input) => {
+            const value = ranges[input.name];
+            if (!Number.isFinite(value) || Number(input.value) === value) return;
+            input.value = String(value);
+            input.dispatchEvent(new Event("input", { bubbles: false }));
+          });
+          const reset = this.querySelector(".reset-wallpaper");
+          if (reset) reset.hidden = wallpaper.type === "gradient";
+          if (this.openState) void this.refreshPreview();
         }
         async withBusy(control, task) {
           if (control.classList.contains("is-busy")) return;
@@ -3389,16 +3910,31 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         async applySegment(name, value) {
           try {
             if (name === "theme") await appStore.updateSettings("appearance", { theme: value });
+            else if (name === "glass") await appStore.updateSettings("appearance", { glass: value });
             else if (name === "clockFormat") await appStore.updateSettings("appearance", { clockFormat: value });
             else if (name === "dateFormat") await appStore.updateSettings("appearance", { dateFormat: value });
+            else if (name === "dockSource") await appStore.updateSettings("layout", { dockSource: value });
             else if (name === "searchEngine") await appStore.updateSettings("layout", { searchEngine: value });
+            else if (name === "wallpaperKind") this.pickWallpaper(value);
           } catch (error) {
             notifyError(error);
           }
         }
+        /** The type control is a shortcut: video and image open the file picker, online fetches a new picture. */
+        pickWallpaper(kind) {
+          if (kind === "online") {
+            void this.withBusy(this.querySelector(".random-wallpaper"), useOnlineWallpaper);
+            return;
+          }
+          const input = this.querySelector(".upload-wallpaper input");
+          input.accept = kind === "video" ? "video/*" : "image/*";
+          input.click();
+          input.accept = "image/*,video/*";
+        }
         async applyToggle(name, checked) {
           try {
-            if (name === "enhancedAnimations" || name === "hdrHighlights") await appStore.updateSettings("appearance", { [name]: checked });
+            if (name === "hdrHighlights" || name === "reduceTransparency") await appStore.updateSettings("appearance", { [name]: checked });
+            else if (["idleHide", "pauseOnBattery", "pauseWhenHidden", "sound"].includes(name)) await appStore.updateSettings("wallpaper", { [name]: checked });
             else await appStore.updateSettings("layout", { [name]: checked });
           } catch (error) {
             notifyError(error);
@@ -3408,35 +3944,71 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         async refreshPreview() {
           const host = this.querySelector(".wallpaper-preview-media");
           if (!host || !this.openState) return;
-          const token = ++this.previewToken;
-          const { type, value } = appStore.state.settings.wallpaper;
+          const wallpaper = appStore.state.settings.wallpaper;
+          const { type, value } = wallpaper;
           const key = `${type}:${value}`;
           if (host.dataset.key === key) return;
-          let url = "";
+          const token = ++this.previewToken;
+          let blob = null;
           try {
-            if (type === "local" || type === "video") {
-              const blob = await mediaStore.get(type === "video" ? "video" : "image");
-              if (blob) url = URL.createObjectURL(blob);
-            }
+            if (type === "local" || type === "video") blob = await mediaStore.get(type === "video" ? "video" : "image");
           } catch {
           }
-          if (token !== this.previewToken) {
-            if (url) URL.revokeObjectURL(url);
-            return;
-          }
+          if (token !== this.previewToken) return;
           if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
-          this.previewUrl = url;
+          this.previewUrl = blob ? URL.createObjectURL(blob) : "";
           host.dataset.key = key;
           host.replaceChildren();
           host.style.backgroundImage = "";
-          if (type === "video" && url) {
+          host.classList.toggle("is-scene", type === "gradient");
+          const name = this.querySelector(".wallpaper-name");
+          const meta = this.querySelector(".wallpaper-meta");
+          const duration = this.querySelector(".wallpaper-duration");
+          duration.hidden = true;
+          name.textContent = type === "gradient" ? "Twilight Bay" : wallpaperLabel(wallpaper);
+          const size = blob ? ` \xB7 ${formatBytes(blob.size)}` : "";
+          meta.textContent = type === "gradient" ? "\u5185\u7F6E\u52A8\u6001\u573A\u666F \xB7 \u4E0D\u5360\u7528\u4EFB\u4F55\u5B58\u50A8" : type === "preset" ? "\u5728\u7EBF\u56FE\u7247 \xB7 \u6BCF\u6B21\u6253\u5F00\u65F6\u4ECE\u7F51\u7EDC\u52A0\u8F7D" : `${type === "video" ? "\u89C6\u9891" : "\u56FE\u7247"}${size} \xB7 \u5DF2\u4FDD\u5B58\u5230\u672C\u673A`;
+          if (type === "video" && this.previewUrl) {
             const video = document.createElement("video");
-            Object.assign(video, { src: url, muted: true, loop: true, autoplay: true, playsInline: true });
+            Object.assign(video, { src: this.previewUrl, muted: true, loop: true, autoplay: true, playsInline: true });
+            video.addEventListener("loadedmetadata", () => {
+              meta.textContent = `\u89C6\u9891 \xB7 ${video.videoWidth}\xD7${video.videoHeight}${size} \xB7 \u5DF2\u4FDD\u5B58\u5230\u672C\u673A`;
+              duration.textContent = `${formatDuration(video.duration)} \u5FAA\u73AF`;
+              duration.hidden = !Number.isFinite(video.duration);
+            }, { once: true });
             host.append(video);
-          } else if (type === "local" && url) {
-            host.style.backgroundImage = `url("${url}")`;
+          } else if (type === "local" && this.previewUrl) {
+            host.style.backgroundImage = `url("${this.previewUrl}")`;
+            const image = new Image();
+            image.onload = () => {
+              meta.textContent = `${wallpaperLabel(wallpaper)} \xB7 ${image.naturalWidth}\xD7${image.naturalHeight}${size} \xB7 \u5DF2\u4FDD\u5B58\u5230\u672C\u673A`;
+            };
+            image.src = this.previewUrl;
           } else if (type === "preset" && value) {
             host.style.backgroundImage = `url("${value.replaceAll('"', "%22")}")`;
+          }
+        }
+        async refreshData() {
+          const { bookmarks, folders } = appStore.state;
+          const summary = this.querySelector(".sync-summary");
+          if (summary) summary.textContent = `${bookmarks.length} \u4E2A\u4E66\u7B7E \xB7 ${folders.length - 1} \u4E2A\u6587\u4EF6\u5939`;
+          const [bytes, media] = await Promise.all([
+            new Promise((resolve) => {
+              try {
+                if (!chrome.storage.sync.getBytesInUse) resolve(null);
+                else chrome.storage.sync.getBytesInUse(null, (value) => resolve(chrome.runtime.lastError ? null : value));
+              } catch {
+                resolve(null);
+              }
+            }),
+            Promise.all([mediaStore.get("image"), mediaStore.get("video")]).catch(() => [null, null])
+          ]);
+          const usage = this.querySelector(".sync-usage");
+          if (usage) usage.textContent = bytes === null ? "" : `\u5DF2\u7528 ${formatBytes(bytes)} / 100 KB`;
+          const mediaUsage = this.querySelector(".media-usage");
+          if (mediaUsage) {
+            const total = media.reduce((sum, blob) => sum + (blob?.size ?? 0), 0);
+            mediaUsage.textContent = total ? formatBytes(total) : "\u65E0";
           }
         }
         async importData(file) {
@@ -3501,6 +4073,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_utils();
       init_base();
       init_icons();
+      init_site_icon();
       StatusStrip = class extends StoreElement {
         observedChanges = ["settings.layout"];
         timer = 0;
@@ -3526,16 +4099,31 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         render() {
           this.hidden = !appStore.state.settings.layout.showStatus;
           const { media, downloads, battery } = this.status;
-          const chips = [
-            media ? `<button class="status-chip is-media" type="button" data-liquid-item title="\u5207\u6362\u5230\u6B63\u5728\u64AD\u653E\u7684\u6807\u7B7E\u9875">${ICONS.play}<span>${escapeHtml(truncate(media.title, 26))}</span></button>` : "",
-            downloads.length ? `<button class="status-chip is-download" type="button" data-liquid-item title="\u5728\u6587\u4EF6\u5939\u4E2D\u663E\u793A">${ICONS.download}<span>${downloads.length} \u9879\u4E0B\u8F7D\u4E2D</span></button>` : "",
-            battery ? `<span class="status-chip battery-chip ${battery.level <= 0.2 && !battery.charging ? "is-low" : ""}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ""
+          const muteLabel = media?.muted ? "\u53D6\u6D88\u9759\u97F3" : "\u9759\u97F3";
+          this.innerHTML = [
+            media ? `
+                <div class="glass glass-dark capsule media-capsule">
+                    <button class="media-open" type="button" title="\u5207\u6362\u5230\u6B63\u5728\u64AD\u653E\u7684\u6807\u7B7E\u9875">
+                        <img class="media-art" src="${escapeHtml(media.icon)}" alt="" draggable="false">
+                        <span class="capsule-text">
+                            <strong>${escapeHtml(truncate(media.title, 28))}</strong>
+                            <small>${escapeHtml(media.host)} \u6807\u7B7E\u9875${media.muted ? "\u5DF2\u9759\u97F3" : "\u6B63\u5728\u64AD\u653E"}</small>
+                        </span>
+                        ${media.muted ? "" : '<span class="equalizer" aria-hidden="true"><span></span><span></span><span></span><span></span></span>'}
+                    </button>
+                    <button class="media-mute" type="button" data-liquid-item aria-label="${muteLabel}" title="${muteLabel}">${media.muted ? ICONS.muted : ICONS.speaker}</button>
+                </div>` : "",
+            downloads.length ? `<button class="glass glass-dark capsule download-capsule" type="button" data-liquid-item title="\u5728\u6587\u4EF6\u5939\u4E2D\u663E\u793A">${ICONS.download}<span>${downloads.length} \u9879\u4E0B\u8F7D\u4E2D</span></button>` : "",
+            battery ? `<span class="glass glass-dark capsule battery-capsule ${battery.level <= 0.2 && !battery.charging ? "is-low" : ""}" title="${battery.charging ? "\u6B63\u5728\u5145\u7535" : "\u6B63\u5728\u4F7F\u7528\u7535\u6C60"}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ""
           ].join("");
-          this.innerHTML = chips;
-          this.querySelector(".is-media")?.addEventListener("click", () => {
+          this.querySelector(".media-open")?.addEventListener("click", () => {
             if (media) chrome.tabs.update(media.id, { active: true });
           });
-          this.querySelector(".is-download")?.addEventListener("click", () => {
+          this.querySelector(".media-mute")?.addEventListener("click", () => {
+            if (!media) return;
+            void Promise.resolve(chrome.tabs.update(media.id, { muted: !media.muted })).finally(() => void this.refresh());
+          });
+          this.querySelector(".download-capsule")?.addEventListener("click", () => {
             if (downloads[0] !== void 0) chrome.downloads.show(downloads[0]);
           });
         }
@@ -3546,8 +4134,15 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             chrome.downloads?.search ? callbackResult((done) => chrome.downloads.search({ state: "in_progress" }, done), []) : [],
             readBattery()
           ]);
+          const tab = tabs[0];
           const next = {
-            media: tabs[0] ? { id: tabs[0].id, title: tabs[0].title || "\u6B63\u5728\u64AD\u653E" } : null,
+            media: tab ? {
+              id: tab.id,
+              title: tab.title || "\u6B63\u5728\u64AD\u653E",
+              host: hostOf(tab.url ?? "") || "\u5176\u4ED6",
+              icon: tab.url ? faviconUrl(tab.url, 64) : "",
+              muted: Boolean(tab.mutedInfo?.muted)
+            } : null,
             downloads: downloads.map((item) => item.id),
             battery
           };
@@ -3559,7 +4154,64 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
   });
 
+  // src/components/wallpaper-badge.ts
+  var WallpaperBadge;
+  var init_wallpaper_badge = __esm({
+    "src/components/wallpaper-badge.ts"() {
+      "use strict";
+      init_icons();
+      WallpaperBadge = class extends HTMLElement {
+        connectedCallback() {
+          document.addEventListener("wallpaper-state", this.onState);
+          this.addEventListener("click", this.onClick);
+          const surface = document.querySelector("wallpaper-surface");
+          if (surface?.state) this.update(surface.state);
+        }
+        disconnectedCallback() {
+          document.removeEventListener("wallpaper-state", this.onState);
+          this.removeEventListener("click", this.onClick);
+        }
+        onState = (event) => this.update(event.detail);
+        onClick = (event) => {
+          if (!event.target.closest(".wallpaper-pause")) return;
+          document.querySelector("wallpaper-surface")?.togglePaused();
+        };
+        /** Updates in place so a keyboard user keeps focus on the pause button. */
+        update({ label, animated, paused }) {
+          if (!this.querySelector(".wallpaper-label")) {
+            this.innerHTML = `<span class="wallpaper-label"></span><button class="glass round-button wallpaper-pause" type="button" data-liquid-item></button>`;
+          }
+          const action = paused ? "\u64AD\u653E\u52A8\u6001\u58C1\u7EB8" : "\u6682\u505C\u52A8\u6001\u58C1\u7EB8";
+          const button = this.querySelector(".wallpaper-pause");
+          this.querySelector(".wallpaper-label").textContent = label;
+          button.hidden = !animated;
+          button.setAttribute("aria-label", action);
+          button.title = action;
+          button.setAttribute("aria-pressed", String(paused));
+          button.innerHTML = paused ? ICONS.play : ICONS.pause;
+        }
+      };
+    }
+  });
+
   // src/components/wallpaper-surface.ts
+  function applySound(video, sound) {
+    if (!sound) {
+      video.muted = true;
+      return;
+    }
+    if (navigator.userActivation?.hasBeenActive) {
+      video.muted = false;
+      return;
+    }
+    const unmute = () => {
+      window.removeEventListener("pointerdown", unmute, true);
+      window.removeEventListener("keydown", unmute, true);
+      if (video.isConnected && appStore.state.settings.wallpaper.sound) video.muted = false;
+    };
+    window.addEventListener("pointerdown", unmute, true);
+    window.addEventListener("keydown", unmute, true);
+  }
   function safeTone(sample) {
     try {
       return sample();
@@ -3567,7 +4219,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       return "dark";
     }
   }
-  var WallpaperSurface;
+  var WallpaperSurface, SCENE;
   var init_wallpaper_surface = __esm({
     "src/components/wallpaper-surface.ts"() {
       "use strict";
@@ -3581,9 +4233,32 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         renderToken = 0;
         appliedMediaKey = "";
         pendingMediaKey = "";
+        userPaused = false;
+        battery = null;
+        connectedCallback() {
+          super.connectedCallback();
+          document.addEventListener("visibilitychange", this.syncPlayback);
+          void navigator.getBattery?.().then((battery) => {
+            this.battery = battery;
+            this.battery.addEventListener?.("chargingchange", this.syncPlayback);
+            this.syncPlayback();
+          }).catch(() => void 0);
+        }
         disconnectedCallback() {
           super.disconnectedCallback();
+          document.removeEventListener("visibilitychange", this.syncPlayback);
+          this.battery?.removeEventListener?.("chargingchange", this.syncPlayback);
           this.releaseObjectUrl();
+        }
+        get state() {
+          const { type, value } = appStore.state.settings.wallpaper;
+          const label = type === "gradient" ? "Twilight Bay \xB7 \u52A8\u6001" : type === "video" ? "\u672C\u5730\u89C6\u9891 \xB7 \u52A8\u6001" : type === "local" ? value.startsWith("online") ? "\u5728\u7EBF\u58C1\u7EB8" : "\u672C\u5730\u56FE\u7247" : "\u5728\u7EBF\u56FE\u7247";
+          return { label, animated: type === "gradient" || type === "video", paused: this.userPaused };
+        }
+        togglePaused() {
+          this.userPaused = !this.userPaused;
+          this.syncPlayback();
+          this.reportState();
         }
         render() {
           const wallpaper = appStore.state.settings.wallpaper;
@@ -3592,18 +4267,29 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           }
           this.style.setProperty("--wallpaper-blur", `${wallpaper.blur}px`);
           this.style.setProperty("--wallpaper-overlay", String(wallpaper.overlay / 100));
+          this.syncPlayback();
           const mediaKey = `${wallpaper.type}:${wallpaper.value}`;
           if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey) return;
           this.pendingMediaKey = mediaKey;
           void this.applyMedia(++this.renderToken, mediaKey);
         }
+        syncPlayback = () => {
+          const { type, pauseOnBattery, pauseWhenHidden, sound } = appStore.state.settings.wallpaper;
+          const paused = this.userPaused || pauseWhenHidden && document.visibilityState === "hidden" || pauseOnBattery && this.battery !== null && !this.battery.charging;
+          this.classList.toggle("is-paused", paused);
+          const video = this.querySelector(".wallpaper-media video");
+          if (!video || type !== "video") return;
+          applySound(video, sound);
+          if (paused) video.pause();
+          else if (video.paused) void video.play().catch(() => void 0);
+        };
         async applyMedia(token, mediaKey) {
           const wallpaper = appStore.state.settings.wallpaper;
           const host = this.querySelector(".wallpaper-media");
           if (!host) return;
           let candidateUrl = "";
           let candidateVideo = null;
-          let tone = Promise.resolve("light");
+          let tone = Promise.resolve("dark");
           try {
             if (wallpaper.type === "video") {
               const blob = await mediaStore.get("video");
@@ -3637,10 +4323,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               if (token !== this.renderToken) return;
               const preset = wallpaper.type === "preset" && wallpaper.value;
               const background = preset ? `url("${wallpaper.value.replaceAll('"', "%22")}")` : "";
-              if (preset) tone = Promise.resolve("dark");
               this.commitMedia(host, null, "", background);
+              if (!preset) host.innerHTML = SCENE;
             }
             this.appliedMediaKey = mediaKey;
+            this.syncPlayback();
+            this.reportState();
             const resolved = await tone;
             if (token === this.renderToken) this.reportTone(resolved);
           } catch (error) {
@@ -3653,10 +4341,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         commitMedia(host, video, objectUrl, background) {
           const previousUrl = this.objectUrl;
+          host.querySelectorAll("video").forEach((item) => {
+            if (item !== video) this.disposeVideo(item);
+          });
           host.replaceChildren(...video ? [video] : []);
           host.style.backgroundImage = background;
           this.objectUrl = objectUrl;
           if (previousUrl && previousUrl !== objectUrl) URL.revokeObjectURL(previousUrl);
+        }
+        reportState() {
+          this.dispatchEvent(new CustomEvent("wallpaper-state", { bubbles: true, composed: true, detail: this.state }));
         }
         reportTone(tone) {
           this.dispatchEvent(new CustomEvent("wallpaper-tone", { bubbles: true, composed: true, detail: { tone } }));
@@ -3680,6 +4374,73 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           video.remove();
         }
       };
+      SCENE = `
+<svg class="scene" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <defs>
+        <linearGradient id="scene-sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#121a3a"></stop>
+            <stop offset="0.32" stop-color="#3a3f74"></stop>
+            <stop offset="0.55" stop-color="#9a6390"></stop>
+            <stop offset="0.7" stop-color="#e48b7f"></stop>
+            <stop offset="0.8" stop-color="#ffc08e"></stop>
+        </linearGradient>
+        <radialGradient id="scene-sun-glow" cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0" stop-color="#fff1d6" stop-opacity="1"></stop>
+            <stop offset="0.25" stop-color="#ffd7a3" stop-opacity="0.8"></stop>
+            <stop offset="1" stop-color="#ff9f7a" stop-opacity="0"></stop>
+        </radialGradient>
+        <linearGradient id="scene-water" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#e9997f"></stop>
+            <stop offset="0.35" stop-color="#8a5a82"></stop>
+            <stop offset="1" stop-color="#1a1c3d"></stop>
+        </linearGradient>
+        <linearGradient id="scene-far" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#8b6a9a"></stop>
+            <stop offset="1" stop-color="#b47a8e"></stop>
+        </linearGradient>
+    </defs>
+    <g class="scene-kb">
+        <rect width="1440" height="720" fill="url(#scene-sky)"></rect>
+        <g fill="#fff">
+            <circle class="scene-star" cx="180" cy="80" r="1.4"></circle>
+            <circle class="scene-star" cx="340" cy="150" r="1"></circle>
+            <circle class="scene-star" cx="520" cy="60" r="1.2"></circle>
+            <circle class="scene-star" cx="760" cy="110" r="0.9"></circle>
+            <circle class="scene-star" cx="1010" cy="70" r="1.3"></circle>
+            <circle class="scene-star" cx="1180" cy="160" r="1"></circle>
+            <circle class="scene-star" cx="1320" cy="90" r="1.4"></circle>
+            <circle class="scene-star" cx="90" cy="210" r="0.8"></circle>
+            <circle class="scene-star" cx="1260" cy="240" r="0.8"></circle>
+        </g>
+        <circle class="scene-halo" cx="930" cy="612" r="260" fill="url(#scene-sun-glow)" opacity="0.7"></circle>
+        <circle cx="930" cy="640" r="64" fill="#fff0d2"></circle>
+        <g class="scene-cloud-a" fill="#ffd9c4" opacity="0.32">
+            <ellipse cx="300" cy="380" rx="220" ry="16"></ellipse>
+            <ellipse cx="420" cy="366" rx="140" ry="12"></ellipse>
+            <ellipse cx="1100" cy="430" rx="260" ry="14"></ellipse>
+        </g>
+        <g class="scene-cloud-b" fill="#f6b9b0" opacity="0.28">
+            <ellipse cx="700" cy="300" rx="300" ry="11"></ellipse>
+            <ellipse cx="1240" cy="520" rx="200" ry="10"></ellipse>
+            <ellipse cx="160" cy="520" rx="180" ry="9"></ellipse>
+        </g>
+        <path d="M0 600 L120 560 L230 585 L360 520 L470 566 L600 540 L720 590 L840 560 L980 600 L1100 548 L1230 580 L1340 540 L1440 572 L1440 700 L0 700 Z" fill="url(#scene-far)" opacity="0.75"></path>
+        <path d="M0 640 L90 612 L210 650 L330 596 L440 640 L560 618 L680 664 L780 640 L900 676 L1040 630 L1160 668 L1290 620 L1440 650 L1440 712 L0 712 Z" fill="#4a3b6a"></path>
+        <path d="M0 690 L140 660 L260 684 L400 650 L520 690 L1000 694 L1120 662 L1260 684 L1440 664 L1440 720 L0 720 Z" fill="#26234a"></path>
+        <rect y="712" width="1440" height="188" fill="url(#scene-water)"></rect>
+        <g fill="#fff3dc">
+            <rect class="scene-glint" x="870" y="726" width="120" height="3" rx="1.5"></rect>
+            <rect class="scene-glint" x="890" y="744" width="84" height="2.5" rx="1.2"></rect>
+            <rect class="scene-glint" x="850" y="764" width="160" height="2" rx="1"></rect>
+            <rect class="scene-glint" x="900" y="786" width="62" height="2" rx="1"></rect>
+            <rect class="scene-glint" x="866" y="810" width="128" height="1.6" rx="0.8"></rect>
+            <rect class="scene-glint" x="910" y="838" width="44" height="1.6" rx="0.8"></rect>
+            <rect class="scene-glint" x="820" y="866" width="210" height="1.4" rx="0.7"></rect>
+        </g>
+        <path d="M0 760 C200 748 360 772 560 760 C760 748 980 776 1180 760 C1300 752 1380 756 1440 760" stroke="#ffd2b8" stroke-opacity="0.18" stroke-width="1.2" fill="none"></path>
+        <path d="M0 820 C240 808 420 832 660 820 C880 808 1080 836 1300 820 C1360 816 1410 818 1440 820" stroke="#ffd2b8" stroke-opacity="0.12" stroke-width="1" fill="none"></path>
+    </g>
+</svg>`;
     }
   });
 
@@ -3694,18 +4455,23 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_bookmark_dialog();
       init_bookmark_launchpad();
       init_dashboard_header();
+      init_home_dock();
       init_icons();
       init_liquid_glass();
       init_liquid_controls();
-      init_search_command();
-      init_settings_drawer();
+      init_search_pill();
+      init_settings_panel();
+      init_spotlight_search();
       init_status_strip();
       init_ui_layer();
+      init_wallpaper_badge();
       init_wallpaper_surface();
       installChromeFallback();
+      var IDLE_DELAY = 8e3;
       var InfinityNewTabApp = class extends HTMLElement {
         hdrMedia = window.matchMedia("(dynamic-range: high)");
-        wallpaperTone = "light";
+        wallpaperTone = "dark";
+        idleTimer = 0;
         updateClasses = () => {
           const { appearance } = appStore.state.settings;
           const hdrDisplay = this.hasHdrDisplay();
@@ -3713,6 +4479,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const theme = appearance.theme === "auto" ? this.wallpaperTone : appearance.theme;
           document.body.classList.toggle("theme-light", theme === "light");
           document.body.classList.toggle("theme-dark", theme === "dark");
+          document.body.classList.toggle("glass-tinted", appearance.glass === "tinted");
+          document.body.classList.toggle("reduce-transparency", appearance.reduceTransparency);
           document.body.classList.toggle("enhanced-animations", appearance.enhancedAnimations);
           document.body.classList.toggle("hdr-highlights", appearance.hdrHighlights);
           document.body.classList.toggle("hdr-display", hdrDisplay);
@@ -3722,6 +4490,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         onStoreChange = (event) => {
           const changes = event.detail?.changes;
           if (!changes || changes.includes("settings.appearance")) this.updateClasses();
+          if (!changes || changes.includes("settings.wallpaper")) this.wake();
         };
         async connectedCallback() {
           this.innerHTML = '<div class="app-loading" role="status"><span></span><p>\u6B63\u5728\u6574\u7406\u4F60\u7684\u542F\u52A8\u53F0\u2026</p></div>';
@@ -3732,6 +4501,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.hdrMedia.addEventListener("change", this.updateClasses);
             this.render();
             window.addEventListener("keydown", this.onKeyDown);
+            ["pointermove", "pointerdown", "keydown", "wheel", "focusin"].forEach((type) => {
+              window.addEventListener(type, this.wake, { passive: true, capture: true });
+            });
+            this.wake();
             void migrateLegacyWallpaper();
           } catch (error) {
             this.innerHTML = `<div class="app-error"><h1>\u542F\u52A8\u53F0\u52A0\u8F7D\u5931\u8D25</h1><p>${escapeHtml(error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF")}</p></div>`;
@@ -3741,6 +4514,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           appStore.removeEventListener("change", this.onStoreChange);
           this.hdrMedia.removeEventListener("change", this.updateClasses);
           window.removeEventListener("keydown", this.onKeyDown);
+          ["pointermove", "pointerdown", "keydown", "wheel", "focusin"].forEach((type) => {
+            window.removeEventListener(type, this.wake, true);
+          });
+          window.clearTimeout(this.idleTimer);
         }
         hasHdrDisplay() {
           return this.hdrMedia.matches && CSS.supports("dynamic-range-limit", "no-limit");
@@ -3748,31 +4525,45 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         render() {
           this.innerHTML = `
             <wallpaper-surface></wallpaper-surface>
-            <header class="top-bar">
-                <status-strip></status-strip>
-                <div class="top-actions">
-                    <button class="top-button shuffle-wallpaper" type="button" data-liquid-item aria-label="\u6362\u4E00\u5F20\u5728\u7EBF\u58C1\u7EB8" title="\u6362\u4E00\u5F20\u5728\u7EBF\u58C1\u7EB8">${ICONS.shuffle}</button>
-                    <button class="top-button settings-trigger" type="button" data-liquid-item aria-label="\u6253\u5F00\u8BBE\u7F6E" title="\u8BBE\u7F6E">${ICONS.settings}</button>
-                </div>
-            </header>
-            <main class="app-shell">
-                <div class="hero">
+            <div class="home">
+                <header class="top-bar">
+                    <status-strip></status-strip>
+                    <div class="top-actions">
+                        <button class="glass round-button shuffle-wallpaper" type="button" data-liquid-item aria-label="\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8" title="\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8">${ICONS.sparkle}</button>
+                        <button class="glass round-button settings-trigger" type="button" data-liquid-item aria-label="\u8BBE\u7F6E" title="\u8BBE\u7F6E">${ICONS.settings}</button>
+                    </div>
+                </header>
+                <main class="hero">
                     <dashboard-header></dashboard-header>
-                    <search-command></search-command>
-                </div>
-                <bookmark-launchpad></bookmark-launchpad>
-            </main>
-            <settings-drawer></settings-drawer>
+                    <search-pill></search-pill>
+                </main>
+                <home-dock></home-dock>
+                <wallpaper-badge></wallpaper-badge>
+            </div>
+            <spotlight-search></spotlight-search>
+            <bookmark-launchpad></bookmark-launchpad>
+            <settings-panel></settings-panel>
             <bookmark-dialog></bookmark-dialog>
             <backup-toast></backup-toast>
             <liquid-glass-system></liquid-glass-system>
         `;
-          this.querySelector(".settings-trigger")?.addEventListener("click", () => {
-            this.querySelector("settings-drawer")?.open();
-          });
+          this.querySelector(".settings-trigger")?.addEventListener("click", () => this.settings?.open());
           this.querySelector(".shuffle-wallpaper")?.addEventListener("click", (event) => void this.shuffleWallpaper(event.currentTarget));
           this.addEventListener("wallpaper-error", this.onWallpaperError);
           this.addEventListener("wallpaper-tone", this.onWallpaperTone);
+          this.addEventListener("open-spotlight", () => this.spotlight?.open());
+          this.addEventListener("open-launchpad", ((event) => {
+            this.launchpad?.open(event.detail?.view ?? "bookmarks");
+          }));
+        }
+        get spotlight() {
+          return this.querySelector("spotlight-search");
+        }
+        get launchpad() {
+          return this.querySelector("bookmark-launchpad");
+        }
+        get settings() {
+          return this.querySelector("settings-panel");
         }
         async shuffleWallpaper(button) {
           if (button.classList.contains("is-busy")) return;
@@ -3787,6 +4578,20 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             button.removeAttribute("aria-busy");
           }
         }
+        /** Any input brings the interface back and restarts the idle countdown. */
+        wake = () => {
+          document.body.classList.remove("is-idle");
+          window.clearTimeout(this.idleTimer);
+          if (!appStore.state.settings.wallpaper.idleHide) return;
+          this.idleTimer = window.setTimeout(this.goIdle, IDLE_DELAY);
+        };
+        goIdle = () => {
+          if (hasOpenLayer() || isTypingTarget(document.activeElement) || document.querySelector(".liquid-glass-lens.is-visible, .context-menu, .modal-backdrop")) {
+            this.wake();
+            return;
+          }
+          document.body.classList.add("is-idle");
+        };
         onWallpaperTone = (event) => {
           this.wallpaperTone = event.detail.tone;
           this.updateClasses();
@@ -3795,11 +4600,17 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           notify(`\u80CC\u666F\u52A0\u8F7D\u5931\u8D25\uFF1A${event.detail?.message || "\u672A\u77E5\u9519\u8BEF"}\u3002\u5DF2\u4FDD\u7559\u539F\u80CC\u666F\u3002`, "error", 8e3);
         };
         onKeyDown = (event) => {
-          if (event.key !== "/" || isTypingTarget(event.target) || hasOpenLayer()) return;
-          const input = this.querySelector("search-command input");
-          if (!input || input.closest("[hidden]")) return;
-          event.preventDefault();
-          input.focus();
+          const commandK = event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey;
+          if (commandK && this.spotlight?.isOpen) {
+            event.preventDefault();
+            this.spotlight.close();
+            return;
+          }
+          if (hasOpenLayer()) return;
+          if (commandK || event.key === "/" && !isTypingTarget(event.target)) {
+            event.preventDefault();
+            this.spotlight?.open();
+          }
         };
       };
       function isTypingTarget(target) {
@@ -3810,11 +4621,14 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         ["liquid-range", LiquidRange],
         ["liquid-toggle", LiquidToggle],
         ["wallpaper-surface", WallpaperSurface],
+        ["wallpaper-badge", WallpaperBadge],
         ["status-strip", StatusStrip],
         ["dashboard-header", DashboardHeader],
-        ["search-command", SearchCommand],
+        ["search-pill", SearchPill],
+        ["home-dock", HomeDock],
+        ["spotlight-search", SpotlightSearch],
         ["bookmark-launchpad", BookmarkLaunchpad],
-        ["settings-drawer", SettingsDrawer],
+        ["settings-panel", SettingsPanel],
         ["bookmark-dialog", BookmarkDialog],
         ["backup-toast", BackupToast],
         ["infinity-newtab-app", InfinityNewTabApp]

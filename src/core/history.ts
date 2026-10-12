@@ -46,3 +46,23 @@ function siteName(host: string, rootTitle: string): string {
     if (cleaned && cleaned.length <= 18) return cleaned;
     return host;
 }
+
+let recentSites: Promise<RecentSite[]> | null = null;
+
+/** One history scan per page load, shared by the Dock, the launchpad and Spotlight. */
+export function loadRecentSites(refresh = false): Promise<RecentSite[]> {
+    if (!recentSites || refresh) {
+        recentSites = new Promise<RecentSite[]>((resolve, reject) => {
+            if (!chrome.history?.search) {
+                reject(new Error('浏览器未开放历史记录访问'));
+                return;
+            }
+            chrome.history.search({ text: '', startTime: Date.now() - 30 * 24 * 60 * 60 * 1000, maxResults: 3000 }, (items: Array<Record<string, unknown>>) => {
+                if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+                else resolve(rankSites(items ?? []));
+            });
+        });
+        recentSites.catch(() => { recentSites = null; });
+    }
+    return recentSites;
+}

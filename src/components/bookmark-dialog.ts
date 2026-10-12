@@ -30,7 +30,7 @@ export class BookmarkDialog extends HTMLElement {
         const title = bookmark ? '编辑书签' : '添加书签';
         this.innerHTML = `
             <div class="modal-backdrop dialog-backdrop is-open">
-                <form class="modal bookmark-dialog glass-panel" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
+                <form class="modal bookmark-dialog glass glass-thick" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
                     <header class="modal-header">
                         <h2>${title}</h2>
                         <button class="icon-close dialog-close" type="button" aria-label="关闭">${ICONS.close}</button>
@@ -59,8 +59,8 @@ export class BookmarkDialog extends HTMLElement {
                     </details>
                     <p class="field-error" role="alert" hidden></p>
                     <footer class="modal-actions">
-                        <button class="glass-button cancel-dialog" type="button" data-liquid-item>取消</button>
-                        <button class="glass-button primary" type="submit" data-liquid-item>保存</button>
+                        <button class="pill-button cancel-dialog" type="button" data-liquid-item>取消</button>
+                        <button class="pill-button primary" type="submit" data-liquid-item>保存</button>
                     </footer>
                 </form>
             </div>

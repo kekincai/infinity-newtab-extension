@@ -19,7 +19,7 @@ export class DashboardHeader extends StoreElement {
     protected render(): void {
         this.hidden = !appStore.state.settings.layout.showClock;
         if (!this.querySelector('.hero-time')) {
-            this.innerHTML = '<time class="hero-time" id="time">--:--</time><span class="hero-date" id="date"></span>';
+            this.innerHTML = '<p class="hero-date" id="date"></p><time class="hero-time" id="time">--:--</time>';
         }
         this.updateClock();
     }
@@ -45,8 +45,15 @@ export class DashboardHeader extends StoreElement {
         time.textContent = now.toLocaleTimeString('zh-CN', {
             hour: '2-digit', minute: '2-digit', hour12: clockFormat === '12h'
         });
-        date.textContent = now.toLocaleDateString('zh-CN', dateFormat === 'long'
-            ? { month: 'long', day: 'numeric', weekday: 'long' }
-            : { month: 'numeric', day: 'numeric', weekday: 'short' });
+        date.textContent = formatDate(now, dateFormat);
     }
+}
+
+/** “10月12日 星期一” or “10/12 周一”. */
+export function formatDate(date: Date, format: 'long' | 'short'): string {
+    const weekday = date.toLocaleDateString('zh-CN', { weekday: format === 'long' ? 'long' : 'short' });
+    const month = date.getMonth() + 1;
+    return format === 'long'
+        ? `${month}月${date.getDate()}日 ${weekday}`
+        : `${month}/${date.getDate()} ${weekday}`;
 }

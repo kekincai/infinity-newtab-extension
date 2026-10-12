@@ -10,7 +10,7 @@ const initialData = {
     folders: ['全部', 'POM'],
     settings: {
         layout: { showClock: true, showSearch: true, showBookmarks: true, showStatus: true, showRecent: true, searchEngine: 'google' },
-        wallpaper: { type: 'gradient', value: '', blur: 0, overlay: 30 },
+        wallpaper: { type: 'gradient', value: '', blur: 0, overlay: 30, idleHide: false },
         appearance: { clockFormat: '24h', dateFormat: 'long', enhancedAnimations: true, theme: 'light' }
     },
     recentSearches: ['二次元壁纸'],
@@ -93,7 +93,7 @@ async function openExtension(page, seed = initialData, options = {}) {
     page.on('pageerror', (error) => errors.push(error.message));
     await installChromeMock(page, seed, options);
     await page.goto('/newtab.html');
-    await expect(page.locator('.bookmark-tile')).toHaveCount(seed.bookmarks.filter((bookmark) => (bookmark.folder || '全部') === '全部').length);
+    await expect(page.locator('.dock-item[data-bookmark-id]')).toHaveCount(Math.min(12, seed.bookmarks.filter((bookmark) => (bookmark.folder || '全部') === '全部').length));
     return errors;
 }
 
@@ -207,49 +207,62 @@ async function expectRenderedRefraction(page, locator) {
     await lens.evaluate((element, filter) => element.style.setProperty('--liquid-filter', filter), activeFilter);
 }
 
-async function showRecent(page) {
-    await page.locator('.nav-item[data-view="recent"]').click();
-    await expect(page.locator('.recent-tile').first()).toBeVisible();
+async function openLaunchpad(page, view = 'bookmarks') {
+    await page.locator(view === 'recent' ? '.dock-recent' : '.dock-all').click();
+    await expect(page.locator('.launchpad')).toBeVisible();
+    if (view === 'recent') await expect(page.locator('.recent-tile').first()).toBeVisible();
 }
 
-async function openSettings(page, tab = 'appearance') {
+async function openSettings(page, pane = 'appearance') {
     await page.locator('.settings-trigger').click();
-    await expect(page.locator('.settings-drawer')).toHaveClass(/is-open/);
-    if (tab !== 'appearance') await page.locator(`[data-tab="${tab}"]`).click();
+    await expect(page.locator('.settings-window')).toHaveClass(/is-open/);
+    if (pane !== 'appearance') await page.locator(`.settings-nav-item[data-pane="${pane}"]`).click();
+    await expect(page.locator(`.settings-pane[data-pane="${pane}"]`)).toBeVisible();
 }
 
-test('renders the TypeScript Web Component home screen', async ({ page }) => {
+function overlaps(a, b) {
+    return !(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
+}
+
+test('renders the home screen, Dock and launchpad', async ({ page }) => {
     const errors = await openExtension(page);
     await expect(page).toHaveTitle('Infinity New Tab');
     await expect(page.locator('infinity-newtab-app')).toHaveCount(1);
-    await expect(page.locator('.nav-item[data-folder="全部"]')).toHaveAttribute('aria-current', 'page');
-    await expect(page.locator('.nav-folder[data-folder="POM"]')).toHaveCount(1);
-    await expect(page.locator('.battery-chip')).toContainText('82%');
-    await expect(page.locator('.cpu-chip, .memory-chip')).toHaveCount(0);
-    await expect(page.locator('.is-media, .is-download')).toHaveCount(0);
-    await showRecent(page);
+    await expect(page.locator('.dock-item[data-bookmark-id]').first()).toHaveAttribute('aria-label', 'google.com');
+    await expect(page.locator('.battery-capsule')).toContainText('82%');
+    await expect(page.locator('.media-capsule, .download-capsule')).toHaveCount(0);
+    await expect(page.locator('.hero-time')).toHaveText(/^\d{2}:\d{2}$/);
+    await expect(page.locator('wallpaper-badge')).toContainText('Twilight Bay');
+    await expect(page.locator('.wallpaper-media .scene')).toHaveCount(1);
+
+    await openLaunchpad(page);
+    await expect(page.locator('.launchpad-tab[data-folder="全部"]')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.launchpad-tab[data-folder="全部"]')).toHaveText('全部 · 3');
+    await expect(page.locator('.folder-tile[data-folder="POM"]')).toHaveCount(1);
+    await expect(page.locator('.bookmark-tile')).toHaveCount(2);
+    await expect(page.locator('.home')).toBeHidden();
+    await page.locator('.launchpad-tab[data-view="recent"]').click();
     await expect(page.locator('.recent-tile')).toHaveCount(2);
     await expect(page.locator('.launchpad-grid')).toContainText('youtube.com');
     await expect(page.locator('.launchpad-grid')).not.toContainText('google');
-    await page.reload();
-    await expect(page.locator('.nav-item[data-view="recent"]')).toHaveAttribute('aria-current', 'page');
+    await page.locator('.launchpad-done').click();
+    await expect(page.locator('bookmark-launchpad')).toBeHidden();
+
     await expect(page.locator('liquid-glass-system')).toHaveCount(1);
     const coverage = await page.evaluate(() => {
         const items = [...document.querySelectorAll('[data-liquid-item]')];
         return {
             total: items.length,
-            oldWrappers: document.querySelectorAll('liquid-surface, liquid-filter-bank').length,
             movedChildren: items.filter((item) => item.querySelector('.liquid-glass-content')).length,
             lenses: document.querySelectorAll('.liquid-glass-lens').length,
             hdrLayers: document.querySelectorAll('.hdr-glass-layer').length
         };
     });
     expect(coverage.total).toBeGreaterThan(10);
-    expect(coverage.oldWrappers).toBe(0);
     expect(coverage.movedChildren).toBe(0);
     expect(coverage.lenses).toBe(1);
     expect(coverage.hdrLayers).toBe(1);
-    expect(await page.locator('.hero').evaluate((element) => getComputedStyle(element).textShadow)).not.toBe('none');
+    expect(await page.locator('.hero-time').evaluate((element) => getComputedStyle(element).textShadow)).not.toBe('none');
     const bodyWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(bodyWidth).toBeLessThanOrEqual(1440);
     expect(errors).toEqual([]);
@@ -258,6 +271,7 @@ test('renders the TypeScript Web Component home screen', async ({ page }) => {
 test('adds another extension page as a bookmark', async ({ page }) => {
     const errors = await openExtension(page);
     const extensionPage = 'chrome-extension://hjekpdhdabgkokjbklegnfkogcpjhhhg/index.html';
+    await openLaunchpad(page);
     await page.locator('.add-bookmark').click();
     const dialog = page.getByRole('dialog', { name: '添加书签' });
     await expect(dialog).toBeVisible();
@@ -272,6 +286,8 @@ test('adds another extension page as a bookmark', async ({ page }) => {
     await expect(page).toHaveURL(/\/newtab\.html$/);
     const stored = await page.evaluate(() => window.__readMockSync().bookmarks);
     expect(stored.some((bookmark) => bookmark.url === extensionPage)).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.dock-item[aria-label="扩展工具"]')).toHaveCount(1);
     expect(errors).toEqual([]);
 });
 
@@ -280,17 +296,20 @@ test('uses one empty article precision lens over every real component', async ({
     const action = await inspectArticleFilter(page, page.locator('.shuffle-wallpaper'));
     const secondAction = await inspectArticleFilter(page, page.locator('.settings-trigger'));
     expect(secondAction.id).toBeTruthy();
+    expect(action.id).toBeTruthy();
 
-    const folder = await inspectArticleFilter(page, page.locator('.nav-folder[data-folder="POM"]'));
-    const bookmark = await inspectArticleFilter(page, page.locator('.bookmark-tile[data-bookmark-id="1"]'));
-    expect(bookmark.id).toBeTruthy();
+    const dockItem = await inspectArticleFilter(page, page.locator('.dock-item[data-bookmark-id="1"]'));
+    expect(dockItem.id).toBeTruthy();
+    await inspectArticleFilter(page, page.locator('.dock-all'));
+    await inspectArticleFilter(page, page.locator('.search-pill'));
 
-    await inspectArticleFilter(page, page.locator('.add-bookmark'));
-    await inspectArticleFilter(page, page.locator('.nav-item[data-view="recent"]'));
-    await inspectArticleFilter(page, page.locator('.search-shell'));
-
-    await page.mouse.move(720, 990);
+    await page.mouse.move(720, 600);
     await expect(page.locator('.liquid-glass-lens')).not.toHaveClass(/is-visible/, { timeout: 1000 });
+
+    await openLaunchpad(page);
+    await inspectArticleFilter(page, page.locator('.launchpad-tab[data-folder="POM"]'));
+    await inspectArticleFilter(page, page.locator('.bookmark-tile[data-bookmark-id="1"]'));
+    await inspectArticleFilter(page, page.locator('.add-bookmark'));
     expect(errors).toEqual([]);
 });
 
@@ -301,10 +320,10 @@ test('renders real refraction pixels on hover', async ({ page }) => {
     await page.addStyleTag({ content: `
         body { background: repeating-linear-gradient(90deg, #101828 0 8px, #ff3f9f 8px 16px, #61d8ff 16px 24px) !important; }
         wallpaper-surface { display: none !important; }
-        .search-shell, .nav-folder { transform: none !important; transition: none !important; }
+        .search-pill, .dock, .dock-item .app-icon { transform: none !important; transition: none !important; }
     ` });
-    await expectRenderedRefraction(page, page.locator('.search-shell'));
-    await expectRenderedRefraction(page, page.locator('.nav-folder[data-folder="POM"]'));
+    await expectRenderedRefraction(page, page.locator('.search-pill'));
+    await expectRenderedRefraction(page, page.locator('.dock-item[data-bookmark-id="2"]'));
     expect(errors).toEqual([]);
 });
 
@@ -360,8 +379,12 @@ test('tracks the real pointer midway in both directions without flipping', async
 
 test('does not jump the glass lens to another row when the last row has no neighbour', async ({ page }) => {
     const seed = structuredClone(initialData);
+    let errors = await openExtension(page, seed);
+    await openLaunchpad(page);
+    const columns = await page.locator('.launchpad-grid').evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(' ').length);
+    // The root grid holds the POM folder tile, the bookmarks and the add tile: fill one row plus one item.
     seed.bookmarks = [
-        ...Array.from({ length: 7 }, (_, index) => ({
+        ...Array.from({ length: columns - 1 }, (_, index) => ({
             id: index + 1,
             name: `Site ${index + 1}`,
             url: `https://site-${index + 1}.example.com/`,
@@ -371,23 +394,10 @@ test('does not jump the glass lens to another row when the last row has no neigh
         })),
         { id: 99, name: 'POM site', url: 'https://pom.example.com/', icon: '', folder: 'POM', order: 0 }
     ];
-    let errors = await openExtension(page, seed);
-    // Fill exactly one grid row plus one tile so the last row holds a single item.
-    const columns = await page.locator('.launchpad-grid').evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(' ').length);
-    seed.bookmarks = [
-        ...Array.from({ length: columns }, (_, index) => ({
-            id: index + 1,
-            name: `Site ${index + 1}`,
-            url: `https://site-${index + 1}.example.com/`,
-            icon: '',
-            folder: '全部',
-            order: index
-        })),
-        seed.bookmarks.at(-1)
-    ];
     await page.evaluate((bookmarks) => new Promise((resolve) => chrome.storage.sync.set({ bookmarks }, resolve)), seed.bookmarks);
     await page.reload();
-    await expect(page.locator('.bookmark-tile')).toHaveCount(columns);
+    await openLaunchpad(page);
+    await expect(page.locator('.bookmark-tile')).toHaveCount(columns - 1);
     errors = [];
     const items = page.locator('.launchpad-grid > [data-liquid-item]');
     const rows = await items.evaluateAll((elements) => {
@@ -421,13 +431,15 @@ test('does not jump the glass lens to another row when the last row has no neigh
 
 test('moves and reorders bookmarks without duplication', async ({ page }) => {
     const errors = await openExtension(page);
-    await page.locator('.bookmark-tile[data-bookmark-id="1"]').dragTo(page.locator('.nav-folder[data-folder="POM"]'));
+    await openLaunchpad(page);
+    await page.locator('.bookmark-tile[data-bookmark-id="1"]').dragTo(page.locator('.launchpad-tab[data-folder="POM"]'));
     await expect(page.locator('.bookmark-tile')).toHaveCount(1);
     let stored = await page.evaluate(() => window.__readMockSync());
     expect(stored.bookmarks).toHaveLength(3);
     expect(stored.bookmarks.find((bookmark) => String(bookmark.id) === '1').folder).toBe('POM');
 
-    await page.locator('.nav-folder[data-folder="POM"]').click();
+    await page.locator('.folder-tile[data-folder="POM"]').click();
+    await expect(page.locator('.launchpad-tab[data-folder="POM"]')).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('.bookmark-tile')).toHaveCount(2);
     await page.locator('.bookmark-tile[data-bookmark-id="3"]').dragTo(page.locator('.bookmark-tile[data-bookmark-id="1"]'));
     stored = await page.evaluate(() => window.__readMockSync());
@@ -441,36 +453,40 @@ test('moves and reorders bookmarks without duplication', async ({ page }) => {
 test('persists layout, theme and local wallpaper controls', async ({ page }) => {
     const errors = await openExtension(page);
     await openSettings(page, 'widgets');
-    const settingsLayout = await page.locator('.settings-drawer').evaluate((drawer) => {
-        const tabs = drawer.querySelector('.settings-tabs').getBoundingClientRect();
-        const pane = drawer.querySelector('.settings-pane').getBoundingClientRect();
+    const settingsLayout = await page.locator('.settings-window').evaluate((window) => {
+        const sidebar = window.querySelector('.settings-sidebar').getBoundingClientRect();
+        const content = window.querySelector('.settings-content').getBoundingClientRect();
         return {
-            width: drawer.getBoundingClientRect().width,
-            navAbovePane: tabs.bottom <= pane.top,
-            overflowFree: drawer.scrollWidth <= drawer.clientWidth
+            width: window.getBoundingClientRect().width,
+            sidebarBeside: sidebar.right <= content.left + 1,
+            overflowFree: window.scrollWidth <= window.clientWidth
         };
     });
-    expect(settingsLayout.width).toBeGreaterThanOrEqual(380);
-    expect(settingsLayout.width).toBeLessThanOrEqual(440);
-    expect(settingsLayout.navAbovePane).toBe(true);
+    expect(settingsLayout.width).toBe(920);
+    expect(settingsLayout.sidebarBeside).toBe(true);
     expect(settingsLayout.overflowFree).toBe(true);
     await page.locator('input[data-toggle="showStatus"]').uncheck();
     await expect(page.locator('status-strip')).toBeHidden();
+    await page.locator('input[data-toggle="showBookmarks"]').uncheck();
+    await expect(page.locator('.setting-row[data-depends="showBookmarks"]').first()).toHaveClass(/is-disabled/);
+    await expect(page.locator('home-dock')).toBeHidden();
+    await page.locator('input[data-toggle="showBookmarks"]').check();
+    await expect(page.locator('home-dock')).toBeVisible();
+    await page.locator('[data-segment="dockSource"] [data-value="recent"]').click();
+    await expect(page.locator('.dock-item[data-site-index]')).toHaveCount(2);
+
+    await page.locator('.settings-nav-item[data-pane="appearance"]').click();
     await page.locator('[data-segment="clockFormat"] [data-value="12h"]').click();
     await expect(page.locator('[data-segment="clockFormat"] [data-value="12h"]')).toHaveAttribute('aria-checked', 'true');
-    await page.locator('input[data-toggle="showClock"]').uncheck();
-    await expect(page.locator('.setting-sub[data-depends="showClock"]')).toHaveClass(/is-disabled/);
-    await expect(page.locator('dashboard-header')).toBeHidden();
-    await page.locator('input[data-toggle="showClock"]').check();
-    await page.locator('[data-tab="appearance"]').click();
-    await expect(page.locator('liquid-toggle')).toHaveCount(2);
-    await expect(page.locator('.liquid-toggle-thumb[data-liquid-profile="lip"]')).toHaveCount(2);
+    const appearanceToggles = page.locator('.settings-pane[data-pane="appearance"] liquid-toggle');
+    await expect(appearanceToggles).toHaveCount(2);
+    await expect(page.locator('.settings-pane[data-pane="appearance"] .liquid-toggle-thumb[data-liquid-profile="lip"]')).toHaveCount(2);
     const toggleMapCount = await page.locator('liquid-toggle feImage[result="displacement_map"]').evaluateAll((images) => (
         new Set(images.map((image) => image.getAttribute('href'))).size
     ));
     expect(toggleMapCount).toBe(1);
-    await page.locator('liquid-toggle').first().evaluate((control) => { window.__retainedLiquidControl = control; });
-    await page.locator('liquid-toggle').first().hover();
+    await appearanceToggles.first().evaluate((control) => { window.__retainedLiquidControl = control; });
+    await appearanceToggles.first().hover();
     await expect(page.locator('.hdr-glass-layer')).toHaveAttribute('data-hdr-target', 'liquid-toggle');
     const controlHdrSize = await page.locator('.hdr-glass-layer').evaluate((canvas) => ({
         width: Number.parseFloat(canvas.style.getPropertyValue('--hdr-glass-width')),
@@ -478,43 +494,43 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     }));
     expect(controlHdrSize.width).toBeGreaterThan(20);
     expect(controlHdrSize.height).toBeGreaterThan(20);
-    const toggleDisplacement = page.locator('liquid-toggle').first().locator('feDisplacementMap');
-    await expect(toggleDisplacement).toHaveAttribute('scale', String(55.65161904498752 * 0.4));
-    await page.locator('input[data-toggle="hdrHighlights"]').dispatchEvent('pointerdown');
-    await expect(page.locator('liquid-toggle').nth(1)).toHaveClass(/is-active/);
-    await expect(page.locator('liquid-toggle').nth(1).locator('feDisplacementMap')).toHaveAttribute('scale', String(55.65161904498752 * 0.9));
-    await page.locator('input[data-toggle="hdrHighlights"]').dispatchEvent('pointerup');
-    await expect(page.locator('input[data-toggle="hdrHighlights"]')).toBeChecked();
-    await page.locator('input[data-toggle="hdrHighlights"]').uncheck();
+    await expect(appearanceToggles.first().locator('feDisplacementMap')).toHaveAttribute('scale', String(55.65161904498752 * 0.4));
+    const hdrToggle = page.locator('input[data-toggle="hdrHighlights"]');
+    await hdrToggle.dispatchEvent('pointerdown');
+    await expect(appearanceToggles.first()).toHaveClass(/is-active/);
+    await expect(appearanceToggles.first().locator('feDisplacementMap')).toHaveAttribute('scale', String(55.65161904498752 * 0.9));
+    await hdrToggle.dispatchEvent('pointerup');
+    await expect(hdrToggle).toBeChecked();
+    await hdrToggle.uncheck();
     await expect(page.locator('body')).not.toHaveClass(/hdr-highlights/);
-    expect(await page.evaluate(() => (
-        window.__retainedLiquidControl?.isConnected
-        && window.__retainedLiquidControl === document.querySelector('liquid-toggle')
-    ))).toBe(true);
-    await page.locator('input[data-toggle="hdrHighlights"]').check();
+    await hdrToggle.check();
     await expect(page.locator('body')).toHaveClass(/hdr-highlights/);
+    await page.locator('input[data-toggle="reduceTransparency"]').check();
+    await expect(page.locator('body')).toHaveClass(/reduce-transparency/);
     await page.locator('[data-segment="theme"] [data-value="dark"]').click();
     await expect(page.locator('body')).toHaveClass(/theme-dark/);
     await page.locator('.settings-close').click();
-    await expect(page.locator('.settings-drawer')).not.toHaveClass(/is-open/);
+    await expect(page.locator('.settings-window')).not.toHaveClass(/is-open/);
     await page.locator('.settings-trigger').click();
     expect(await page.evaluate(() => (
         window.__retainedLiquidControl?.isConnected
-        && window.__retainedLiquidControl === document.querySelector('liquid-toggle')
+        && window.__retainedLiquidControl === document.querySelector('.settings-pane[data-pane="appearance"] liquid-toggle')
     ))).toBe(true);
-    await page.locator('[data-tab="wallpaper"]').click();
-    await expect(page.locator('liquid-range')).toHaveCount(2);
-    await expect(page.locator('.liquid-range-thumb[data-liquid-profile="convex"]')).toHaveCount(2);
+
+    await page.locator('.settings-nav-item[data-pane="wallpaper"]').click();
+    const wallpaperRanges = page.locator('.settings-pane[data-pane="wallpaper"] liquid-range');
+    await expect(wallpaperRanges).toHaveCount(2);
+    await expect(page.locator('.liquid-range-thumb[data-liquid-profile="convex"]')).toHaveCount(3);
     const rangeMapCount = await page.locator('liquid-range feImage[result="displacement_map"]').evaluateAll((images) => (
         new Set(images.map((image) => image.getAttribute('href'))).size
     ));
     expect(rangeMapCount).toBe(1);
     const overlayRange = page.locator('input[name="overlay"]');
-    await overlayRange.fill('62');
-    await expect(page.locator('liquid-range').nth(1)).toHaveCSS('--liquid-progress', '77.5%');
+    await overlayRange.fill('45');
+    await expect(wallpaperRanges.nth(1)).toHaveCSS('--liquid-progress', '75%');
     await overlayRange.dispatchEvent('pointerdown');
-    await expect(page.locator('liquid-range').nth(1)).toHaveClass(/is-active/);
-    await expect(page.locator('liquid-range').nth(1).locator('feDisplacementMap')).toHaveAttribute('scale', String(83.88118841653394 * 0.9));
+    await expect(wallpaperRanges.nth(1)).toHaveClass(/is-active/);
+    await expect(wallpaperRanges.nth(1).locator('feDisplacementMap')).toHaveAttribute('scale', String(83.88118841653394 * 0.9));
     await overlayRange.dispatchEvent('pointerup');
     await page.locator('.upload-wallpaper input').setInputFiles({
         name: 'wallpaper.png',
@@ -522,13 +538,34 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
         buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
     });
     await expect.poll(() => page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('local');
+    await expect(page.locator('.wallpaper-name')).toHaveText('本地图片');
+    await expect(page.locator('[data-segment="wallpaperKind"] [data-value="image"]')).toHaveAttribute('aria-checked', 'true');
     await page.reload();
     await expect(page.locator('.wallpaper-media')).toHaveCSS('background-image', /blob:/);
+    await expect(page.locator('.wallpaper-pause')).toBeHidden();
     const stored = await page.evaluate(() => window.__readMockSync().settings);
     expect(stored.layout.showStatus).toBe(false);
+    expect(stored.layout.dockSource).toBe('recent');
     expect(stored.appearance.theme).toBe('dark');
     expect(stored.appearance.clockFormat).toBe('12h');
     expect(stored.appearance.hdrHighlights).toBe(true);
+    expect(stored.appearance.reduceTransparency).toBe(true);
+    expect(errors).toEqual([]);
+});
+
+test('filters settings across every pane', async ({ page }) => {
+    const errors = await openExtension(page);
+    await openSettings(page);
+    await page.locator('.settings-search input').fill('暂停');
+    await expect(page.locator('.settings-pane:visible')).toHaveCount(1);
+    await expect(page.locator('.setting-row:visible')).toHaveCount(2);
+    await page.locator('.settings-search input').fill('Dock');
+    await expect(page.locator('.setting-row:visible').first()).toContainText('Dock');
+    await page.locator('.settings-search input').fill('不存在的设置');
+    await expect(page.locator('.settings-empty')).toBeVisible();
+    await page.locator('.settings-nav-item[data-pane="data"]').click();
+    await expect(page.locator('.settings-search input')).toHaveValue('');
+    await expect(page.locator('.sync-summary')).toHaveText('3 个书签 · 1 个文件夹');
     expect(errors).toEqual([]);
 });
 
@@ -609,12 +646,13 @@ test('imports a version 1 backup and exports version 2', async ({ page }, testIn
     await expect(page.getByRole('alertdialog')).toContainText('从备份恢复');
     await page.getByRole('alertdialog').getByRole('button', { name: '恢复' }).click();
     await expect(page.locator('.toast.is-success')).toContainText('已从备份恢复');
-    await expect(page.locator('.bookmark-tile')).toHaveCount(1);
-    await expect(page.locator('bookmark-launchpad')).toContainText('v2ex.com');
+    await expect(page.locator('.dock-item[data-bookmark-id]')).toHaveCount(1);
+    await expect(page.locator('.dock-item[data-bookmark-id]')).toHaveAttribute('aria-label', 'v2ex.com');
     const stored = await page.evaluate(() => window.__readMockSync());
     expect(stored.bookmarks).toHaveLength(1);
     expect(stored.bookmarks[0].folder).toBe('全部');
     expect(stored.settings.layout.showStatus).toBe(true);
+    expect(stored.settings.layout.dockSize).toBe(56);
     const raw = await page.evaluate(() => window.__readRawSync());
     expect(raw).not.toHaveProperty('bookmarks');
     expect(raw.bookmarkChunks).toBe(1);
@@ -631,14 +669,16 @@ test('imports a version 1 backup and exports version 2', async ({ page }, testIn
     expect(errors).toEqual([]);
 });
 
-test('keeps backup reminder clear of the launchpad and lets it be dismissed', async ({ page }) => {
+test('keeps the backup reminder clear of the Dock and lets it be dismissed', async ({ page }) => {
     const errors = await openExtension(page, { ...initialData, lastBackupPrompt: 0 });
-    const toast = await page.locator('.backup-toast').boundingBox();
-    const add = await page.locator('.add-bookmark').boundingBox();
-    expect(toast).not.toBeNull();
-    expect(add).not.toBeNull();
-    const overlaps = !(toast.x + toast.width <= add.x || add.x + add.width <= toast.x || toast.y + toast.height <= add.y || add.y + add.height <= toast.y);
-    expect(overlaps).toBe(false);
+    for (const width of [1440, 900]) {
+        await page.setViewportSize({ width, height: 1000 });
+        const toast = await page.locator('.backup-toast').boundingBox();
+        const dock = await page.locator('.dock').boundingBox();
+        expect(toast).not.toBeNull();
+        expect(dock).not.toBeNull();
+        expect(overlaps(toast, dock)).toBe(false);
+    }
     await page.locator('.backup-later').click();
     await expect(page.locator('backup-toast')).toBeHidden();
     expect(Date.now() - (await page.evaluate(() => window.__readMockSync().lastBackupPrompt))).toBeLessThan(60000);
@@ -647,6 +687,9 @@ test('keeps backup reminder clear of the launchpad and lets it be dismissed', as
 
 test('closes overlays with Escape and returns focus to the opener', async ({ page }) => {
     const errors = await openExtension(page);
+    await page.locator('.dock-all').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.launchpad')).toBeVisible();
     const add = page.locator('.add-bookmark');
     await add.focus();
     await page.keyboard.press('Enter');
@@ -659,11 +702,14 @@ test('closes overlays with Escape and returns focus to the opener', async ({ pag
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
     await expect(add).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('bookmark-launchpad')).toBeHidden();
+    await expect(page.locator('.dock-all')).toBeFocused();
 
     await page.locator('.settings-trigger').click();
-    await expect(page.locator('.settings-drawer')).toHaveClass(/is-open/);
+    await expect(page.locator('.settings-window')).toHaveClass(/is-open/);
     await page.keyboard.press('Escape');
-    await expect(page.locator('.settings-drawer')).not.toHaveClass(/is-open/);
+    await expect(page.locator('.settings-window')).not.toHaveClass(/is-open/);
     await expect(page.locator('.settings-trigger')).toBeFocused();
     expect(errors).toEqual([]);
 });
@@ -671,53 +717,93 @@ test('closes overlays with Escape and returns focus to the opener', async ({ pag
 test('manages bookmarks and folders through the context menu and in-page dialogs', async ({ page }) => {
     const errors = await openExtension(page);
     page.on('dialog', () => { throw new Error('native browser dialogs must not be used'); });
+    await openLaunchpad(page);
 
     await page.locator('.bookmark-tile[data-bookmark-id="2"]').click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'POM' }).click();
     await expect(page.locator('.bookmark-tile')).toHaveCount(1);
     expect((await page.evaluate(() => window.__readMockSync())).bookmarks.find((bookmark) => String(bookmark.id) === '2').folder).toBe('POM');
 
-    await page.locator('.create-folder').click();
+    await page.locator('.launchpad-tab.create-folder').click();
     const prompt = page.getByRole('alertdialog');
     await prompt.locator('input').fill('阅读');
     await prompt.getByRole('button', { name: '创建' }).click();
-    await expect(page.locator('.nav-folder[data-folder="阅读"]')).toHaveCount(1);
+    await expect(page.locator('.launchpad-tab[data-folder="阅读"]')).toHaveCount(1);
+    await expect(page.locator('.folder-tile[data-folder="阅读"]')).toHaveCount(1);
 
-    await page.locator('.nav-folder[data-folder="POM"]').click();
-    await expect(page.locator('.launchpad-heading')).toHaveText('POM');
-    await page.locator('.rename-current').click();
+    await page.locator('.launchpad-tab[data-folder="POM"]').click();
+    await expect(page.locator('.bookmark-tile')).toHaveCount(2);
+    await page.locator('.launchpad-tab[data-folder="POM"]').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: '重命名…' }).click();
     await page.getByRole('alertdialog').locator('input').fill('收藏');
     await page.getByRole('alertdialog').getByRole('button', { name: '保存' }).click();
-    await expect(page.locator('.launchpad-heading')).toHaveText('收藏');
+    await expect(page.locator('.launchpad-tab[data-folder="收藏"]')).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('.bookmark-tile')).toHaveCount(2);
 
     await page.locator('.bookmark-tile[data-bookmark-id="3"] .tile-more').click({ force: true });
-    await page.getByRole('menuitem', { name: '删除' }).click();
+    await page.getByRole('menuitem', { name: '删除书签' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: '删除' }).click();
     await expect(page.locator('.bookmark-tile')).toHaveCount(1);
 
-    await page.locator('.nav-item[data-folder="全部"]').click();
-    await expect(page.locator('.launchpad-heading')).toHaveText('书签');
-    await expect(page.locator('.nav-folder[data-folder="收藏"]')).toHaveCount(1);
+    await page.locator('.launchpad-search input').fill('git');
+    await expect(page.locator('.launchpad-grid')).toHaveAttribute('data-view', 'search');
+    await expect(page.locator('.bookmark-tile')).toHaveCount(1);
+    await expect(page.locator('.launchpad-search input')).toBeFocused();
     expect(errors).toEqual([]);
 });
 
-test('offers recent searches with keyboard selection and removal', async ({ page }) => {
+test('Spotlight searches bookmarks, history and recent searches', async ({ page }) => {
     const errors = await openExtension(page, { ...initialData, recentSearches: ['二次元壁纸', 'typescript'] });
     await page.keyboard.press('/');
-    const input = page.locator('search-command input');
+    const input = page.locator('.spotlight-field input');
     await expect(input).toBeFocused();
-    await expect(page.locator('.search-suggestions li')).toHaveCount(2);
-    await input.fill('type');
-    await expect(page.locator('.search-suggestions li')).toHaveCount(1);
+    await expect(page.locator('body')).toHaveClass(/spotlight-open/);
+    await expect(page.locator('.spotlight-row', { hasText: '二次元壁纸' })).toHaveCount(1);
+
+    await input.fill('git');
+    const first = page.locator('.spotlight-row').first();
+    await expect(first).toContainText('GitHub');
+    await expect(first).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.ghost-rest')).toHaveText('hub.com');
+    await expect(page.locator('.spotlight-scope')).toHaveText('书签');
     await page.keyboard.press('ArrowDown');
-    await expect(page.locator('.search-suggestions li').first()).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.spotlight-row').nth(1)).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.spotlight-row').nth(1)).toContainText('在 Google 中搜索');
+    await page.keyboard.press('Tab');
+    await expect(page.locator('.spotlight-engines [data-engine="bing"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('.spotlight-row').nth(1)).toContainText('在 Bing 中搜索');
+    await expect(input).toBeFocused();
+
+    await input.fill('youtube.com');
+    await expect(page.locator('.spotlight-row').first()).toContainText('youtube.com');
+    await expect(page.locator('.spotlight-heading').first()).toHaveText('网址');
+
     await input.fill('');
-    await page.locator('.search-suggestions li', { hasText: '二次元壁纸' }).hover();
-    await page.locator('.search-suggestions li', { hasText: '二次元壁纸' }).locator('.suggestion-remove').dispatchEvent('pointerdown');
-    await expect(page.locator('.search-suggestions li')).toHaveCount(1);
+    const recent = page.locator('.spotlight-row', { hasText: '二次元壁纸' });
+    await recent.hover();
+    await recent.locator('.row-remove').click();
+    await expect(page.locator('.spotlight-row', { hasText: '二次元壁纸' })).toHaveCount(0);
     expect((await page.evaluate(() => window.__readMockSync())).recentSearches).toEqual(['typescript']);
-    await page.locator('.search-engine').click();
-    await expect(page.locator('.search-engine')).toHaveText('Bing');
+    expect((await page.evaluate(() => window.__readMockSync())).settings.layout.searchEngine).toBe('google');
+
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
+    await expect(page.locator('spotlight-search')).toBeHidden();
+    await page.locator('.search-pill').click();
+    await expect(input).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('spotlight-search')).toBeHidden();
+    expect(errors).toEqual([]);
+});
+
+test('fades to the clock alone when idle', async ({ page }) => {
+    const seed = structuredClone(initialData);
+    seed.settings.wallpaper.idleHide = true;
+    const errors = await openExtension(page, seed);
+    await page.mouse.move(10, 10);
+    await expect(page.locator('body')).toHaveClass(/is-idle/, { timeout: 10000 });
+    await expect(page.locator('home-dock')).toHaveCSS('opacity', '0');
+    await expect(page.locator('dashboard-header')).toHaveCSS('opacity', '0.85');
+    await page.mouse.move(200, 200);
+    await expect(page.locator('body')).not.toHaveClass(/is-idle/);
     expect(errors).toEqual([]);
 });
