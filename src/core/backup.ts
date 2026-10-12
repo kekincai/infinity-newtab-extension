@@ -14,20 +14,31 @@ export const DEFAULT_SETTINGS: AppSettings = {
         showStatus: true,
         showRecent: true,
         openInNewTab: false,
-        searchEngine: 'google'
+        searchEngine: 'google',
+        dockSource: 'bookmarks',
+        dockSize: 56,
+        dockMagnify: true,
+        saveSearches: true,
+        backupReminder: true
     },
     wallpaper: {
         type: 'gradient',
         value: '',
         blur: 0,
-        overlay: 30
+        overlay: 12,
+        idleHide: true,
+        pauseOnBattery: true,
+        pauseWhenHidden: true,
+        sound: false
     },
     appearance: {
         clockFormat: '24h',
         dateFormat: 'long',
         enhancedAnimations: true,
         hdrHighlights: true,
-        theme: 'auto'
+        theme: 'auto',
+        glass: 'clear',
+        reduceTransparency: false
     }
 };
 
@@ -120,22 +131,33 @@ export function sanitizeSettings(value: unknown): AppSettings {
             openInNewTab: booleanOr(layout.openInNewTab, false),
             searchEngine: searchEngines.includes(String(layout.searchEngine))
                 ? layout.searchEngine as LayoutSettings['searchEngine']
-                : 'google'
+                : 'google',
+            dockSource: layout.dockSource === 'recent' ? 'recent' : 'bookmarks',
+            dockSize: Math.round(clampNumber(layout.dockSize, 40, 72, 56)),
+            dockMagnify: booleanOr(layout.dockMagnify, true),
+            saveSearches: booleanOr(layout.saveSearches, true),
+            backupReminder: booleanOr(layout.backupReminder, true)
         },
         wallpaper: {
             type: wallpaperTypes.includes(String(wallpaper.type))
                 ? wallpaper.type as WallpaperSettings['type']
                 : 'gradient',
             value: sanitizeWallpaperValue(wallpaper.value),
-            blur: clampNumber(wallpaper.blur, 0, 10, 0),
-            overlay: clampNumber(wallpaper.overlay, 0, 80, 30)
+            blur: clampNumber(wallpaper.blur, 0, 40, 0),
+            overlay: clampNumber(wallpaper.overlay, 0, 60, 12),
+            idleHide: booleanOr(wallpaper.idleHide, true),
+            pauseOnBattery: booleanOr(wallpaper.pauseOnBattery, true),
+            pauseWhenHidden: booleanOr(wallpaper.pauseWhenHidden, true),
+            sound: booleanOr(wallpaper.sound, false)
         },
         appearance: {
             clockFormat: appearance.clockFormat === '12h' ? '12h' : '24h',
             dateFormat: appearance.dateFormat === 'short' ? 'short' : 'long',
             enhancedAnimations: booleanOr(appearance.enhancedAnimations, true),
             hdrHighlights: booleanOr(appearance.hdrHighlights, true),
-            theme: sanitizeTheme(appearance.theme, layout)
+            theme: sanitizeTheme(appearance.theme, layout),
+            glass: appearance.glass === 'tinted' ? 'tinted' : 'clear',
+            reduceTransparency: booleanOr(appearance.reduceTransparency, false)
         }
     };
 }

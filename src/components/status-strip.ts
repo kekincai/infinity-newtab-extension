@@ -1,11 +1,13 @@
 import { appStore } from '../core/store';
-import { escapeHtml, truncate } from '../core/utils';
+import { escapeHtml, faviconUrl, truncate } from '../core/utils';
 import { StoreElement } from './base';
 import { ICONS } from './icons';
+import { hostOf } from './site-icon';
 
-type Status = { media: { id: number; title: string } | null; downloads: number[]; battery: { level: number; charging: boolean } | null };
+type Media = { id: number; title: string; host: string; icon: string; muted: boolean };
+type Status = { media: Media | null; downloads: number[]; battery: { level: number; charging: boolean } | null };
 
-/** Quiet top-left strip: it only shows media, downloads and battery when there is something to say. */
+/** Top-left capsules that only appear while media plays, files download or the laptop runs on battery. */
 export class StatusStrip extends StoreElement {
     protected readonly observedChanges = ['settings.layout'] as const;
     private timer = 0;
@@ -36,16 +38,31 @@ export class StatusStrip extends StoreElement {
     protected render(): void {
         this.hidden = !appStore.state.settings.layout.showStatus;
         const { media, downloads, battery } = this.status;
-        const chips = [
-            media ? `<button class="status-chip is-media" type="button" data-liquid-item title="切换到正在播放的标签页">${ICONS.play}<span>${escapeHtml(truncate(media.title, 26))}</span></button>` : '',
-            downloads.length ? `<button class="status-chip is-download" type="button" data-liquid-item title="在文件夹中显示">${ICONS.download}<span>${downloads.length} 项下载中</span></button>` : '',
-            battery ? `<span class="status-chip battery-chip ${battery.level <= 0.2 && !battery.charging ? 'is-low' : ''}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ''
+        const muteLabel = media?.muted ? '取消静音' : '静音';
+        this.innerHTML = [
+            media ? `
+                <div class="glass glass-dark capsule media-capsule">
+                    <button class="media-open" type="button" title="切换到正在播放的标签页">
+                        <img class="media-art" src="${escapeHtml(media.icon)}" alt="" draggable="false">
+                        <span class="capsule-text">
+                            <strong>${escapeHtml(truncate(media.title, 28))}</strong>
+                            <small>${escapeHtml(media.host)} 标签页${media.muted ? '已静音' : '正在播放'}</small>
+                        </span>
+                        ${media.muted ? '' : '<span class="equalizer" aria-hidden="true"><span></span><span></span><span></span><span></span></span>'}
+                    </button>
+                    <button class="media-mute" type="button" data-liquid-item aria-label="${muteLabel}" title="${muteLabel}">${media.muted ? ICONS.muted : ICONS.speaker}</button>
+                </div>` : '',
+            downloads.length ? `<button class="glass glass-dark capsule download-capsule" type="button" data-liquid-item title="在文件夹中显示">${ICONS.download}<span>${downloads.length} 项下载中</span></button>` : '',
+            battery ? `<span class="glass glass-dark capsule battery-capsule ${battery.level <= 0.2 && !battery.charging ? 'is-low' : ''}" title="${battery.charging ? '正在充电' : '正在使用电池'}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ''
         ].join('');
-        this.innerHTML = chips;
-        this.querySelector('.is-media')?.addEventListener('click', () => {
+        this.querySelector('.media-open')?.addEventListener('click', () => {
             if (media) chrome.tabs.update(media.id, { active: true });
         });
-        this.querySelector('.is-download')?.addEventListener('click', () => {
+        this.querySelector('.media-mute')?.addEventListener('click', () => {
+            if (!media) return;
+            void Promise.resolve(chrome.tabs.update(media.id, { muted: !media.muted })).finally(() => void this.refresh());
+        });
+        this.querySelector('.download-capsule')?.addEventListener('click', () => {
             if (downloads[0] !== undefined) chrome.downloads.show(downloads[0]);
         });
     }
@@ -57,8 +74,15 @@ export class StatusStrip extends StoreElement {
             chrome.downloads?.search ? callbackResult<any[]>((done) => chrome.downloads.search({ state: 'in_progress' }, done), []) : [],
             readBattery()
         ]);
+        const tab = tabs[0];
         const next: Status = {
-            media: tabs[0] ? { id: tabs[0].id, title: tabs[0].title || '正在播放' } : null,
+            media: tab ? {
+                id: tab.id,
+                title: tab.title || '正在播放',
+                host: hostOf(tab.url ?? '') || '其他',
+                icon: tab.url ? faviconUrl(tab.url, 64) : '',
+                muted: Boolean(tab.mutedInfo?.muted)
+            } : null,
             downloads: downloads.map((item) => item.id),
             battery
         };

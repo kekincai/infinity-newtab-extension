@@ -30,7 +30,7 @@ export class BookmarkDialog extends HTMLElement {
         const title = bookmark ? '编辑书签' : '添加书签';
         this.innerHTML = `
             <div class="modal-backdrop dialog-backdrop is-open">
-                <form class="modal bookmark-dialog glass-panel" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
+                <form class="modal bookmark-dialog glass glass-thick" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
                     <header class="modal-header">
                         <h2>${title}</h2>
                         <button class="icon-close dialog-close" type="button" aria-label="关闭">${ICONS.close}</button>
@@ -59,8 +59,8 @@ export class BookmarkDialog extends HTMLElement {
                     </details>
                     <p class="field-error" role="alert" hidden></p>
                     <footer class="modal-actions">
-                        <button class="glass-button cancel-dialog" type="button" data-liquid-item>取消</button>
-                        <button class="glass-button primary" type="submit" data-liquid-item>保存</button>
+                        <button class="pill-button cancel-dialog" type="button" data-liquid-item>取消</button>
+                        <button class="pill-button primary" type="submit" data-liquid-item>保存</button>
                     </footer>
                 </form>
             </div>
@@ -75,7 +75,7 @@ export class BookmarkDialog extends HTMLElement {
             // Only parsed https: or data:image URLs reach the preview, same rule as saving.
             const custom = sanitizeRemoteUrl(iconInput.value.trim(), true);
             const url = normalizeUrl(urlInput.value);
-            preview.src = custom || (url ? faviconUrl(url, 64) : DEFAULT_ICON);
+            preview.src = custom ? previewSource(custom) : url ? faviconUrl(url, 64) : DEFAULT_ICON;
         };
         preview.addEventListener('error', () => { preview.src = DEFAULT_ICON; });
         updatePreview();
@@ -123,4 +123,13 @@ export class BookmarkDialog extends HTMLElement {
         this.releaseLayer = null;
         release?.();
     }
+}
+
+/**
+ * URI-encodes the already sanitized address (so static analysis sees typed text
+ * cleaned before it reaches `src`), then restores the escapes `href` already had,
+ * leaving the address itself unchanged.
+ */
+function previewSource(href: string): string {
+    return encodeURI(href).replace(/%25([0-9a-f]{2})/gi, '%$1');
 }

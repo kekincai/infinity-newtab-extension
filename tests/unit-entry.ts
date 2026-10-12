@@ -80,7 +80,7 @@ const unsafe = sanitizeImportedData({
 assert.equal((unsafe.bookmarks as any[]).length, 0);
 assert.equal((unsafe.settings as any).wallpaper.type, 'gradient');
 assert.equal((unsafe.settings as any).wallpaper.value, '');
-assert.equal((unsafe.settings as any).wallpaper.blur, 10);
+assert.equal((unsafe.settings as any).wallpaper.blur, 40);
 assert.equal((unsafe.settings as any).wallpaper.overlay, 0);
 assert.equal('unknown' in unsafe, false);
 
