@@ -1307,6 +1307,9 @@
   });
 
   // src/components/bookmark-dialog.ts
+  function previewSource(href) {
+    return encodeURI(href).replace(/%25([0-9a-f]{2})/gi, "%$1");
+  }
   var BookmarkDialog;
   var init_bookmark_dialog = __esm({
     "src/components/bookmark-dialog.ts"() {
@@ -1379,7 +1382,7 @@
           const updatePreview = () => {
             const custom = sanitizeRemoteUrl(iconInput.value.trim(), true);
             const url = normalizeUrl(urlInput.value);
-            preview.src = custom || (url ? faviconUrl(url, 64) : DEFAULT_ICON);
+            preview.src = custom ? previewSource(custom) : url ? faviconUrl(url, 64) : DEFAULT_ICON;
           };
           preview.addEventListener("error", () => {
             preview.src = DEFAULT_ICON;

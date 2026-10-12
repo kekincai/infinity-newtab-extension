@@ -798,9 +798,12 @@ test('Spotlight searches bookmarks, history and recent searches', async ({ page 
 test('fades to the clock alone when idle', async ({ page }) => {
     const seed = structuredClone(initialData);
     seed.settings.wallpaper.idleHide = true;
+    // A fake clock keeps stray input on the headed window from restarting a real 8-second wait.
+    await page.clock.install();
     const errors = await openExtension(page, seed);
     await page.mouse.move(10, 10);
-    await expect(page.locator('body')).toHaveClass(/is-idle/, { timeout: 10000 });
+    await page.clock.runFor(8500);
+    await expect(page.locator('body')).toHaveClass(/is-idle/);
     await expect(page.locator('home-dock')).toHaveCSS('opacity', '0');
     await expect(page.locator('dashboard-header')).toHaveCSS('opacity', '0.85');
     await page.mouse.move(200, 200);
