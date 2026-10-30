@@ -4228,7 +4228,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       return "dark";
     }
   }
-  var WallpaperSurface, SCENE;
+  var FROST_SCALE, WallpaperSurface, SCENE;
   var init_wallpaper_surface = __esm({
     "src/components/wallpaper-surface.ts"() {
       "use strict";
@@ -4236,6 +4236,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_store();
       init_wallpaper_service();
       init_base();
+      FROST_SCALE = 1 / 6;
       WallpaperSurface = class extends StoreElement {
         observedChanges = ["settings.wallpaper"];
         objectUrl = "";
@@ -4244,8 +4245,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         pendingMediaKey = "";
         userPaused = false;
         battery = null;
+        frostFrame = 0;
+        frostTime = -1;
+        bodyObserver = new MutationObserver(() => this.syncFrost());
         connectedCallback() {
           super.connectedCallback();
+          this.bodyObserver.observe(document.body, { attributeFilter: ["class"] });
           document.addEventListener("visibilitychange", this.syncPlayback);
           void navigator.getBattery?.().then((battery) => {
             this.battery = battery;
@@ -4255,6 +4260,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         disconnectedCallback() {
           super.disconnectedCallback();
+          this.bodyObserver.disconnect();
+          this.stopFrost();
           document.removeEventListener("visibilitychange", this.syncPlayback);
           this.battery?.removeEventListener?.("chargingchange", this.syncPlayback);
           this.releaseObjectUrl();
@@ -4272,7 +4279,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         render() {
           const wallpaper = appStore.state.settings.wallpaper;
           if (!this.querySelector(".wallpaper-media")) {
-            this.innerHTML = '<div class="wallpaper-media"></div><div class="wallpaper-tint"></div>';
+            this.innerHTML = '<div class="wallpaper-media"></div><canvas class="wallpaper-frost" aria-hidden="true"></canvas><div class="wallpaper-tint"></div>';
           }
           this.style.setProperty("--wallpaper-blur", `${wallpaper.blur}px`);
           this.style.setProperty("--wallpaper-overlay", String(wallpaper.overlay / 100));
@@ -4292,6 +4299,45 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (paused) video.pause();
           else if (video.paused) void video.play().catch(() => void 0);
         };
+        /**
+         * Chrome feeds HDR video into backdrop-filter without tone mapping, so the
+         * launchpad's full-screen blur blows it out. While the launchpad is open the
+         * video is mirrored into a small 2D canvas, which Chrome tone-maps to SDR,
+         * and the blur samples that instead.
+         */
+        syncFrost() {
+          const video = this.querySelector(".wallpaper-media video");
+          const wanted = Boolean(video) && document.body.classList.contains("launchpad-open");
+          if (!wanted) {
+            this.stopFrost();
+            return;
+          }
+          if (this.classList.contains("is-frosted")) return;
+          const canvas = this.querySelector(".wallpaper-frost");
+          if (!canvas) return;
+          canvas.width = Math.max(1, Math.round(this.clientWidth * FROST_SCALE));
+          canvas.height = Math.max(1, Math.round(this.clientHeight * FROST_SCALE));
+          this.frostTime = -1;
+          this.drawFrost();
+          this.classList.add("is-frosted");
+        }
+        drawFrost = () => {
+          this.frostFrame = requestAnimationFrame(this.drawFrost);
+          const video = this.querySelector(".wallpaper-media video");
+          const canvas = this.querySelector(".wallpaper-frost");
+          const context = canvas?.getContext("2d");
+          if (!video || !canvas || !context || !video.videoWidth || video.currentTime === this.frostTime) return;
+          this.frostTime = video.currentTime;
+          const scale = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
+          const width = video.videoWidth * scale;
+          const height = video.videoHeight * scale;
+          context.drawImage(video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+        };
+        stopFrost() {
+          cancelAnimationFrame(this.frostFrame);
+          this.frostFrame = 0;
+          this.classList.remove("is-frosted");
+        }
         async applyMedia(token, mediaKey) {
           const wallpaper = appStore.state.settings.wallpaper;
           const host = this.querySelector(".wallpaper-media");
@@ -4336,6 +4382,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               if (!preset) host.innerHTML = SCENE;
             }
             this.appliedMediaKey = mediaKey;
+            this.stopFrost();
+            this.syncFrost();
             this.syncPlayback();
             this.reportState();
             const resolved = await tone;

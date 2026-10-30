@@ -8,6 +8,8 @@ export type WallpaperState = { label: string; animated: boolean; paused: boolean
 
 type BatteryManager = EventTarget & { charging: boolean };
 
+const FROST_SCALE = 1 / 6;
+
 /**
  * Full-bleed wallpaper: the built-in Twilight Bay scene, a cached image or a
  * looping video. Playback pauses for the user, on battery or in hidden tabs.
@@ -20,9 +22,13 @@ export class WallpaperSurface extends StoreElement {
     private pendingMediaKey = '';
     private userPaused = false;
     private battery: BatteryManager | null = null;
+    private frostFrame = 0;
+    private frostTime = -1;
+    private readonly bodyObserver = new MutationObserver(() => this.syncFrost());
 
     connectedCallback(): void {
         super.connectedCallback();
+        this.bodyObserver.observe(document.body, { attributeFilter: ['class'] });
         document.addEventListener('visibilitychange', this.syncPlayback);
         void navigator.getBattery?.().then((battery) => {
             this.battery = battery as unknown as BatteryManager;
@@ -33,6 +39,8 @@ export class WallpaperSurface extends StoreElement {
 
     disconnectedCallback(): void {
         super.disconnectedCallback();
+        this.bodyObserver.disconnect();
+        this.stopFrost();
         document.removeEventListener('visibilitychange', this.syncPlayback);
         this.battery?.removeEventListener?.('chargingchange', this.syncPlayback);
         this.releaseObjectUrl();
@@ -56,7 +64,7 @@ export class WallpaperSurface extends StoreElement {
     protected render(): void {
         const wallpaper = appStore.state.settings.wallpaper;
         if (!this.querySelector('.wallpaper-media')) {
-            this.innerHTML = '<div class="wallpaper-media"></div><div class="wallpaper-tint"></div>';
+            this.innerHTML = '<div class="wallpaper-media"></div><canvas class="wallpaper-frost" aria-hidden="true"></canvas><div class="wallpaper-tint"></div>';
         }
         this.style.setProperty('--wallpaper-blur', `${wallpaper.blur}px`);
         this.style.setProperty('--wallpaper-overlay', String(wallpaper.overlay / 100));
@@ -79,6 +87,48 @@ export class WallpaperSurface extends StoreElement {
         if (paused) video.pause();
         else if (video.paused) void video.play().catch(() => undefined);
     };
+
+    /**
+     * Chrome feeds HDR video into backdrop-filter without tone mapping, so the
+     * launchpad's full-screen blur blows it out. While the launchpad is open the
+     * video is mirrored into a small 2D canvas, which Chrome tone-maps to SDR,
+     * and the blur samples that instead.
+     */
+    private syncFrost(): void {
+        const video = this.querySelector<HTMLVideoElement>('.wallpaper-media video');
+        const wanted = Boolean(video) && document.body.classList.contains('launchpad-open');
+        if (!wanted) {
+            this.stopFrost();
+            return;
+        }
+        if (this.classList.contains('is-frosted')) return;
+        const canvas = this.querySelector<HTMLCanvasElement>('.wallpaper-frost');
+        if (!canvas) return;
+        canvas.width = Math.max(1, Math.round(this.clientWidth * FROST_SCALE));
+        canvas.height = Math.max(1, Math.round(this.clientHeight * FROST_SCALE));
+        this.frostTime = -1;
+        this.drawFrost();
+        this.classList.add('is-frosted');
+    }
+
+    private readonly drawFrost = (): void => {
+        this.frostFrame = requestAnimationFrame(this.drawFrost);
+        const video = this.querySelector<HTMLVideoElement>('.wallpaper-media video');
+        const canvas = this.querySelector<HTMLCanvasElement>('.wallpaper-frost');
+        const context = canvas?.getContext('2d');
+        if (!video || !canvas || !context || !video.videoWidth || video.currentTime === this.frostTime) return;
+        this.frostTime = video.currentTime;
+        const scale = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
+        const width = video.videoWidth * scale;
+        const height = video.videoHeight * scale;
+        context.drawImage(video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+    };
+
+    private stopFrost(): void {
+        cancelAnimationFrame(this.frostFrame);
+        this.frostFrame = 0;
+        this.classList.remove('is-frosted');
+    }
 
     private async applyMedia(token: number, mediaKey: string): Promise<void> {
         const wallpaper = appStore.state.settings.wallpaper;
@@ -125,6 +175,8 @@ export class WallpaperSurface extends StoreElement {
                 if (!preset) host.innerHTML = SCENE;
             }
             this.appliedMediaKey = mediaKey;
+            this.stopFrost();
+            this.syncFrost();
             this.syncPlayback();
             this.reportState();
             const resolved = await tone;

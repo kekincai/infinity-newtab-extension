@@ -97,19 +97,6 @@ body.hdr-highlights .wallpaper-media video {
     dynamic-range-limit: no-limit;
 }
 
-/* The launchpad blurs the whole wallpaper, which would smear HDR highlights across the screen. */
-body.hdr-highlights wallpaper-surface,
-body.hdr-highlights .wallpaper-media,
-body.hdr-highlights .wallpaper-media video {
-    transition: dynamic-range-limit 280ms ease;
-}
-
-body.hdr-highlights.launchpad-open wallpaper-surface,
-body.hdr-highlights.launchpad-open .wallpaper-media,
-body.hdr-highlights.launchpad-open .wallpaper-media video {
-    dynamic-range-limit: standard;
-}
-
 button,
 input,
 select,
@@ -448,6 +435,19 @@ wallpaper-surface {
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+/* SDR copy of a video wallpaper, shown under the launchpad blur. See WallpaperSurface.syncFrost. */
+.wallpaper-frost {
+    position: absolute;
+    inset: 0;
+    display: none;
+    width: 100%;
+    height: 100%;
+}
+
+wallpaper-surface.is-frosted .wallpaper-frost {
+    display: block;
 }
 
 .wallpaper-tint {
