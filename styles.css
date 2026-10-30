@@ -97,6 +97,19 @@ body.hdr-highlights .wallpaper-media video {
     dynamic-range-limit: no-limit;
 }
 
+/* The launchpad blurs the whole wallpaper, which would smear HDR highlights across the screen. */
+body.hdr-highlights wallpaper-surface,
+body.hdr-highlights .wallpaper-media,
+body.hdr-highlights .wallpaper-media video {
+    transition: dynamic-range-limit 280ms ease;
+}
+
+body.hdr-highlights.launchpad-open wallpaper-surface,
+body.hdr-highlights.launchpad-open .wallpaper-media,
+body.hdr-highlights.launchpad-open .wallpaper-media video {
+    dynamic-range-limit: standard;
+}
+
 button,
 input,
 select,
