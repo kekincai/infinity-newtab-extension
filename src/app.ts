@@ -5,9 +5,8 @@ import { escapeHtml } from './core/utils';
 import { migrateLegacyWallpaper, useOnlineWallpaper } from './core/wallpaper-service';
 import { BackupToast } from './components/backup-toast';
 import { BookmarkDialog } from './components/bookmark-dialog';
-import { BookmarkLaunchpad, type LaunchpadView } from './components/bookmark-launchpad';
+import { BookmarkBoard } from './components/bookmark-board';
 import { DashboardHeader } from './components/dashboard-header';
-import { HomeDock } from './components/home-dock';
 import { ICONS } from './components/icons';
 import { LiquidGlassSystem } from './components/liquid-glass';
 import { LiquidRange, LiquidToggle } from './components/liquid-controls';
@@ -52,7 +51,7 @@ class InfinityNewTabApp extends HTMLElement {
     };
 
     async connectedCallback(): Promise<void> {
-        this.innerHTML = '<div class="app-loading" role="status"><span></span><p>正在整理你的启动台…</p></div>';
+        this.innerHTML = '<div class="app-loading" role="status"><span></span><p>正在载入书签…</p></div>';
         try {
             await appStore.init();
             this.updateClasses();
@@ -66,7 +65,7 @@ class InfinityNewTabApp extends HTMLElement {
             this.wake();
             void migrateLegacyWallpaper();
         } catch (error) {
-            this.innerHTML = `<div class="app-error"><h1>启动台加载失败</h1><p>${escapeHtml(error instanceof Error ? error.message : '未知错误')}</p></div>`;
+            this.innerHTML = `<div class="app-error"><h1>新标签页加载失败</h1><p>${escapeHtml(error instanceof Error ? error.message : '未知错误')}</p></div>`;
         }
     }
 
@@ -95,15 +94,16 @@ class InfinityNewTabApp extends HTMLElement {
                         <button class="glass round-button settings-trigger" type="button" data-liquid-item aria-label="设置" title="设置">${ICONS.settings}</button>
                     </div>
                 </header>
-                <main class="hero">
-                    <dashboard-header></dashboard-header>
-                    <search-pill></search-pill>
+                <main class="home-main">
+                    <div class="hero">
+                        <dashboard-header></dashboard-header>
+                        <search-pill></search-pill>
+                    </div>
+                    <bookmark-board></bookmark-board>
                 </main>
-                <home-dock></home-dock>
                 <wallpaper-badge></wallpaper-badge>
             </div>
             <spotlight-search></spotlight-search>
-            <bookmark-launchpad></bookmark-launchpad>
             <settings-panel></settings-panel>
             <bookmark-dialog></bookmark-dialog>
             <backup-toast></backup-toast>
@@ -114,17 +114,10 @@ class InfinityNewTabApp extends HTMLElement {
         this.addEventListener('wallpaper-error', this.onWallpaperError as EventListener);
         this.addEventListener('wallpaper-tone', this.onWallpaperTone as EventListener);
         this.addEventListener('open-spotlight', () => this.spotlight?.open());
-        this.addEventListener('open-launchpad', ((event: CustomEvent<{ view?: LaunchpadView }>) => {
-            this.launchpad?.open(event.detail?.view ?? 'bookmarks');
-        }) as EventListener);
     }
 
     private get spotlight(): SpotlightSearch | null {
         return this.querySelector('spotlight-search');
-    }
-
-    private get launchpad(): BookmarkLaunchpad | null {
-        return this.querySelector('bookmark-launchpad');
     }
 
     private get settings(): SettingsPanel | null {
@@ -204,9 +197,8 @@ const elements: Array<[string, CustomElementConstructor]> = [
     ['status-strip', StatusStrip],
     ['dashboard-header', DashboardHeader],
     ['search-pill', SearchPill],
-    ['home-dock', HomeDock],
+    ['bookmark-board', BookmarkBoard],
     ['spotlight-search', SpotlightSearch],
-    ['bookmark-launchpad', BookmarkLaunchpad],
     ['settings-panel', SettingsPanel],
     ['bookmark-dialog', BookmarkDialog],
     ['backup-toast', BackupToast],

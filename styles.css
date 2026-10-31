@@ -1,7 +1,7 @@
 /* ==========================================================================
    Infinity New Tab
-   Tokens -> base -> glass -> wallpaper -> home (top bar, hero, Dock)
-   -> Spotlight -> launchpad -> settings -> overlays
+   Tokens -> base -> glass -> wallpaper -> home (top bar, hero, bookmarks)
+   -> Spotlight -> settings -> overlays
    -> Liquid Glass (verbatim) -> responsive -> motion
    ========================================================================== */
 
@@ -138,7 +138,7 @@ kbd {
     padding: 0 5px;
     border-radius: 5px;
     background: var(--fill-3);
-    font: 600 11px var(--font);
+    font: 500 11px var(--font);
 }
 
 .icon {
@@ -437,19 +437,6 @@ wallpaper-surface {
     object-fit: cover;
 }
 
-/* SDR copy of a video wallpaper, shown under the launchpad blur. See WallpaperSurface.syncFrost. */
-.wallpaper-frost {
-    position: absolute;
-    inset: 0;
-    display: none;
-    width: 100%;
-    height: 100%;
-}
-
-wallpaper-surface.is-frosted .wallpaper-frost {
-    display: block;
-}
-
 .wallpaper-tint {
     position: absolute;
     inset: 0;
@@ -489,8 +476,6 @@ wallpaper-surface.is-paused .scene * {
     position: relative;
     z-index: 1;
     height: 100vh;
-    /* Visible at once when an overlay closes, so focus can return to the opener. */
-    transition: opacity 280ms ease, visibility 0s;
 }
 
 .top-bar {
@@ -631,12 +616,20 @@ status-strip {
     height: 17px;
 }
 
-.hero {
-    position: absolute;
-    top: max(88px, 15vh);
-    right: 16px;
-    left: 16px;
+/* One screen: clock and search on top, bookmarks fill the rest. The bottom
+   88px stay clear for the wallpaper caption and the backup reminder. */
+.home-main {
     display: flex;
+    height: 100%;
+    flex-direction: column;
+    align-items: center;
+    padding: max(72px, 9vh) 24px 88px;
+}
+
+.hero {
+    display: flex;
+    width: 100%;
+    flex: none;
     flex-direction: column;
     align-items: center;
     text-align: center;
@@ -648,20 +641,20 @@ dashboard-header {
 
 .hero-date {
     color: var(--fg);
-    font-size: 21px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
     opacity: 0.92;
     text-shadow: var(--hero-shadow);
 }
 
 .hero-time {
     display: block;
-    margin-top: 2px;
+    margin-top: 4px;
     color: var(--fg);
-    font-size: clamp(72px, min(11vw, 17vh), 148px);
+    font-size: clamp(64px, min(9vw, 13vh), 120px);
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1;
     opacity: 0.94;
@@ -670,16 +663,16 @@ dashboard-header {
 
 search-pill {
     width: min(560px, 100%);
-    margin-top: 34px;
+    margin-top: 28px;
 }
 
 .search-pill {
     display: flex;
     width: 100%;
-    height: 52px;
+    height: 48px;
     align-items: center;
     gap: 12px;
-    padding: 0 10px 0 20px;
+    padding: 0 12px 0 20px;
     border-radius: 999px;
     text-align: left;
 }
@@ -696,91 +689,217 @@ search-pill {
     font-size: 16px;
 }
 
-.pill-chip {
-    padding: 6px 10px;
-    border-radius: 999px;
-    background: var(--fill-3);
+.search-pill-engine {
+    color: var(--fg-3);
+    font-size: 13px;
+}
+
+.search-pill kbd {
+    background: var(--fill-2);
     color: var(--fg-2);
-    font-size: 12px;
-    font-weight: 600;
 }
 
-/* ---- Dock --------------------------------------------------------------- */
+/* ---- Bookmarks ---------------------------------------------------------- */
 
-home-dock {
-    position: absolute;
-    right: 16px;
-    bottom: 22px;
-    left: 16px;
+bookmark-board {
+    --icon-size: var(--icon-pref, 64px);
+    --tile-width: calc(var(--icon-size) + 40px);
     display: flex;
-    justify-content: center;
-    pointer-events: none;
-    --dock-size: 56px;
+    width: 100%;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+    margin-top: 40px;
 }
 
-.dock {
+.board-tabs {
     display: flex;
     max-width: 100%;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    justify-content: center;
-    gap: 10px;
-    padding: 9px;
-    border-radius: calc(var(--dock-size) * 0.25 + 12px);
-    pointer-events: auto;
-}
-
-.dock-item {
-    position: relative;
-    display: block;
-    width: var(--dock-size);
-    height: var(--dock-size);
     flex: none;
-    border-radius: calc(var(--dock-size) * 0.25);
-}
-
-.dock-item .app-icon {
-    font-size: var(--dock-size);
-    transform-origin: 50% 100%;
-    transition: transform 450ms cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-/* The icon grows inside its own box, so the shared lens keeps a stable outline. */
-.is-magnifying .dock-item:hover .app-icon,
-.is-magnifying .dock-item:focus-visible .app-icon {
-    transform: translateY(-4px) scale(1.1);
-}
-
-.dock-item:active .app-icon {
-    transform: scale(0.94);
-}
-
-.dock-label {
-    position: absolute;
-    bottom: calc(100% + 14px);
-    left: 50%;
-    padding: 5px 11px;
+    gap: 2px;
+    overflow-x: auto;
+    padding: 4px;
     border-radius: 999px;
-    font-size: 12px;
-    font-weight: 600;
-    opacity: 0;
-    pointer-events: none;
-    transform: translateX(-50%) scale(0.84);
-    transition: opacity 200ms ease, transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    scrollbar-width: none;
+}
+
+.board-tab {
+    display: grid;
+    height: 32px;
+    flex: none;
+    place-items: center;
+    padding: 0 16px;
+    border-radius: 999px;
+    color: var(--fg-2);
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color 160ms ease, color 160ms ease;
+}
+
+.board-tab:hover {
+    background: var(--fill-2);
+    color: var(--fg);
+}
+
+.board-tab.is-active {
+    background: var(--seg-on-bg);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+    color: var(--seg-on-fg);
+}
+
+.board-tab.create-folder {
+    width: 32px;
+    padding: 0;
+}
+
+.board-tab.create-folder .icon {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2.4;
+}
+
+bookmark-board.is-dragging .board-tab[data-drop-folder] {
+    background: var(--fill-2);
+}
+
+.board-tab.drop-target {
+    background: var(--fill-hover);
+    outline: 2px dashed var(--fg-2);
+    outline-offset: -2px;
+}
+
+/* Rows stay centred under the search field, eight icons at most, and scroll in
+   place once they run out of room; an edge fades only while rows sit past it. */
+.board-grid {
+    --fade-top: 0px;
+    --fade-bottom: 0px;
+    display: flex;
+    width: min(100%, calc(var(--tile-width) * 8 + 16px * 7));
+    min-height: 0;
+    flex: 1;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    justify-content: center;
+    gap: 24px 16px;
+    overflow-y: auto;
+    padding: 8px 0;
+    scroll-padding-top: 8px;
+    scroll-snap-type: y proximity;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent);
+}
+
+.board-grid.can-scroll-up {
+    --fade-top: 32px;
+}
+
+.board-grid.can-scroll-down {
+    --fade-bottom: 56px;
+}
+
+/* The mask cuts glass inside the grid off from the wallpaper, so it takes a
+   steady frosted fill instead of a blur that would have nothing to sample. */
+.board-grid .app-icon-glass {
+    background: rgba(255, 255, 255, 0.22);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.tile {
+    position: relative;
+    display: flex;
+    width: var(--tile-width);
+    flex: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    border-radius: 16px;
+    color: var(--fg);
+    text-align: center;
+    scroll-snap-align: start;
+}
+
+.tile .app-icon {
+    font-size: var(--icon-size);
+    transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.tile:active .app-icon {
+    transform: scale(0.96);
+}
+
+.tile-name {
+    overflow: hidden;
+    max-width: calc(var(--tile-width) - 8px);
+    font-size: 13px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    text-shadow: var(--label-shadow);
     white-space: nowrap;
 }
 
-.dock-item:hover .dock-label,
-.dock-item:focus-visible .dock-label {
-    opacity: 1;
-    transform: translateX(-50%) scale(1);
+.tile-more {
+    position: absolute;
+    top: 0;
+    right: calc((var(--tile-width) - var(--icon-size)) / 2 - 8px);
+    display: grid;
+    width: 24px;
+    height: 24px;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--glass-thick-bg);
+    opacity: 0;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: opacity 160ms ease;
 }
 
-.dock-divider {
-    width: 1px;
-    align-self: stretch;
-    margin: 6px 2px;
-    background: var(--hairline-strong);
+.tile-more .icon {
+    width: 16px;
+    height: 16px;
+}
+
+.tile:hover .tile-more,
+.tile:focus-visible .tile-more {
+    opacity: 1;
+}
+
+/* Sized in em of the folder icon, so the 2×2 preview follows the icon size setting. */
+.folder-icon {
+    display: grid;
+    grid-template-columns: repeat(2, 0.32em);
+    grid-auto-rows: 0.32em;
+    gap: 0.09em;
+    place-content: center;
+}
+
+.folder-icon .mini-icon.app-icon {
+    border-radius: 0.28em;
+    box-shadow: none;
+    font-size: 0.32em;
+}
+
+.tile.is-dragging {
+    opacity: 0.4;
+}
+
+.tile.drop-target .app-icon {
+    outline: 2px solid var(--fg);
+    outline-offset: 4px;
+}
+
+.board-message {
+    width: 100%;
+    padding-top: 16px;
+    color: var(--fg-2);
+    font-size: 14px;
+    text-align: center;
+    text-shadow: var(--label-shadow);
 }
 
 wallpaper-badge {
@@ -799,10 +918,10 @@ wallpaper-badge {
     text-shadow: var(--label-shadow);
 }
 
-/* Idle: only the clock stays. Spotlight and the launchpad take over the screen in the same way. */
+/* Idle: only the clock stays. Spotlight takes over the screen the same way. */
 .top-bar,
 search-pill,
-home-dock,
+bookmark-board,
 wallpaper-badge {
     transition: opacity 600ms ease, transform 600ms ease;
 }
@@ -813,20 +932,19 @@ body.is-idle {
 
 body.is-idle .top-bar,
 body.is-idle search-pill,
-body.is-idle home-dock,
+body.is-idle bookmark-board,
 body.is-idle wallpaper-badge,
 body.is-idle backup-toast,
 body.spotlight-open .top-bar,
 body.spotlight-open search-pill,
-body.spotlight-open home-dock,
+body.spotlight-open bookmark-board,
 body.spotlight-open wallpaper-badge,
-body.spotlight-open backup-toast,
-body.launchpad-open backup-toast {
+body.spotlight-open backup-toast {
     opacity: 0;
     pointer-events: none;
 }
 
-body.is-idle home-dock {
+body.is-idle bookmark-board {
     transform: translateY(12px);
 }
 
@@ -837,12 +955,6 @@ body.is-idle dashboard-header {
 body.spotlight-open dashboard-header {
     opacity: 0.28;
     transition-duration: 220ms;
-}
-
-body.launchpad-open .home {
-    visibility: hidden;
-    opacity: 0;
-    transition: opacity 280ms ease, visibility 0s 280ms;
 }
 
 /* ---- Spotlight ---------------------------------------------------------- */
@@ -1087,247 +1199,6 @@ spotlight-search {
     gap: 5px;
 }
 
-/* ---- Launchpad ---------------------------------------------------------- */
-
-bookmark-launchpad {
-    position: fixed;
-    z-index: 3000;
-    inset: 0;
-    display: block;
-}
-
-.launchpad-backdrop {
-    position: absolute;
-    inset: 0;
-    background: rgba(14, 10, 36, 0.3);
-    backdrop-filter: blur(38px) saturate(1.35);
-    -webkit-backdrop-filter: blur(38px) saturate(1.35);
-    animation: fade-in 240ms ease both;
-}
-
-body.theme-light .launchpad-backdrop {
-    background: rgba(255, 255, 255, 0.22);
-}
-
-.launchpad {
-    position: relative;
-    display: flex;
-    height: 100%;
-    flex-direction: column;
-    animation: launchpad-in 300ms cubic-bezier(0.2, 0.9, 0.3, 1.05) both;
-}
-
-.launchpad-top {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 18px;
-    padding: 40px 16px 0;
-}
-
-.launchpad-search {
-    display: flex;
-    width: min(300px, 100%);
-    height: 36px;
-    align-items: center;
-    gap: 8px;
-    padding: 0 14px;
-    border-radius: 999px;
-}
-
-.launchpad-search .icon {
-    width: 15px;
-    height: 15px;
-    opacity: 0.8;
-    stroke-width: 2.4;
-}
-
-.launchpad-search input,
-.settings-search input {
-    min-width: 0;
-    flex: 1;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: var(--fg);
-}
-
-.launchpad-search input::placeholder,
-.settings-search input::placeholder {
-    color: var(--fg-3);
-}
-
-.launchpad-tabs {
-    display: flex;
-    max-width: 100%;
-    gap: 2px;
-    overflow-x: auto;
-    padding: 4px;
-    border-radius: 999px;
-    scrollbar-width: none;
-}
-
-.launchpad-tab {
-    display: grid;
-    height: 32px;
-    flex: none;
-    place-items: center;
-    padding: 0 14px;
-    border-radius: 999px;
-    color: var(--fg-2);
-    font-size: 13px;
-    font-weight: 600;
-    white-space: nowrap;
-    transition: background 180ms ease, color 180ms ease;
-}
-
-.launchpad-tab:hover {
-    background: var(--fill-2);
-}
-
-.launchpad-tab.is-active {
-    background: var(--seg-on-bg);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-    color: var(--seg-on-fg);
-}
-
-.launchpad-tab.create-folder {
-    width: 32px;
-    padding: 0;
-}
-
-.launchpad-tab.create-folder .icon {
-    width: 14px;
-    height: 14px;
-    stroke-width: 2.4;
-}
-
-.launchpad-tab.drop-target {
-    background: var(--fill-hover);
-    outline: 2px dashed var(--fg-2);
-    outline-offset: -2px;
-}
-
-.launchpad-done {
-    position: absolute;
-    top: 40px;
-    right: 24px;
-    display: flex;
-    height: 36px;
-    align-items: center;
-    padding: 0 16px;
-    border-radius: 999px;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-.launchpad-grid {
-    display: grid;
-    width: min(1000px, calc(100% - 32px));
-    min-height: 0;
-    flex: 1;
-    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
-    align-content: start;
-    gap: 30px 18px;
-    overflow-y: auto;
-    margin: 0 auto;
-    padding: 54px 0 56px;
-    scrollbar-width: none;
-}
-
-.tile {
-    position: relative;
-    display: flex;
-    width: 104px;
-    flex-direction: column;
-    align-items: center;
-    justify-self: center;
-    gap: 9px;
-    padding: 6px 0;
-    border-radius: 18px;
-    color: var(--fg);
-    text-align: center;
-}
-
-.tile .app-icon {
-    transition: transform 350ms cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.tile:active .app-icon {
-    transform: scale(0.94);
-}
-
-.tile-name {
-    overflow: hidden;
-    max-width: 96px;
-    font-size: 13px;
-    font-weight: 500;
-    text-overflow: ellipsis;
-    text-shadow: var(--label-shadow);
-    white-space: nowrap;
-}
-
-.tile-more {
-    position: absolute;
-    top: 0;
-    right: 6px;
-    display: grid;
-    width: 24px;
-    height: 24px;
-    place-items: center;
-    border-radius: 999px;
-    background: var(--glass-thick-bg);
-    opacity: 0;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    transition: opacity 150ms ease;
-}
-
-.tile-more .icon {
-    width: 16px;
-    height: 16px;
-}
-
-.tile:hover .tile-more,
-.tile:focus-visible .tile-more {
-    opacity: 1;
-}
-
-.folder-icon {
-    display: grid;
-    grid-template-columns: repeat(2, 24px);
-    grid-auto-rows: 24px;
-    gap: 7px;
-    place-content: center;
-}
-
-.mini-icon.app-icon {
-    border-radius: 7px;
-    box-shadow: none;
-    font-size: 24px;
-}
-
-.tile.is-dragging {
-    opacity: 0.4;
-}
-
-.tile.drop-target .app-icon {
-    outline: 2px solid var(--fg);
-    outline-offset: 4px;
-}
-
-bookmark-launchpad.is-dragging .launchpad-tab[data-drop-folder] {
-    background: var(--fill-2);
-}
-
-.launchpad-message {
-    grid-column: 1 / -1;
-    color: var(--fg-2);
-    font-size: 15px;
-    text-align: center;
-    text-shadow: var(--label-shadow);
-}
-
 /* ---- Settings window ---------------------------------------------------- */
 
 settings-panel {
@@ -1425,6 +1296,19 @@ settings-panel {
     border-radius: 8px;
     background: var(--fill-2);
     font-size: 13px;
+}
+
+.settings-search input {
+    min-width: 0;
+    flex: 1;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--fg);
+}
+
+.settings-search input::placeholder {
+    color: var(--fg-3);
 }
 
 .settings-search .icon {
@@ -2286,16 +2170,6 @@ liquid-glass-system {
 
 /* ---- Responsive --------------------------------------------------------- */
 
-@media (max-width: 1100px) {
-    backup-toast {
-        right: 16px;
-        bottom: calc(var(--dock-size, 56px) + 60px);
-        left: 16px;
-        margin: 0 auto;
-        width: max-content;
-    }
-}
-
 @media (max-width: 900px) {
     .wallpaper-label {
         display: none;
@@ -2364,31 +2238,30 @@ liquid-glass-system {
         display: none;
     }
 
-    .pill-chip:last-child {
+    .search-pill kbd {
         display: none;
     }
 
-    .launchpad-top {
-        padding-top: 84px;
+    .home-main {
+        padding: 64px 16px 88px;
     }
 
-    .launchpad-done {
-        top: 20px;
-        right: 16px;
+    bookmark-board {
+        --icon-size: min(var(--icon-pref, 64px), 52px);
+        --tile-width: calc(var(--icon-size) + 24px);
+        gap: 16px;
+        margin-top: 32px;
     }
 
-    .launchpad-grid {
-        grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
-        gap: 22px 10px;
-        padding-top: 32px;
+    .board-grid {
+        gap: 20px 8px;
     }
 
-    .tile {
-        width: 88px;
-    }
-
-    .tile .app-icon {
-        font-size: 64px;
+    /* Leaves the wallpaper pause button uncovered. */
+    backup-toast {
+        right: 72px;
+        left: 16px;
+        max-width: none;
     }
 
     .spotlight {
@@ -2401,29 +2274,33 @@ liquid-glass-system {
 }
 
 @media (max-height: 620px) {
-    .hero {
-        top: 72px;
+    .home-main {
+        padding-top: 56px;
     }
 
     search-pill {
-        margin-top: 20px;
+        margin-top: 16px;
+    }
+
+    bookmark-board {
+        margin-top: 24px;
     }
 }
 
 /* ---- Motion ------------------------------------------------------------- */
 
 .enhanced-animations .hero {
-    animation: rise-in 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    animation: rise-in 480ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
-.enhanced-animations .dock {
-    animation: rise-in 560ms 90ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+.enhanced-animations bookmark-board {
+    animation: rise-in 480ms 60ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
 @keyframes rise-in {
     from {
         opacity: 0;
-        transform: translateY(14px);
+        transform: translateY(8px);
     }
 }
 
@@ -2442,13 +2319,6 @@ liquid-glass-system {
     from {
         opacity: 0;
         transform: translateX(-50%) translateY(-8px) scale(0.97);
-    }
-}
-
-@keyframes launchpad-in {
-    from {
-        opacity: 0;
-        transform: scale(1.06);
     }
 }
 

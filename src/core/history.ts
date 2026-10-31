@@ -49,7 +49,7 @@ function siteName(host: string, rootTitle: string): string {
 
 let recentSites: Promise<RecentSite[]> | null = null;
 
-/** One history scan per page load, shared by the Dock, the launchpad and Spotlight. */
+/** One history scan per page load, shared by the bookmark grid and Spotlight. */
 export function loadRecentSites(refresh = false): Promise<RecentSite[]> {
     if (!recentSites || refresh) {
         recentSites = new Promise<RecentSite[]>((resolve, reject) => {

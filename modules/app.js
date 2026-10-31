@@ -170,8 +170,7 @@
         openInNewTab: booleanOr(layout.openInNewTab, false),
         searchEngine: searchEngines.includes(String(layout.searchEngine)) ? layout.searchEngine : "google",
         dockSource: layout.dockSource === "recent" ? "recent" : "bookmarks",
-        dockSize: Math.round(clampNumber(layout.dockSize, 40, 72, 56)),
-        dockMagnify: booleanOr(layout.dockMagnify, true),
+        dockSize: Math.round(clampNumber(layout.dockSize, 40, 72, 64)),
         saveSearches: booleanOr(layout.saveSearches, true),
         backupReminder: booleanOr(layout.backupReminder, true)
       },
@@ -252,8 +251,7 @@
           openInNewTab: false,
           searchEngine: "google",
           dockSource: "bookmarks",
-          dockSize: 56,
-          dockMagnify: true,
+          dockSize: 64,
           saveSearches: true,
           backupReminder: true
         },
@@ -1677,10 +1675,10 @@
     }
   });
 
-  // src/components/bookmark-launchpad.ts
-  var BookmarkLaunchpad;
-  var init_bookmark_launchpad = __esm({
-    "src/components/bookmark-launchpad.ts"() {
+  // src/components/bookmark-board.ts
+  var BookmarkBoard;
+  var init_bookmark_board = __esm({
+    "src/components/bookmark-board.ts"() {
       "use strict";
       init_history();
       init_store();
@@ -1690,107 +1688,70 @@
       init_icons();
       init_site_icon();
       init_ui_layer();
-      BookmarkLaunchpad = class extends StoreElement {
+      BookmarkBoard = class extends StoreElement {
         observedChanges = ["bookmarks", "folders", "settings.layout"];
         view = "bookmarks";
+        /** The view a new tab opens on. Following it lets a settings change show at once. */
+        startView = null;
         folder = ROOT_FOLDER;
-        query = "";
         draggingId = null;
         recent = { sites: [], state: "idle", error: "" };
-        releaseLayer = null;
-        connectedCallback() {
-          this.hidden = true;
-          super.connectedCallback();
-        }
+        resizeObserver = new ResizeObserver(() => this.syncEdges());
         disconnectedCallback() {
           super.disconnectedCallback();
-          this.close();
-        }
-        get isOpen() {
-          return !this.hidden;
-        }
-        open(view = "bookmarks", folder = ROOT_FOLDER) {
-          this.view = view;
-          this.folder = folder;
-          this.query = "";
-          this.innerHTML = "";
-          if (!this.isOpen) {
-            this.hidden = false;
-            document.body.classList.add("launchpad-open");
-            this.releaseLayer = pushLayer(this, () => this.close());
-          }
-          this.render();
-          afterMotion(this, () => {
-            if (this.isOpen && !this.contains(document.activeElement)) this.querySelector(".launchpad-tab.is-active")?.focus({ preventScroll: true });
-          });
-        }
-        close() {
-          if (!this.isOpen) return;
-          this.hidden = true;
-          document.body.classList.remove("launchpad-open");
-          this.innerHTML = "";
-          const release = this.releaseLayer;
-          this.releaseLayer = null;
-          release?.();
+          this.resizeObserver.disconnect();
         }
         render() {
-          if (!this.isOpen) return;
+          const { showBookmarks, showRecent, dockSource, dockSize } = appStore.state.settings.layout;
+          this.hidden = !showBookmarks;
+          if (this.hidden) return;
+          this.style.setProperty("--icon-pref", `${dockSize}px`);
+          const startView = showRecent ? dockSource : "bookmarks";
+          if (startView !== this.startView) {
+            this.startView = startView;
+            this.view = startView;
+            this.folder = ROOT_FOLDER;
+          }
           if (!appStore.state.folders.includes(this.folder)) this.folder = ROOT_FOLDER;
-          if (!appStore.state.settings.layout.showRecent) this.view = "bookmarks";
+          if (!showRecent) this.view = "bookmarks";
           if (this.view === "recent" && this.recent.state === "idle") void this.loadRecent();
-          if (!this.querySelector(".launchpad")) this.renderShell();
-          const grid = this.querySelector(".launchpad-grid");
+          if (!this.querySelector(".board-grid")) this.renderShell();
+          const grid = this.querySelector(".board-grid");
           const scroll = grid.scrollTop;
-          this.querySelector(".launchpad-tabs").innerHTML = this.tabsTemplate();
-          grid.dataset.view = this.query ? "search" : this.view;
+          this.querySelector(".board-tabs").innerHTML = this.tabsTemplate();
+          grid.dataset.view = this.view;
           grid.innerHTML = this.gridTemplate();
           grid.scrollTop = scroll;
+          this.syncEdges();
           bindSiteIcons(this);
           this.querySelectorAll(".bookmark-tile").forEach((card) => this.bindBookmark(card));
           this.querySelectorAll("[data-drop-folder]").forEach((target) => this.bindFolderDrop(target));
         }
-        /** The shell (and its search field) is built once per opening so typing, including IME input, is never interrupted. */
         renderShell() {
           this.innerHTML = `
-            <div class="launchpad-backdrop" aria-hidden="true"></div>
-            <section class="launchpad" role="dialog" aria-modal="true" aria-label="\u542F\u52A8\u53F0">
-                <header class="launchpad-top">
-                    <label class="glass launchpad-search">
-                        ${ICONS.search}
-                        <input type="search" placeholder="\u5728\u4E66\u7B7E\u4E2D\u641C\u7D22" aria-label="\u5728\u4E66\u7B7E\u4E2D\u641C\u7D22" autocomplete="off" spellcheck="false">
-                    </label>
-                    <div class="glass launchpad-tabs" role="tablist" aria-label="\u4E66\u7B7E\u5206\u7EC4"></div>
-                </header>
-                <button class="glass launchpad-done" type="button" data-liquid-item>\u5B8C\u6210</button>
-                <div class="launchpad-grid"></div>
-            </section>`;
+            <div class="glass board-tabs" role="tablist" aria-label="\u4E66\u7B7E\u5206\u7EC4"></div>
+            <div class="board-grid"></div>`;
           this.bindShell();
         }
         tabsTemplate() {
-          const { bookmarks, folders } = appStore.state;
+          const { folders } = appStore.state;
           const tab = (label, active, attributes) => `
-            <button class="launchpad-tab ${active ? "is-active" : ""}" type="button" role="tab" aria-selected="${active}" tabindex="${active ? 0 : -1}" data-liquid-item ${attributes}>${label}</button>`;
-          const browsing = !this.query;
+            <button class="board-tab ${active ? "is-active" : ""}" type="button" role="tab" aria-selected="${active}" tabindex="${active ? 0 : -1}" data-liquid-item ${attributes}>${label}</button>`;
           return `
-                ${tab(`\u5168\u90E8 \xB7 ${bookmarks.length}`, browsing && this.view === "bookmarks" && this.folder === ROOT_FOLDER, `data-folder="${ROOT_FOLDER}" data-drop-folder="${ROOT_FOLDER}"`)}
-                ${appStore.state.settings.layout.showRecent ? tab("\u5E38\u8BBF\u95EE", browsing && this.view === "recent", 'data-view="recent"') : ""}
+                ${tab(ROOT_FOLDER, this.view === "bookmarks" && this.folder === ROOT_FOLDER, `data-folder="${ROOT_FOLDER}" data-drop-folder="${ROOT_FOLDER}"`)}
+                ${appStore.state.settings.layout.showRecent ? tab("\u5E38\u8BBF\u95EE", this.view === "recent", 'data-view="recent"') : ""}
                 ${folders.filter((folder) => folder !== ROOT_FOLDER).map((folder) => tab(
             escapeHtml(folder),
-            browsing && this.view === "bookmarks" && this.folder === folder,
+            this.view === "bookmarks" && this.folder === folder,
             `data-folder="${escapeHtml(folder)}" data-drop-folder="${escapeHtml(folder)}"`
           )).join("")}
-                <button class="launchpad-tab create-folder" type="button" data-liquid-item aria-label="\u65B0\u5EFA\u6587\u4EF6\u5939" title="\u65B0\u5EFA\u6587\u4EF6\u5939">${ICONS.plus}</button>`;
+                <button class="board-tab create-folder" type="button" data-liquid-item aria-label="\u65B0\u5EFA\u6587\u4EF6\u5939" title="\u65B0\u5EFA\u6587\u4EF6\u5939">${ICONS.plus}</button>`;
         }
         gridTemplate() {
-          if (this.query) {
-            const query = this.query.toLowerCase();
-            const matches = [...appStore.state.bookmarks].sort(compareBookmarks2).filter((bookmark) => bookmarkName(bookmark).toLowerCase().includes(query) || bookmark.url.toLowerCase().includes(query));
-            return matches.map((bookmark) => this.bookmarkTemplate(bookmark)).join("") || `<p class="launchpad-message">\u6CA1\u6709\u627E\u5230\u201C${escapeHtml(this.query)}\u201D</p>`;
-          }
           if (this.view === "recent") return this.recentTemplate();
           const folders = this.folder === ROOT_FOLDER ? appStore.state.folders.filter((folder) => folder !== ROOT_FOLDER).map((folder) => this.folderTemplate(folder)).join("") : "";
           const bookmarks = bookmarksIn(this.folder);
-          const empty = !bookmarks.length && !folders ? `<p class="launchpad-message">${this.folder === ROOT_FOLDER ? "\u8FD8\u6CA1\u6709\u4E66\u7B7E\uFF0C\u70B9\u51FB\u52A0\u53F7\u6DFB\u52A0\u7B2C\u4E00\u4E2A" : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\uFF0C\u53EF\u4EE5\u628A\u4E66\u7B7E\u62D6\u5230\u4E0A\u65B9\u7684\u6587\u4EF6\u5939\u6807\u7B7E\u4E0A"}</p>` : "";
+          const empty = !bookmarks.length && !folders ? `<p class="board-message">${this.folder === ROOT_FOLDER ? "\u8FD8\u6CA1\u6709\u4E66\u7B7E\uFF0C\u70B9\u52A0\u53F7\u6DFB\u52A0\u7B2C\u4E00\u4E2A" : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\uFF0C\u53EF\u4EE5\u628A\u4E66\u7B7E\u62D6\u5230\u4E0A\u65B9\u7684\u6807\u7B7E\u4E0A"}</p>` : "";
           return `
             ${folders}
             ${bookmarks.map((bookmark) => this.bookmarkTemplate(bookmark)).join("")}
@@ -1821,9 +1782,9 @@
             </a>`;
         }
         recentTemplate() {
-          if (this.recent.state === "loading" || this.recent.state === "idle") return '<p class="launchpad-message">\u6B63\u5728\u6574\u7406\u6D4F\u89C8\u8BB0\u5F55\u2026</p>';
-          if (this.recent.state === "error") return `<p class="launchpad-message">${escapeHtml(this.recent.error)}</p>`;
-          if (!this.recent.sites.length) return '<p class="launchpad-message">\u6700\u8FD1 30 \u5929\u8FD8\u6CA1\u6709\u53EF\u5C55\u793A\u7684\u7F51\u7AD9</p>';
+          if (this.recent.state === "loading" || this.recent.state === "idle") return '<p class="board-message">\u6B63\u5728\u6574\u7406\u6D4F\u89C8\u8BB0\u5F55\u2026</p>';
+          if (this.recent.state === "error") return `<p class="board-message">${escapeHtml(this.recent.error)}</p>`;
+          if (!this.recent.sites.length) return '<p class="board-message">\u6700\u8FD1 30 \u5929\u8FD8\u6CA1\u6709\u53EF\u5C55\u793A\u7684\u7F51\u7AD9</p>';
           const newTab = appStore.state.settings.layout.openInNewTab;
           return this.recent.sites.map((site, index) => `
             <a class="tile recent-tile" href="${escapeHtml(site.url)}" ${newTab ? 'target="_blank"' : ""} rel="noopener noreferrer" data-recent-index="${index}" data-liquid-item title="${escapeHtml(hostOf(site.url))}">
@@ -1832,19 +1793,9 @@
             </a>`).join("");
         }
         bindShell() {
-          this.querySelector(".launchpad-done")?.addEventListener("click", () => this.close());
-          this.querySelector(".launchpad-backdrop")?.addEventListener("click", () => this.close());
-          this.querySelector(".launchpad")?.addEventListener("click", (event) => {
-            if (event.target.matches(".launchpad, .launchpad-top")) this.close();
-          });
-          const search = this.querySelector(".launchpad-search input");
-          search.addEventListener("input", () => {
-            this.query = search.value.trim();
-            this.render();
-          });
-          const tabs = this.querySelector(".launchpad-tabs");
+          const tabs = this.querySelector(".board-tabs");
           tabs.addEventListener("click", (event) => {
-            const button = event.target.closest(".launchpad-tab");
+            const button = event.target.closest(".board-tab");
             if (!button) return;
             if (button.classList.contains("create-folder")) void createFolder();
             else if (button.dataset.view === "recent") this.show("recent", ROOT_FOLDER);
@@ -1852,19 +1803,17 @@
           });
           tabs.addEventListener("keydown", (event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            const items = [...tabs.querySelectorAll(".launchpad-tab")];
+            const items = [...tabs.querySelectorAll(".board-tab")];
             const index = items.indexOf(document.activeElement);
             if (index < 0) return;
             event.preventDefault();
             items[(index + (event.key === "ArrowRight" ? 1 : -1) + items.length) % items.length].focus();
           });
-          const grid = this.querySelector(".launchpad-grid");
+          const grid = this.querySelector(".board-grid");
+          grid.addEventListener("scroll", this.syncEdges, { passive: true });
+          this.resizeObserver.observe(grid);
           grid.addEventListener("click", (event) => {
             const target = event.target;
-            if (target === grid) {
-              this.close();
-              return;
-            }
             const more = target.closest(".tile-more");
             if (more) {
               event.preventDefault();
@@ -1885,15 +1834,15 @@
             const id = this.dragId(event);
             if (id !== null) void moveBookmark(id, this.folder);
           });
-          this.querySelector(".launchpad")?.addEventListener("contextmenu", (event) => {
+          this.addEventListener("contextmenu", (event) => {
             const mouse = event;
             const target = mouse.target;
-            const tile = target.closest(".tile:not(.add-tile), .launchpad-tab[data-folder]");
-            if (!tile && !target.closest(".launchpad-grid")) return;
+            const tile = target.closest(".tile:not(.add-tile), .board-tab[data-folder]");
+            if (!tile && !target.closest(".board-grid")) return;
             event.preventDefault();
             const at = mouse.clientX || mouse.clientY ? { x: mouse.clientX, y: mouse.clientY } : tile ?? target;
             if (tile) this.openTileMenu(tile, at);
-            else if (this.view === "bookmarks" && !this.query) openMenu([
+            else if (this.view === "bookmarks") openMenu([
               { label: "\u6DFB\u52A0\u4E66\u7B7E", icon: ICONS.plus, action: () => openBookmarkDialog(this, { folder: this.folder }) },
               { label: "\u65B0\u5EFA\u6587\u4EF6\u5939", icon: ICONS.folderPlus, action: () => void createFolder() }
             ], at);
@@ -1969,15 +1918,21 @@
           if (bookmark) bookmarkMenu(this, bookmark, at);
         }
         show(view, folder) {
-          if (view === this.view && folder === this.folder && !this.query) return;
+          if (view === this.view && folder === this.folder) return;
           this.view = view;
           this.folder = folder;
-          this.query = "";
-          const search = this.querySelector(".launchpad-search input");
-          if (search) search.value = "";
           this.render();
-          this.querySelector(".launchpad-tab.is-active")?.focus({ preventScroll: true });
+          this.querySelector(".board-grid").scrollTop = 0;
+          this.syncEdges();
+          this.querySelector(".board-tab.is-active")?.focus({ preventScroll: true });
         }
+        /** Fades only the edges that have rows scrolled past them. */
+        syncEdges = () => {
+          const grid = this.querySelector(".board-grid");
+          if (!grid) return;
+          grid.classList.toggle("can-scroll-up", grid.scrollTop > 1);
+          grid.classList.toggle("can-scroll-down", grid.scrollTop + grid.clientHeight < grid.scrollHeight - 1);
+        };
         async loadRecent() {
           this.recent = { ...this.recent, state: "loading", error: "" };
           try {
@@ -2047,106 +2002,6 @@
             hour12: clockFormat === "12h"
           });
           date.textContent = formatDate(now, dateFormat);
-        }
-      };
-    }
-  });
-
-  // src/components/home-dock.ts
-  var MAX_ITEMS, HomeDock;
-  var init_home_dock = __esm({
-    "src/components/home-dock.ts"() {
-      "use strict";
-      init_history();
-      init_store();
-      init_utils();
-      init_base();
-      init_bookmark_actions();
-      init_icons();
-      init_site_icon();
-      MAX_ITEMS = 12;
-      HomeDock = class extends StoreElement {
-        observedChanges = ["bookmarks", "settings.layout"];
-        sites = null;
-        render() {
-          const { showBookmarks, showRecent, dockSize, dockMagnify, openInNewTab: openInNewTab2 } = appStore.state.settings.layout;
-          const dockSource = showRecent ? appStore.state.settings.layout.dockSource : "bookmarks";
-          this.hidden = !showBookmarks;
-          if (this.hidden) {
-            this.innerHTML = "";
-            return;
-          }
-          this.style.setProperty("--dock-size", `${dockSize}px`);
-          this.classList.toggle("is-magnifying", dockMagnify);
-          const target = openInNewTab2 ? 'target="_blank"' : "";
-          let items = "";
-          if (dockSource === "recent") {
-            if (!this.sites) void this.loadSites();
-            items = (this.sites ?? []).slice(0, MAX_ITEMS).map((site, index) => `
-                <a class="dock-item" href="${escapeHtml(site.url)}" ${target} rel="noopener noreferrer" data-site-index="${index}" data-liquid-item aria-label="${escapeHtml(site.title)}" draggable="false">
-                    ${siteIcon({ url: site.url, name: site.title })}
-                    <span class="dock-label glass glass-dark" aria-hidden="true">${escapeHtml(site.title)}</span>
-                </a>`).join("");
-          } else {
-            const bookmarks = bookmarksIn(ROOT_FOLDER).slice(0, MAX_ITEMS);
-            items = bookmarks.map((bookmark) => `
-                <a class="dock-item" href="${escapeHtml(bookmark.url)}" ${target} rel="noopener noreferrer" data-bookmark-id="${escapeHtml(bookmark.id)}" data-liquid-item aria-label="${escapeHtml(bookmarkName(bookmark))}" draggable="false">
-                    ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark })}
-                    <span class="dock-label glass glass-dark" aria-hidden="true">${escapeHtml(bookmarkName(bookmark))}</span>
-                </a>`).join("");
-            if (!bookmarks.length) items = `
-                <button class="dock-item dock-add" type="button" data-liquid-item aria-label="\u6DFB\u52A0\u4E66\u7B7E">
-                    <span class="app-icon app-icon-glass">${ICONS.plus}</span>
-                    <span class="dock-label glass glass-dark" aria-hidden="true">\u6DFB\u52A0\u4E66\u7B7E</span>
-                </button>`;
-          }
-          this.innerHTML = `
-            <nav class="glass dock" aria-label="\u5E38\u7528\u4E66\u7B7E">
-                ${items}
-                <span class="dock-divider" aria-hidden="true"></span>
-                    ${showRecent ? `<button class="dock-item dock-recent" type="button" data-liquid-item aria-label="\u5E38\u8BBF\u95EE">
-                        <span class="app-icon app-icon-glass">${ICONS.clock}</span>
-                        <span class="dock-label glass glass-dark" aria-hidden="true">\u5E38\u8BBF\u95EE</span>
-                    </button>` : ""}
-                    <button class="dock-item dock-all" type="button" data-liquid-item aria-label="\u5168\u90E8\u4E66\u7B7E">
-                        <span class="app-icon app-icon-glass">${ICONS.grid}</span>
-                        <span class="dock-label glass glass-dark" aria-hidden="true">\u5168\u90E8\u4E66\u7B7E</span>
-                    </button>
-            </nav>`;
-          bindSiteIcons(this);
-          this.bindEvents();
-        }
-        bindEvents() {
-          this.querySelector(".dock-recent")?.addEventListener("click", () => this.openLaunchpad("recent"));
-          this.querySelector(".dock-all")?.addEventListener("click", () => this.openLaunchpad("bookmarks"));
-          this.querySelector(".dock-add")?.addEventListener("click", (event) => openBookmarkDialog(event.currentTarget, { folder: ROOT_FOLDER }));
-          this.querySelectorAll(".dock-item[data-bookmark-id]").forEach((item) => {
-            item.addEventListener("click", (event) => interceptExtensionLink(event, item.href));
-          });
-          this.querySelector(".dock")?.addEventListener("contextmenu", (event) => {
-            const mouse = event;
-            const item = mouse.target.closest(".dock-item");
-            const at = mouse.clientX || mouse.clientY ? { x: mouse.clientX, y: mouse.clientY } : item;
-            if (!item || !at) return;
-            const bookmark = item.dataset.bookmarkId ? findBookmark(item.dataset.bookmarkId) : void 0;
-            const site = item.dataset.siteIndex !== void 0 ? this.sites?.[Number(item.dataset.siteIndex)] : void 0;
-            if (!bookmark && !site) return;
-            event.preventDefault();
-            if (bookmark) bookmarkMenu(this, bookmark, at);
-            else if (site) siteMenu(this, site, at);
-          });
-        }
-        openLaunchpad(view) {
-          this.dispatchEvent(new CustomEvent("open-launchpad", { bubbles: true, composed: true, detail: { view } }));
-        }
-        async loadSites() {
-          this.sites = [];
-          try {
-            this.sites = await loadRecentSites();
-          } catch {
-            this.sites = [];
-          }
-          this.render();
         }
       };
     }
@@ -3469,8 +3324,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             <button class="glass search-pill" type="button" data-liquid-item aria-label="\u641C\u7D22\u6216\u8F93\u5165\u7F51\u5740" aria-keyshortcuts="${SHORTCUT_LABEL === "\u2318K" ? "Meta+K" : "Control+K"} /">
                 ${ICONS.search}
                 <span class="search-pill-text">\u641C\u7D22\u6216\u8F93\u5165\u7F51\u5740</span>
-                <span class="pill-chip">${ENGINES[searchEngine].label}</span>
-                <span class="pill-chip">${SHORTCUT_LABEL}</span>
+                <span class="search-pill-engine">${ENGINES[searchEngine].label}</span>
+                <kbd>${SHORTCUT_LABEL}</kbd>
             </button>`;
           this.querySelector("button")?.addEventListener("click", () => {
             this.dispatchEvent(new CustomEvent("open-spotlight", { bubbles: true, composed: true }));
@@ -3652,14 +3507,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             ${group("", `
                 ${toggleRow("showClock", "\u65F6\u95F4\u4E0E\u65E5\u671F")}
                 ${toggleRow("showSearch", "\u641C\u7D22\u680F", `\u5173\u95ED\u540E\u4ECD\u53EF\u7528 ${SHORTCUT_LABEL} \u547C\u51FA`)}
-                ${toggleRow("showBookmarks", "Dock")}
+                ${toggleRow("showBookmarks", "\u4E66\u7B7E")}
                 ${toggleRow("showStatus", "\u72B6\u6001\u80F6\u56CA", "\u53EA\u5728\u64AD\u653E\u5A92\u4F53\u3001\u4E0B\u8F7D\u6216\u4F7F\u7528\u7535\u6C60\u65F6\u51FA\u73B0")}
-                ${toggleRow("showRecent", "\u5E38\u8BBF\u95EE\u7F51\u7AD9", "\u6839\u636E\u672C\u673A\u6700\u8FD1 30 \u5929\u7684\u6D4F\u89C8\u8BB0\u5F55\u751F\u6210\uFF0C\u51FA\u73B0\u5728 Dock\u3001\u542F\u52A8\u53F0\u548C\u641C\u7D22\u4E2D")}
+                ${toggleRow("showRecent", "\u5E38\u8BBF\u95EE\u7F51\u7AD9", "\u6839\u636E\u672C\u673A\u6700\u8FD1 30 \u5929\u7684\u6D4F\u89C8\u8BB0\u5F55\u751F\u6210\uFF0C\u51FA\u73B0\u5728\u4E66\u7B7E\u548C\u641C\u7D22\u4E2D")}
             `)}
-            ${group("Dock", `
-                ${segmentRow("dockSource", "\u663E\u793A\u7684\u4E66\u7B7E", layout.dockSource, [["bookmarks", "\u56FA\u5B9A\u7684\u4E66\u7B7E"], ["recent", "\u5E38\u8BBF\u95EE"]], "\u56FA\u5B9A\u7684\u4E66\u7B7E\u5C31\u662F\u201C\u5168\u90E8\u201D\u91CC\u7684\u4E66\u7B7E\uFF0C\u53EF\u5728\u542F\u52A8\u53F0\u4E2D\u62D6\u52A8\u6392\u5E8F", "showBookmarks showRecent")}
+            ${group("\u4E66\u7B7E", `
+                ${segmentRow("dockSource", "\u6253\u5F00\u65F6\u663E\u793A", layout.dockSource, [["bookmarks", "\u5168\u90E8"], ["recent", "\u5E38\u8BBF\u95EE"]], "", "showBookmarks showRecent")}
                 ${rangeRow("dockSize", "\u56FE\u6807\u5927\u5C0F", layout.dockSize, 40, 72, "", "showBookmarks")}
-                ${toggleRow("dockMagnify", "\u60AC\u505C\u653E\u5927", "", "showBookmarks")}
                 ${toggleRow("openInNewTab", "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00\u4E66\u7B7E")}
             `)}
             ${group("\u641C\u7D22", `
@@ -3756,7 +3610,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             input.addEventListener("input", () => {
               const output = input.closest(".setting-row")?.querySelector("output");
               if (output) output.textContent = `${input.value}${input.dataset.unit ?? ""}`;
-              const [selector, property, value] = input.name === "dockSize" ? ["home-dock", "--dock-size", `${input.value}px`] : input.name === "blur" ? ["wallpaper-surface", "--wallpaper-blur", `${input.value}px`] : ["wallpaper-surface", "--wallpaper-overlay", String(Number(input.value) / 100)];
+              const [selector, property, value] = input.name === "dockSize" ? ["bookmark-board", "--icon-pref", `${input.value}px`] : input.name === "blur" ? ["wallpaper-surface", "--wallpaper-blur", `${input.value}px`] : ["wallpaper-surface", "--wallpaper-overlay", String(Number(input.value) / 100)];
               document.querySelector(selector)?.style.setProperty(property, value);
             });
             input.addEventListener("change", () => {
@@ -3876,7 +3730,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             showBookmarks: layout.showBookmarks,
             showStatus: layout.showStatus,
             showRecent: layout.showRecent,
-            dockMagnify: layout.dockMagnify,
             openInNewTab: layout.openInNewTab,
             saveSearches: layout.saveSearches,
             backupReminder: layout.backupReminder,
@@ -4228,7 +4081,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       return "dark";
     }
   }
-  var FROST_SCALE, WallpaperSurface, SCENE;
+  var WallpaperSurface, SCENE;
   var init_wallpaper_surface = __esm({
     "src/components/wallpaper-surface.ts"() {
       "use strict";
@@ -4236,7 +4089,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_store();
       init_wallpaper_service();
       init_base();
-      FROST_SCALE = 1 / 6;
       WallpaperSurface = class extends StoreElement {
         observedChanges = ["settings.wallpaper"];
         objectUrl = "";
@@ -4245,12 +4097,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         pendingMediaKey = "";
         userPaused = false;
         battery = null;
-        frostFrame = 0;
-        frostTime = -1;
-        bodyObserver = new MutationObserver(() => this.syncFrost());
         connectedCallback() {
           super.connectedCallback();
-          this.bodyObserver.observe(document.body, { attributeFilter: ["class"] });
           document.addEventListener("visibilitychange", this.syncPlayback);
           void navigator.getBattery?.().then((battery) => {
             this.battery = battery;
@@ -4260,8 +4108,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         disconnectedCallback() {
           super.disconnectedCallback();
-          this.bodyObserver.disconnect();
-          this.stopFrost();
           document.removeEventListener("visibilitychange", this.syncPlayback);
           this.battery?.removeEventListener?.("chargingchange", this.syncPlayback);
           this.releaseObjectUrl();
@@ -4279,7 +4125,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         render() {
           const wallpaper = appStore.state.settings.wallpaper;
           if (!this.querySelector(".wallpaper-media")) {
-            this.innerHTML = '<div class="wallpaper-media"></div><canvas class="wallpaper-frost" aria-hidden="true"></canvas><div class="wallpaper-tint"></div>';
+            this.innerHTML = '<div class="wallpaper-media"></div><div class="wallpaper-tint"></div>';
           }
           this.style.setProperty("--wallpaper-blur", `${wallpaper.blur}px`);
           this.style.setProperty("--wallpaper-overlay", String(wallpaper.overlay / 100));
@@ -4299,45 +4145,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (paused) video.pause();
           else if (video.paused) void video.play().catch(() => void 0);
         };
-        /**
-         * Chrome feeds HDR video into backdrop-filter without tone mapping, so the
-         * launchpad's full-screen blur blows it out. While the launchpad is open the
-         * video is mirrored into a small 2D canvas, which Chrome tone-maps to SDR,
-         * and the blur samples that instead.
-         */
-        syncFrost() {
-          const video = this.querySelector(".wallpaper-media video");
-          const wanted = Boolean(video) && document.body.classList.contains("launchpad-open");
-          if (!wanted) {
-            this.stopFrost();
-            return;
-          }
-          if (this.classList.contains("is-frosted")) return;
-          const canvas = this.querySelector(".wallpaper-frost");
-          if (!canvas) return;
-          canvas.width = Math.max(1, Math.round(this.clientWidth * FROST_SCALE));
-          canvas.height = Math.max(1, Math.round(this.clientHeight * FROST_SCALE));
-          this.frostTime = -1;
-          this.drawFrost();
-          this.classList.add("is-frosted");
-        }
-        drawFrost = () => {
-          this.frostFrame = requestAnimationFrame(this.drawFrost);
-          const video = this.querySelector(".wallpaper-media video");
-          const canvas = this.querySelector(".wallpaper-frost");
-          const context = canvas?.getContext("2d");
-          if (!video || !canvas || !context || !video.videoWidth || video.currentTime === this.frostTime) return;
-          this.frostTime = video.currentTime;
-          const scale = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
-          const width = video.videoWidth * scale;
-          const height = video.videoHeight * scale;
-          context.drawImage(video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
-        };
-        stopFrost() {
-          cancelAnimationFrame(this.frostFrame);
-          this.frostFrame = 0;
-          this.classList.remove("is-frosted");
-        }
         async applyMedia(token, mediaKey) {
           const wallpaper = appStore.state.settings.wallpaper;
           const host = this.querySelector(".wallpaper-media");
@@ -4382,8 +4189,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               if (!preset) host.innerHTML = SCENE;
             }
             this.appliedMediaKey = mediaKey;
-            this.stopFrost();
-            this.syncFrost();
             this.syncPlayback();
             this.reportState();
             const resolved = await tone;
@@ -4510,9 +4315,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_wallpaper_service();
       init_backup_toast();
       init_bookmark_dialog();
-      init_bookmark_launchpad();
+      init_bookmark_board();
       init_dashboard_header();
-      init_home_dock();
       init_icons();
       init_liquid_glass();
       init_liquid_controls();
@@ -4550,7 +4354,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (!changes || changes.includes("settings.wallpaper")) this.wake();
         };
         async connectedCallback() {
-          this.innerHTML = '<div class="app-loading" role="status"><span></span><p>\u6B63\u5728\u6574\u7406\u4F60\u7684\u542F\u52A8\u53F0\u2026</p></div>';
+          this.innerHTML = '<div class="app-loading" role="status"><span></span><p>\u6B63\u5728\u8F7D\u5165\u4E66\u7B7E\u2026</p></div>';
           try {
             await appStore.init();
             this.updateClasses();
@@ -4564,7 +4368,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.wake();
             void migrateLegacyWallpaper();
           } catch (error) {
-            this.innerHTML = `<div class="app-error"><h1>\u542F\u52A8\u53F0\u52A0\u8F7D\u5931\u8D25</h1><p>${escapeHtml(error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF")}</p></div>`;
+            this.innerHTML = `<div class="app-error"><h1>\u65B0\u6807\u7B7E\u9875\u52A0\u8F7D\u5931\u8D25</h1><p>${escapeHtml(error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF")}</p></div>`;
           }
         }
         disconnectedCallback() {
@@ -4590,15 +4394,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                         <button class="glass round-button settings-trigger" type="button" data-liquid-item aria-label="\u8BBE\u7F6E" title="\u8BBE\u7F6E">${ICONS.settings}</button>
                     </div>
                 </header>
-                <main class="hero">
-                    <dashboard-header></dashboard-header>
-                    <search-pill></search-pill>
+                <main class="home-main">
+                    <div class="hero">
+                        <dashboard-header></dashboard-header>
+                        <search-pill></search-pill>
+                    </div>
+                    <bookmark-board></bookmark-board>
                 </main>
-                <home-dock></home-dock>
                 <wallpaper-badge></wallpaper-badge>
             </div>
             <spotlight-search></spotlight-search>
-            <bookmark-launchpad></bookmark-launchpad>
             <settings-panel></settings-panel>
             <bookmark-dialog></bookmark-dialog>
             <backup-toast></backup-toast>
@@ -4609,15 +4414,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.addEventListener("wallpaper-error", this.onWallpaperError);
           this.addEventListener("wallpaper-tone", this.onWallpaperTone);
           this.addEventListener("open-spotlight", () => this.spotlight?.open());
-          this.addEventListener("open-launchpad", ((event) => {
-            this.launchpad?.open(event.detail?.view ?? "bookmarks");
-          }));
         }
         get spotlight() {
           return this.querySelector("spotlight-search");
-        }
-        get launchpad() {
-          return this.querySelector("bookmark-launchpad");
         }
         get settings() {
           return this.querySelector("settings-panel");
@@ -4682,9 +4481,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         ["status-strip", StatusStrip],
         ["dashboard-header", DashboardHeader],
         ["search-pill", SearchPill],
-        ["home-dock", HomeDock],
+        ["bookmark-board", BookmarkBoard],
         ["spotlight-search", SpotlightSearch],
-        ["bookmark-launchpad", BookmarkLaunchpad],
         ["settings-panel", SettingsPanel],
         ["bookmark-dialog", BookmarkDialog],
         ["backup-toast", BackupToast],

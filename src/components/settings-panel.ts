@@ -120,14 +120,13 @@ export class SettingsPanel extends StoreElement {
             ${group('', `
                 ${toggleRow('showClock', '时间与日期')}
                 ${toggleRow('showSearch', '搜索栏', `关闭后仍可用 ${SHORTCUT_LABEL} 呼出`)}
-                ${toggleRow('showBookmarks', 'Dock')}
+                ${toggleRow('showBookmarks', '书签')}
                 ${toggleRow('showStatus', '状态胶囊', '只在播放媒体、下载或使用电池时出现')}
-                ${toggleRow('showRecent', '常访问网站', '根据本机最近 30 天的浏览记录生成，出现在 Dock、启动台和搜索中')}
+                ${toggleRow('showRecent', '常访问网站', '根据本机最近 30 天的浏览记录生成，出现在书签和搜索中')}
             `)}
-            ${group('Dock', `
-                ${segmentRow('dockSource', '显示的书签', layout.dockSource, [['bookmarks', '固定的书签'], ['recent', '常访问']], '固定的书签就是“全部”里的书签，可在启动台中拖动排序', 'showBookmarks showRecent')}
+            ${group('书签', `
+                ${segmentRow('dockSource', '打开时显示', layout.dockSource, [['bookmarks', '全部'], ['recent', '常访问']], '', 'showBookmarks showRecent')}
                 ${rangeRow('dockSize', '图标大小', layout.dockSize, 40, 72, '', 'showBookmarks')}
-                ${toggleRow('dockMagnify', '悬停放大', '', 'showBookmarks')}
                 ${toggleRow('openInNewTab', '在新标签页打开书签')}
             `)}
             ${group('搜索', `
@@ -230,7 +229,7 @@ export class SettingsPanel extends StoreElement {
                 if (output) output.textContent = `${input.value}${input.dataset.unit ?? ''}`;
                 // Preview live; persisted on release to spare sync write quota.
                 const [selector, property, value] = input.name === 'dockSize'
-                    ? ['home-dock', '--dock-size', `${input.value}px`]
+                    ? ['bookmark-board', '--icon-pref', `${input.value}px`]
                     : input.name === 'blur'
                         ? ['wallpaper-surface', '--wallpaper-blur', `${input.value}px`]
                         : ['wallpaper-surface', '--wallpaper-overlay', String(Number(input.value) / 100)];
@@ -357,7 +356,6 @@ export class SettingsPanel extends StoreElement {
             showBookmarks: layout.showBookmarks,
             showStatus: layout.showStatus,
             showRecent: layout.showRecent,
-            dockMagnify: layout.dockMagnify,
             openInNewTab: layout.openInNewTab,
             saveSearches: layout.saveSearches,
             backupReminder: layout.backupReminder,

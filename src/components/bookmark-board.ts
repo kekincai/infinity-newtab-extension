@@ -1,6 +1,6 @@
 import { loadRecentSites } from '../core/history';
 import { appStore } from '../core/store';
-import type { Bookmark, RecentSite } from '../core/types';
+import type { Bookmark, BookmarkView, RecentSite } from '../core/types';
 import { escapeHtml } from '../core/utils';
 import { StoreElement } from './base';
 import {
@@ -8,7 +8,6 @@ import {
     bookmarkMenu,
     bookmarkName,
     bookmarksIn,
-    compareBookmarks,
     createFolder,
     deleteFolder,
     findBookmark,
@@ -20,127 +19,81 @@ import {
 } from './bookmark-actions';
 import { ICONS } from './icons';
 import { bindSiteIcons, hostOf, siteIcon } from './site-icon';
-import { afterMotion, openMenu, pushLayer } from './ui-layer';
+import { openMenu } from './ui-layer';
 
-export type LaunchpadView = 'bookmarks' | 'recent';
-
-/** Full-screen launchpad over the blurred wallpaper: folders as tabs, bookmarks as app icons. */
-export class BookmarkLaunchpad extends StoreElement {
+/** The home screen's bookmarks: folder tabs over app icons laid straight on the wallpaper. */
+export class BookmarkBoard extends StoreElement {
     protected readonly observedChanges = ['bookmarks', 'folders', 'settings.layout'] as const;
-    private view: LaunchpadView = 'bookmarks';
+    private view: BookmarkView = 'bookmarks';
+    /** The view a new tab opens on. Following it lets a settings change show at once. */
+    private startView: BookmarkView | null = null;
     private folder = ROOT_FOLDER;
-    private query = '';
     private draggingId: Bookmark['id'] | null = null;
     private recent: { sites: RecentSite[]; state: 'idle' | 'loading' | 'ready' | 'error'; error: string } = { sites: [], state: 'idle', error: '' };
-    private releaseLayer: (() => void) | null = null;
-
-    connectedCallback(): void {
-        this.hidden = true;
-        super.connectedCallback();
-    }
+    private readonly resizeObserver = new ResizeObserver(() => this.syncEdges());
 
     disconnectedCallback(): void {
         super.disconnectedCallback();
-        this.close();
-    }
-
-    get isOpen(): boolean {
-        return !this.hidden;
-    }
-
-    open(view: LaunchpadView = 'bookmarks', folder = ROOT_FOLDER): void {
-        this.view = view;
-        this.folder = folder;
-        this.query = '';
-        this.innerHTML = '';
-        if (!this.isOpen) {
-            this.hidden = false;
-            document.body.classList.add('launchpad-open');
-            this.releaseLayer = pushLayer(this, () => this.close());
-        }
-        this.render();
-        afterMotion(this, () => {
-            if (this.isOpen && !this.contains(document.activeElement)) this.querySelector<HTMLElement>('.launchpad-tab.is-active')?.focus({ preventScroll: true });
-        });
-    }
-
-    close(): void {
-        if (!this.isOpen) return;
-        this.hidden = true;
-        document.body.classList.remove('launchpad-open');
-        this.innerHTML = '';
-        const release = this.releaseLayer;
-        this.releaseLayer = null;
-        release?.();
+        this.resizeObserver.disconnect();
     }
 
     protected render(): void {
-        if (!this.isOpen) return;
+        const { showBookmarks, showRecent, dockSource, dockSize } = appStore.state.settings.layout;
+        this.hidden = !showBookmarks;
+        if (this.hidden) return;
+        this.style.setProperty('--icon-pref', `${dockSize}px`);
+        const startView = showRecent ? dockSource : 'bookmarks';
+        if (startView !== this.startView) {
+            this.startView = startView;
+            this.view = startView;
+            this.folder = ROOT_FOLDER;
+        }
         if (!appStore.state.folders.includes(this.folder)) this.folder = ROOT_FOLDER;
-        if (!appStore.state.settings.layout.showRecent) this.view = 'bookmarks';
+        if (!showRecent) this.view = 'bookmarks';
         if (this.view === 'recent' && this.recent.state === 'idle') void this.loadRecent();
-        if (!this.querySelector('.launchpad')) this.renderShell();
-        const grid = this.querySelector<HTMLElement>('.launchpad-grid')!;
+        if (!this.querySelector('.board-grid')) this.renderShell();
+        const grid = this.querySelector<HTMLElement>('.board-grid')!;
         const scroll = grid.scrollTop;
-        this.querySelector('.launchpad-tabs')!.innerHTML = this.tabsTemplate();
-        grid.dataset.view = this.query ? 'search' : this.view;
+        this.querySelector('.board-tabs')!.innerHTML = this.tabsTemplate();
+        grid.dataset.view = this.view;
         grid.innerHTML = this.gridTemplate();
         grid.scrollTop = scroll;
+        this.syncEdges();
         bindSiteIcons(this);
         this.querySelectorAll<HTMLAnchorElement>('.bookmark-tile').forEach((card) => this.bindBookmark(card));
         this.querySelectorAll<HTMLElement>('[data-drop-folder]').forEach((target) => this.bindFolderDrop(target));
     }
 
-    /** The shell (and its search field) is built once per opening so typing, including IME input, is never interrupted. */
     private renderShell(): void {
         this.innerHTML = `
-            <div class="launchpad-backdrop" aria-hidden="true"></div>
-            <section class="launchpad" role="dialog" aria-modal="true" aria-label="启动台">
-                <header class="launchpad-top">
-                    <label class="glass launchpad-search">
-                        ${ICONS.search}
-                        <input type="search" placeholder="在书签中搜索" aria-label="在书签中搜索" autocomplete="off" spellcheck="false">
-                    </label>
-                    <div class="glass launchpad-tabs" role="tablist" aria-label="书签分组"></div>
-                </header>
-                <button class="glass launchpad-done" type="button" data-liquid-item>完成</button>
-                <div class="launchpad-grid"></div>
-            </section>`;
+            <div class="glass board-tabs" role="tablist" aria-label="书签分组"></div>
+            <div class="board-grid"></div>`;
         this.bindShell();
     }
 
     private tabsTemplate(): string {
-        const { bookmarks, folders } = appStore.state;
+        const { folders } = appStore.state;
         const tab = (label: string, active: boolean, attributes: string) => `
-            <button class="launchpad-tab ${active ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active}" tabindex="${active ? 0 : -1}" data-liquid-item ${attributes}>${label}</button>`;
-        const browsing = !this.query;
+            <button class="board-tab ${active ? 'is-active' : ''}" type="button" role="tab" aria-selected="${active}" tabindex="${active ? 0 : -1}" data-liquid-item ${attributes}>${label}</button>`;
         return `
-                ${tab(`全部 · ${bookmarks.length}`, browsing && this.view === 'bookmarks' && this.folder === ROOT_FOLDER, `data-folder="${ROOT_FOLDER}" data-drop-folder="${ROOT_FOLDER}"`)}
-                ${appStore.state.settings.layout.showRecent ? tab('常访问', browsing && this.view === 'recent', 'data-view="recent"') : ''}
+                ${tab(ROOT_FOLDER, this.view === 'bookmarks' && this.folder === ROOT_FOLDER, `data-folder="${ROOT_FOLDER}" data-drop-folder="${ROOT_FOLDER}"`)}
+                ${appStore.state.settings.layout.showRecent ? tab('常访问', this.view === 'recent', 'data-view="recent"') : ''}
                 ${folders.filter((folder) => folder !== ROOT_FOLDER).map((folder) => tab(
                     escapeHtml(folder),
-                    browsing && this.view === 'bookmarks' && this.folder === folder,
+                    this.view === 'bookmarks' && this.folder === folder,
                     `data-folder="${escapeHtml(folder)}" data-drop-folder="${escapeHtml(folder)}"`
                 )).join('')}
-                <button class="launchpad-tab create-folder" type="button" data-liquid-item aria-label="新建文件夹" title="新建文件夹">${ICONS.plus}</button>`;
+                <button class="board-tab create-folder" type="button" data-liquid-item aria-label="新建文件夹" title="新建文件夹">${ICONS.plus}</button>`;
     }
 
     private gridTemplate(): string {
-        if (this.query) {
-            const query = this.query.toLowerCase();
-            const matches = [...appStore.state.bookmarks].sort(compareBookmarks).filter((bookmark) => (
-                bookmarkName(bookmark).toLowerCase().includes(query) || bookmark.url.toLowerCase().includes(query)
-            ));
-            return matches.map((bookmark) => this.bookmarkTemplate(bookmark)).join('')
-                || `<p class="launchpad-message">没有找到“${escapeHtml(this.query)}”</p>`;
-        }
         if (this.view === 'recent') return this.recentTemplate();
         const folders = this.folder === ROOT_FOLDER
             ? appStore.state.folders.filter((folder) => folder !== ROOT_FOLDER).map((folder) => this.folderTemplate(folder)).join('')
             : '';
         const bookmarks = bookmarksIn(this.folder);
         const empty = !bookmarks.length && !folders
-            ? `<p class="launchpad-message">${this.folder === ROOT_FOLDER ? '还没有书签，点击加号添加第一个' : '这个文件夹是空的，可以把书签拖到上方的文件夹标签上'}</p>`
+            ? `<p class="board-message">${this.folder === ROOT_FOLDER ? '还没有书签，点加号添加第一个' : '这个文件夹是空的，可以把书签拖到上方的标签上'}</p>`
             : '';
         return `
             ${folders}
@@ -175,9 +128,9 @@ export class BookmarkLaunchpad extends StoreElement {
     }
 
     private recentTemplate(): string {
-        if (this.recent.state === 'loading' || this.recent.state === 'idle') return '<p class="launchpad-message">正在整理浏览记录…</p>';
-        if (this.recent.state === 'error') return `<p class="launchpad-message">${escapeHtml(this.recent.error)}</p>`;
-        if (!this.recent.sites.length) return '<p class="launchpad-message">最近 30 天还没有可展示的网站</p>';
+        if (this.recent.state === 'loading' || this.recent.state === 'idle') return '<p class="board-message">正在整理浏览记录…</p>';
+        if (this.recent.state === 'error') return `<p class="board-message">${escapeHtml(this.recent.error)}</p>`;
+        if (!this.recent.sites.length) return '<p class="board-message">最近 30 天还没有可展示的网站</p>';
         const newTab = appStore.state.settings.layout.openInNewTab;
         return this.recent.sites.map((site, index) => `
             <a class="tile recent-tile" href="${escapeHtml(site.url)}" ${newTab ? 'target="_blank"' : ''} rel="noopener noreferrer" data-recent-index="${index}" data-liquid-item title="${escapeHtml(hostOf(site.url))}">
@@ -187,22 +140,9 @@ export class BookmarkLaunchpad extends StoreElement {
     }
 
     private bindShell(): void {
-        this.querySelector('.launchpad-done')?.addEventListener('click', () => this.close());
-        this.querySelector('.launchpad-backdrop')?.addEventListener('click', () => this.close());
-        // Like Launchpad: a click on empty space closes it.
-        this.querySelector('.launchpad')?.addEventListener('click', (event) => {
-            if ((event.target as HTMLElement).matches('.launchpad, .launchpad-top')) this.close();
-        });
-
-        const search = this.querySelector<HTMLInputElement>('.launchpad-search input')!;
-        search.addEventListener('input', () => {
-            this.query = search.value.trim();
-            this.render();
-        });
-
-        const tabs = this.querySelector<HTMLElement>('.launchpad-tabs')!;
+        const tabs = this.querySelector<HTMLElement>('.board-tabs')!;
         tabs.addEventListener('click', (event) => {
-            const button = (event.target as HTMLElement).closest<HTMLButtonElement>('.launchpad-tab');
+            const button = (event.target as HTMLElement).closest<HTMLButtonElement>('.board-tab');
             if (!button) return;
             if (button.classList.contains('create-folder')) void createFolder();
             else if (button.dataset.view === 'recent') this.show('recent', ROOT_FOLDER);
@@ -210,20 +150,18 @@ export class BookmarkLaunchpad extends StoreElement {
         });
         tabs.addEventListener('keydown', (event) => {
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-            const items = [...tabs.querySelectorAll<HTMLButtonElement>('.launchpad-tab')];
+            const items = [...tabs.querySelectorAll<HTMLButtonElement>('.board-tab')];
             const index = items.indexOf(document.activeElement as HTMLButtonElement);
             if (index < 0) return;
             event.preventDefault();
             items[(index + (event.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length].focus();
         });
 
-        const grid = this.querySelector<HTMLElement>('.launchpad-grid')!;
+        const grid = this.querySelector<HTMLElement>('.board-grid')!;
+        grid.addEventListener('scroll', this.syncEdges, { passive: true });
+        this.resizeObserver.observe(grid);
         grid.addEventListener('click', (event) => {
             const target = event.target as HTMLElement;
-            if (target === grid) {
-                this.close();
-                return;
-            }
             const more = target.closest<HTMLElement>('.tile-more');
             if (more) {
                 event.preventDefault();
@@ -242,16 +180,16 @@ export class BookmarkLaunchpad extends StoreElement {
             const id = this.dragId(event);
             if (id !== null) void moveBookmark(id, this.folder);
         });
-        this.querySelector('.launchpad')?.addEventListener('contextmenu', (event) => {
+        this.addEventListener('contextmenu', (event) => {
             const mouse = event as MouseEvent;
             const target = mouse.target as HTMLElement;
-            const tile = target.closest<HTMLElement>('.tile:not(.add-tile), .launchpad-tab[data-folder]');
-            if (!tile && !target.closest('.launchpad-grid')) return;
+            const tile = target.closest<HTMLElement>('.tile:not(.add-tile), .board-tab[data-folder]');
+            if (!tile && !target.closest('.board-grid')) return;
             event.preventDefault();
             // Keyboard-triggered menus (Shift+F10 / Menu key) report 0,0; anchor to the tile instead.
             const at = mouse.clientX || mouse.clientY ? { x: mouse.clientX, y: mouse.clientY } : (tile ?? target);
             if (tile) this.openTileMenu(tile, at);
-            else if (this.view === 'bookmarks' && !this.query) openMenu([
+            else if (this.view === 'bookmarks') openMenu([
                 { label: '添加书签', icon: ICONS.plus, action: () => openBookmarkDialog(this, { folder: this.folder }) },
                 { label: '新建文件夹', icon: ICONS.folderPlus, action: () => void createFolder() }
             ], at);
@@ -328,16 +266,23 @@ export class BookmarkLaunchpad extends StoreElement {
         if (bookmark) bookmarkMenu(this, bookmark, at);
     }
 
-    private show(view: LaunchpadView, folder: string): void {
-        if (view === this.view && folder === this.folder && !this.query) return;
+    private show(view: BookmarkView, folder: string): void {
+        if (view === this.view && folder === this.folder) return;
         this.view = view;
         this.folder = folder;
-        this.query = '';
-        const search = this.querySelector<HTMLInputElement>('.launchpad-search input');
-        if (search) search.value = '';
         this.render();
-        this.querySelector<HTMLElement>('.launchpad-tab.is-active')?.focus({ preventScroll: true });
+        this.querySelector<HTMLElement>('.board-grid')!.scrollTop = 0;
+        this.syncEdges();
+        this.querySelector<HTMLElement>('.board-tab.is-active')?.focus({ preventScroll: true });
     }
+
+    /** Fades only the edges that have rows scrolled past them. */
+    private readonly syncEdges = (): void => {
+        const grid = this.querySelector<HTMLElement>('.board-grid');
+        if (!grid) return;
+        grid.classList.toggle('can-scroll-up', grid.scrollTop > 1);
+        grid.classList.toggle('can-scroll-down', grid.scrollTop + grid.clientHeight < grid.scrollHeight - 1);
+    };
 
     private async loadRecent(): Promise<void> {
         this.recent = { ...this.recent, state: 'loading', error: '' };

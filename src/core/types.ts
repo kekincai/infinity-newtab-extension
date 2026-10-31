@@ -4,21 +4,23 @@ export type WallpaperType = 'gradient' | 'preset' | 'local' | 'video';
 export type Theme = 'auto' | 'light' | 'dark';
 export type ResolvedTheme = Exclude<Theme, 'auto'>;
 
-export type DockSource = 'bookmarks' | 'recent';
+/** What the home screen's bookmark grid shows: a folder of bookmarks or the most visited sites. */
+export type BookmarkView = 'bookmarks' | 'recent';
 export type GlassMaterial = 'clear' | 'tinted';
 
 export interface LayoutSettings {
     showClock: boolean;
     showSearch: boolean;
-    /** Shows the Dock; the key predates the Dock and is kept for old backups. */
+    /** Shows the bookmark grid on the home screen. */
     showBookmarks: boolean;
     showStatus: boolean;
     showRecent: boolean;
     openInNewTab: boolean;
     searchEngine: SearchEngineKey;
-    dockSource: DockSource;
+    /** The view the bookmark grid opens on; named after the old Dock and kept for existing backups. */
+    dockSource: BookmarkView;
+    /** Bookmark icon size in px; same history as `dockSource`. */
     dockSize: number;
-    dockMagnify: boolean;
     saveSearches: boolean;
     backupReminder: boolean;
 }

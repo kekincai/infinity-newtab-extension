@@ -14,8 +14,8 @@ export class SearchPill extends StoreElement {
             <button class="glass search-pill" type="button" data-liquid-item aria-label="搜索或输入网址" aria-keyshortcuts="${SHORTCUT_LABEL === '⌘K' ? 'Meta+K' : 'Control+K'} /">
                 ${ICONS.search}
                 <span class="search-pill-text">搜索或输入网址</span>
-                <span class="pill-chip">${ENGINES[searchEngine].label}</span>
-                <span class="pill-chip">${SHORTCUT_LABEL}</span>
+                <span class="search-pill-engine">${ENGINES[searchEngine].label}</span>
+                <kbd>${SHORTCUT_LABEL}</kbd>
             </button>`;
         this.querySelector('button')?.addEventListener('click', () => {
             this.dispatchEvent(new CustomEvent('open-spotlight', { bubbles: true, composed: true }));
