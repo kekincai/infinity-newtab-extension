@@ -122,11 +122,9 @@ export class SettingsPanel extends StoreElement {
                 ${toggleRow('showSearch', '搜索栏', `关闭后仍可用 ${SHORTCUT_LABEL} 呼出`)}
                 ${toggleRow('showBookmarks', '书签')}
                 ${toggleRow('showStatus', '状态胶囊', '只在播放媒体、下载或使用电池时出现')}
-                ${toggleRow('showRecent', '常访问网站', '根据本机最近 30 天的浏览记录生成，出现在书签和搜索中')}
             `)}
             ${group('书签', `
-                ${segmentRow('dockSource', '打开时显示', layout.dockSource, [['bookmarks', '全部'], ['recent', '常访问']], '', 'showBookmarks showRecent')}
-                ${rangeRow('dockSize', '图标大小', layout.dockSize, 40, 72, '', 'showBookmarks')}
+                ${toggleRow('showRecent', '常访问网站', '根据本机最近 30 天的浏览记录生成，排在书签最后，也出现在搜索中')}
                 ${toggleRow('openInNewTab', '在新标签页打开书签')}
             `)}
             ${group('搜索', `
@@ -228,16 +226,13 @@ export class SettingsPanel extends StoreElement {
                 const output = input.closest('.setting-row')?.querySelector('output');
                 if (output) output.textContent = `${input.value}${input.dataset.unit ?? ''}`;
                 // Preview live; persisted on release to spare sync write quota.
-                const [selector, property, value] = input.name === 'dockSize'
-                    ? ['bookmark-board', '--icon-pref', `${input.value}px`]
-                    : input.name === 'blur'
-                        ? ['wallpaper-surface', '--wallpaper-blur', `${input.value}px`]
-                        : ['wallpaper-surface', '--wallpaper-overlay', String(Number(input.value) / 100)];
-                document.querySelector<HTMLElement>(selector)?.style.setProperty(property, value);
+                const [property, value] = input.name === 'blur'
+                    ? ['--wallpaper-blur', `${input.value}px`]
+                    : ['--wallpaper-overlay', String(Number(input.value) / 100)];
+                document.querySelector<HTMLElement>('wallpaper-surface')?.style.setProperty(property, value);
             });
             input.addEventListener('change', () => {
-                const section = input.name === 'dockSize' ? 'layout' : 'wallpaper';
-                void appStore.updateSettings(section, { [input.name]: Number(input.value) }).catch(notifyError);
+                void appStore.updateSettings('wallpaper', { [input.name]: Number(input.value) }).catch(notifyError);
             });
         });
         const upload = this.querySelector<HTMLInputElement>('.upload-wallpaper input')!;
@@ -332,7 +327,6 @@ export class SettingsPanel extends StoreElement {
             glass: appearance.glass,
             clockFormat: appearance.clockFormat,
             dateFormat: appearance.dateFormat,
-            dockSource: layout.dockSource,
             searchEngine: layout.searchEngine,
             wallpaperKind: wallpaperKind(wallpaper)
         };
@@ -372,7 +366,7 @@ export class SettingsPanel extends StoreElement {
             row.classList.toggle('is-disabled', (row.dataset.depends ?? '').split(' ').some((name) => !toggles[name]));
         });
 
-        const ranges: Record<string, number> = { blur: wallpaper.blur, overlay: wallpaper.overlay, dockSize: layout.dockSize };
+        const ranges: Record<string, number> = { blur: wallpaper.blur, overlay: wallpaper.overlay };
         this.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach((input) => {
             const value = ranges[input.name];
             if (!Number.isFinite(value) || Number(input.value) === value) return;
@@ -404,7 +398,6 @@ export class SettingsPanel extends StoreElement {
             else if (name === 'glass') await appStore.updateSettings('appearance', { glass: value as AppSettings['appearance']['glass'] });
             else if (name === 'clockFormat') await appStore.updateSettings('appearance', { clockFormat: value as '12h' | '24h' });
             else if (name === 'dateFormat') await appStore.updateSettings('appearance', { dateFormat: value as 'long' | 'short' });
-            else if (name === 'dockSource') await appStore.updateSettings('layout', { dockSource: value as AppSettings['layout']['dockSource'] });
             else if (name === 'searchEngine') await appStore.updateSettings('layout', { searchEngine: value as AppSettings['layout']['searchEngine'] });
             else if (name === 'wallpaperKind') this.pickWallpaper(value);
         } catch (error) { notifyError(error); }

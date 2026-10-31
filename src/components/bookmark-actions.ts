@@ -6,6 +6,11 @@ import { confirmAction, notifyError, openMenu, promptText } from './ui-layer';
 
 export const ROOT_FOLDER = '全部';
 
+/** Bookmarks outside any folder are stored under “全部” for old backups but shown as their own group. */
+export function folderLabel(folder: string): string {
+    return folder === ROOT_FOLDER ? '书签' : folder;
+}
+
 type MenuAnchor = { x: number; y: number } | HTMLElement;
 
 export function findBookmark(id: string): Bookmark | undefined {
@@ -47,7 +52,7 @@ export function bookmarkMenu(source: HTMLElement, bookmark: Bookmark, at: MenuAn
         ...(destinations.length ? [
             { separator: true } as const,
             { heading: '移动到文件夹' } as const,
-            ...destinations.map((folder) => ({ label: folder, icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder) }))
+            ...destinations.map((folder) => ({ label: folderLabel(folder), icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder) }))
         ] : []),
         { separator: true },
         { label: '删除书签', icon: ICONS.trash, danger: true, action: () => void deleteBookmark(bookmark) }
@@ -103,7 +108,7 @@ export async function deleteFolder(folder: string): Promise<boolean> {
     const count = bookmarksIn(folder).length;
     const confirmed = await confirmAction({
         title: `删除文件夹“${folder}”？`,
-        body: count ? `其中的 ${count} 个书签会移回“${ROOT_FOLDER}”，不会被删除。` : '这个文件夹是空的。',
+        body: count ? `其中的 ${count} 个书签会移到“${folderLabel(ROOT_FOLDER)}”，不会被删除。` : '这个文件夹是空的。',
         confirmText: '删除',
         danger: true
     });

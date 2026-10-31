@@ -1,6 +1,6 @@
 /* ==========================================================================
    Infinity New Tab
-   Tokens -> base -> glass -> wallpaper -> home (top bar, hero, bookmarks)
+   Tokens -> base -> glass -> wallpaper -> home (top bar, clock, bookmark index)
    -> Spotlight -> settings -> overlays
    -> Liquid Glass (verbatim) -> responsive -> motion
    ========================================================================== */
@@ -40,7 +40,8 @@ body.theme-dark {
     --danger-ink: #ff9d96;
     --focus: rgba(255, 255, 255, 0.9);
     --hero-shadow: 0 2px 40px rgba(30, 10, 60, 0.22);
-    --label-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+    --label-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 12px rgba(0, 0, 0, 0.28);
+    --scrim: rgba(6, 8, 20, 0.5);
     --specular-line: rgba(255, 255, 255, 0.68);
     --specular-bloom: rgba(255, 255, 255, 0.48);
     --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", "Microsoft YaHei", sans-serif;
@@ -70,7 +71,8 @@ body.theme-light {
     --danger-ink: #d70015;
     --focus: #0a84ff;
     --hero-shadow: 0 1px 24px rgba(255, 255, 255, 0.55);
-    --label-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+    --label-shadow: 0 0 8px rgba(255, 255, 255, 0.85);
+    --scrim: rgba(255, 255, 255, 0.62);
 }
 
 html,
@@ -392,23 +394,6 @@ body.theme-light .glass {
     display: block;
 }
 
-.app-icon-glass {
-    background: rgba(255, 255, 255, 0.18);
-    color: var(--fg);
-    box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.55), inset 0 0 0 0.5px rgba(255, 255, 255, 0.3), 0 0.08em 0.2em rgba(0, 0, 0, 0.16);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-}
-
-body.theme-light .app-icon-glass {
-    background: rgba(255, 255, 255, 0.5);
-}
-
-.app-icon-glass > .icon {
-    width: 0.42em;
-    height: 0.42em;
-}
-
 /* ---- Wallpaper ---------------------------------------------------------- */
 
 wallpaper-surface {
@@ -475,9 +460,15 @@ wallpaper-surface.is-paused .scene * {
 .home {
     position: relative;
     z-index: 1;
+    display: flex;
     height: 100vh;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 32px;
+    padding: 48px 56px 32px;
 }
 
+/* Status capsules and the two buttons share the top-right corner, clear of the clock. */
 .top-bar {
     position: absolute;
     z-index: 2;
@@ -486,8 +477,8 @@ wallpaper-surface.is-paused .scene * {
     left: 24px;
     display: flex;
     align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
+    justify-content: flex-end;
+    gap: 8px;
     pointer-events: none;
 }
 
@@ -495,17 +486,17 @@ wallpaper-surface.is-paused .scene * {
     pointer-events: auto;
 }
 
-.top-actions {
-    display: flex;
-    gap: 10px;
-    margin-left: auto;
+.top-bar .round-button {
+    width: 36px;
+    height: 36px;
 }
 
 status-strip {
     display: flex;
     min-width: 0;
     flex-wrap: wrap;
-    gap: 10px;
+    justify-content: flex-end;
+    gap: 8px;
 }
 
 .capsule {
@@ -616,23 +607,15 @@ status-strip {
     height: 17px;
 }
 
-/* One screen: clock and search on top, bookmarks fill the rest. The bottom
-   88px stay clear for the wallpaper caption and the backup reminder. */
-.home-main {
-    display: flex;
-    height: 100%;
-    flex-direction: column;
-    align-items: center;
-    padding: max(72px, 9vh) 24px 88px;
-}
-
+/* Clock and search sit top-left like a caption, the bookmarks run along the
+   bottom, and the middle of the screen is left to the wallpaper. */
 .hero {
     display: flex;
-    width: 100%;
+    max-width: 100%;
     flex: none;
     flex-direction: column;
-    align-items: center;
-    text-align: center;
+    align-items: flex-start;
+    align-self: flex-start;
 }
 
 dashboard-header {
@@ -641,57 +624,51 @@ dashboard-header {
 
 .hero-date {
     color: var(--fg);
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 500;
-    letter-spacing: 0.01em;
     opacity: 0.92;
-    text-shadow: var(--hero-shadow);
+    text-shadow: var(--label-shadow);
 }
 
 .hero-time {
     display: block;
     margin-top: 4px;
     color: var(--fg);
-    font-size: clamp(64px, min(9vw, 13vh), 120px);
+    font-size: clamp(56px, min(7vw, 11vh), 96px);
     font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    letter-spacing: -0.03em;
+    font-weight: 500;
+    letter-spacing: -0.04em;
     line-height: 1;
-    opacity: 0.94;
-    text-shadow: var(--hero-shadow);
+    text-shadow: var(--label-shadow), var(--hero-shadow);
 }
 
 search-pill {
-    width: min(560px, 100%);
-    margin-top: 28px;
+    width: 320px;
+    max-width: 100%;
+    margin-top: 20px;
 }
 
 .search-pill {
     display: flex;
     width: 100%;
-    height: 48px;
+    height: 40px;
     align-items: center;
-    gap: 12px;
-    padding: 0 12px 0 20px;
-    border-radius: 999px;
+    gap: 8px;
+    padding: 0 8px 0 12px;
+    border-radius: 12px;
     text-align: left;
 }
 
 .search-pill > .icon {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     stroke-width: 2.2;
 }
 
 .search-pill-text {
     flex: 1;
     color: var(--fg-2);
-    font-size: 16px;
-}
-
-.search-pill-engine {
-    color: var(--fg-3);
-    font-size: 13px;
+    font-size: 14px;
 }
 
 .search-pill kbd {
@@ -701,214 +678,215 @@ search-pill {
 
 /* ---- Bookmarks ---------------------------------------------------------- */
 
-bookmark-board {
-    --icon-size: var(--icon-pref, 64px);
-    --tile-width: calc(var(--icon-size) + 40px);
+.home-footer {
+    position: relative;
+    isolation: isolate;
     display: flex;
-    width: 100%;
-    min-height: 0;
-    flex: 1;
-    flex-direction: column;
-    align-items: center;
-    gap: 24px;
-    margin-top: 40px;
+    align-items: flex-end;
+    gap: 32px;
 }
 
-.board-tabs {
+/* A soft shade under the index keeps small text readable on any picture and fades out above the headings. */
+.home-footer::before {
+    position: absolute;
+    z-index: -1;
+    inset: -120px -56px -32px;
+    background: linear-gradient(to top, var(--scrim), color-mix(in srgb, var(--scrim) 72%, transparent) 55%, transparent);
+    content: "";
+    pointer-events: none;
+}
+
+.home-footer:has(> bookmark-index[hidden])::before {
+    display: none;
+}
+
+bookmark-index {
+    display: block;
+    min-width: 0;
+    flex: 1;
+}
+
+/* Each folder is a group of columns; the component adds rows until the groups fit the width. */
+.index {
+    --rows: 4;
     display: flex;
-    max-width: 100%;
-    flex: none;
-    gap: 2px;
+    gap: 48px;
+    margin: -4px -8px;
     overflow-x: auto;
-    padding: 4px;
-    border-radius: 999px;
+    padding: 4px 8px;
     scrollbar-width: none;
 }
 
-.board-tab {
-    display: grid;
-    height: 32px;
+.index.can-scroll-left,
+.index.can-scroll-right {
+    mask-image: linear-gradient(to right, transparent, #000 var(--fade-left, 0px), #000 calc(100% - var(--fade-right, 0px)), transparent);
+}
+
+.index.can-scroll-left {
+    --fade-left: 40px;
+}
+
+.index.can-scroll-right {
+    --fade-right: 64px;
+}
+
+.index-group {
     flex: none;
-    place-items: center;
-    padding: 0 16px;
-    border-radius: 999px;
-    color: var(--fg-2);
-    font-size: 13px;
-    font-weight: 500;
-    white-space: nowrap;
-    transition: background-color 160ms ease, color 160ms ease;
+    border-radius: 8px;
 }
 
-.board-tab:hover {
-    background: var(--fill-2);
+.index-heading {
+    display: flex;
+    height: 24px;
+    align-items: center;
+    gap: 4px;
+    margin: 0 0 4px;
     color: var(--fg);
+    opacity: 0.8;
+    font-size: 12px;
+    font-weight: 500;
+    text-shadow: var(--label-shadow);
 }
 
-.board-tab.is-active {
-    background: var(--seg-on-bg);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-    color: var(--seg-on-fg);
+.index-title {
+    margin-right: 4px;
+    white-space: nowrap;
 }
 
-.board-tab.create-folder {
-    width: 32px;
-    padding: 0;
+.index-action {
+    display: grid;
+    width: 20px;
+    height: 20px;
+    place-items: center;
+    border-radius: 6px;
+    color: var(--fg-2);
+    opacity: 0;
+    transition: opacity 160ms ease, background-color 160ms ease, color 160ms ease;
 }
 
-.board-tab.create-folder .icon {
+.index-action .icon {
     width: 14px;
     height: 14px;
-    stroke-width: 2.4;
 }
 
-bookmark-board.is-dragging .board-tab[data-drop-folder] {
-    background: var(--fill-2);
+.index-group:hover .index-action,
+.index-group:focus-within .index-action {
+    opacity: 1;
 }
 
-.board-tab.drop-target {
-    background: var(--fill-hover);
-    outline: 2px dashed var(--fg-2);
-    outline-offset: -2px;
+.index-action:hover {
+    background: var(--fill-3);
+    color: var(--fg);
 }
 
-/* Rows stay centred under the search field, eight icons at most, and scroll in
-   place once they run out of room; an edge fades only while rows sit past it. */
-.board-grid {
-    --fade-top: 0px;
-    --fade-bottom: 0px;
+.index-list {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    column-gap: 24px;
+    grid-auto-columns: max-content;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(var(--rows), 28px);
+    list-style: none;
+}
+
+/* The negative margin lets the hover fill reach past the text while the text stays on the heading's edge. */
+.index-link {
     display: flex;
-    width: min(100%, calc(var(--tile-width) * 8 + 16px * 7));
-    min-height: 0;
-    flex: 1;
-    flex-wrap: wrap;
-    align-content: flex-start;
-    justify-content: center;
-    gap: 24px 16px;
-    overflow-y: auto;
-    padding: 8px 0;
-    scroll-padding-top: 8px;
-    scroll-snap-type: y proximity;
-    scrollbar-width: none;
-    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent);
-    mask-image: linear-gradient(to bottom, transparent, #000 var(--fade-top), #000 calc(100% - var(--fade-bottom)), transparent);
-}
-
-.board-grid.can-scroll-up {
-    --fade-top: 32px;
-}
-
-.board-grid.can-scroll-down {
-    --fade-bottom: 56px;
-}
-
-/* The mask cuts glass inside the grid off from the wallpaper, so it takes a
-   steady frosted fill instead of a blur that would have nothing to sample. */
-.board-grid .app-icon-glass {
-    background: rgba(255, 255, 255, 0.22);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-}
-
-.tile {
-    position: relative;
-    display: flex;
-    width: var(--tile-width);
-    flex: none;
-    flex-direction: column;
+    max-width: 176px;
+    height: 28px;
     align-items: center;
     gap: 8px;
-    padding: 4px 0;
-    border-radius: 16px;
+    margin: 0 -8px;
+    padding: 0 8px;
+    border-radius: 8px;
     color: var(--fg);
-    text-align: center;
-    scroll-snap-align: start;
-}
-
-.tile .app-icon {
-    font-size: var(--icon-size);
-    transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.tile:active .app-icon {
-    transform: scale(0.96);
-}
-
-.tile-name {
-    overflow: hidden;
-    max-width: calc(var(--tile-width) - 8px);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
-    text-overflow: ellipsis;
     text-shadow: var(--label-shadow);
+    transition: background-color 160ms ease;
+}
+
+.index-link:hover {
+    background: var(--fill-3);
+}
+
+.index-name {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.tile-more {
-    position: absolute;
-    top: 0;
-    right: calc((var(--tile-width) - var(--icon-size)) / 2 - 8px);
-    display: grid;
-    width: 24px;
-    height: 24px;
-    place-items: center;
-    border-radius: 999px;
-    background: var(--glass-thick-bg);
-    opacity: 0;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    transition: opacity 160ms ease;
+.index-icon.app-icon {
+    border-radius: 4px;
+    box-shadow: none;
+    font-size: 16px;
 }
 
-.tile-more .icon {
+.index-icon.app-icon:not(.is-letter) {
+    background: none;
+}
+
+.index-icon > img {
+    width: 100%;
+    height: 100%;
+}
+
+/* A faint rim keeps dark favicons (GitHub, Vercel) visible on a dark picture. */
+body.theme-dark .index-icon > img {
+    filter: drop-shadow(0 0 0.5px rgba(255, 255, 255, 0.6));
+}
+
+.index-icon .app-letter {
+    font-size: 0.62em;
+}
+
+.index-first .icon {
     width: 16px;
     height: 16px;
 }
 
-.tile:hover .tile-more,
-.tile:focus-visible .tile-more {
-    opacity: 1;
+.index-note {
+    display: flex;
+    height: 28px;
+    align-items: center;
+    color: var(--fg-3);
+    font-size: 13px;
+    text-shadow: var(--label-shadow);
+    white-space: nowrap;
 }
 
-/* Sized in em of the folder icon, so the 2×2 preview follows the icon size setting. */
-.folder-icon {
-    display: grid;
-    grid-template-columns: repeat(2, 0.32em);
-    grid-auto-rows: 0.32em;
-    gap: 0.09em;
-    place-content: center;
-}
-
-.folder-icon .mini-icon.app-icon {
-    border-radius: 0.28em;
-    box-shadow: none;
-    font-size: 0.32em;
-}
-
-.tile.is-dragging {
+.index-link.is-dragging {
     opacity: 0.4;
 }
 
-.tile.drop-target .app-icon {
-    outline: 2px solid var(--fg);
-    outline-offset: 4px;
+/* Dropping on a bookmark puts the dragged one above it. */
+.index-link.drop-target {
+    background: var(--fill-3);
+    box-shadow: inset 0 2px 0 var(--fg);
 }
 
-.board-message {
-    width: 100%;
-    padding-top: 16px;
-    color: var(--fg-2);
-    font-size: 14px;
-    text-align: center;
-    text-shadow: var(--label-shadow);
+.index-group.drop-target {
+    outline: 1.5px dashed var(--fg-2);
+    outline-offset: 2px;
+}
+
+.index-group.drop-target .index-heading {
+    color: var(--fg);
 }
 
 wallpaper-badge {
-    position: absolute;
-    right: 24px;
-    bottom: 30px;
     display: flex;
+    flex: none;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    margin-left: auto;
+}
+
+wallpaper-badge .round-button {
+    width: 32px;
+    height: 32px;
 }
 
 .wallpaper-label {
@@ -921,8 +899,7 @@ wallpaper-badge {
 /* Idle: only the clock stays. Spotlight takes over the screen the same way. */
 .top-bar,
 search-pill,
-bookmark-board,
-wallpaper-badge {
+.home-footer {
     transition: opacity 600ms ease, transform 600ms ease;
 }
 
@@ -932,19 +909,17 @@ body.is-idle {
 
 body.is-idle .top-bar,
 body.is-idle search-pill,
-body.is-idle bookmark-board,
-body.is-idle wallpaper-badge,
+body.is-idle .home-footer,
 body.is-idle backup-toast,
 body.spotlight-open .top-bar,
 body.spotlight-open search-pill,
-body.spotlight-open bookmark-board,
-body.spotlight-open wallpaper-badge,
+body.spotlight-open .home-footer,
 body.spotlight-open backup-toast {
     opacity: 0;
     pointer-events: none;
 }
 
-body.is-idle bookmark-board {
+body.is-idle .home-footer {
     transform: translateY(12px);
 }
 
@@ -1822,11 +1797,12 @@ label.setting-row {
     transition: opacity 200ms ease, transform 200ms ease;
 }
 
+/* Top-right under the buttons, clear of the clock and the bookmarks. */
 backup-toast {
     position: fixed;
     z-index: 2400;
-    bottom: 24px;
-    left: 24px;
+    top: 68px;
+    right: 24px;
     display: block;
     max-width: min(420px, calc(100vw - 48px));
     transition: opacity 600ms ease;
@@ -2242,24 +2218,18 @@ liquid-glass-system {
         display: none;
     }
 
-    .home-main {
-        padding: 64px 16px 88px;
+    .home {
+        padding: 64px 16px 16px;
     }
 
-    bookmark-board {
-        --icon-size: min(var(--icon-pref, 64px), 52px);
-        --tile-width: calc(var(--icon-size) + 24px);
-        gap: 16px;
-        margin-top: 32px;
+    .home-footer::before {
+        inset: -96px -16px -16px;
     }
 
-    .board-grid {
-        gap: 20px 8px;
-    }
-
-    /* Leaves the wallpaper pause button uncovered. */
     backup-toast {
-        right: 72px;
+        top: auto;
+        right: 16px;
+        bottom: 16px;
         left: 16px;
         max-width: none;
     }
@@ -2274,16 +2244,12 @@ liquid-glass-system {
 }
 
 @media (max-height: 620px) {
-    .home-main {
-        padding-top: 56px;
+    .home {
+        padding-top: 32px;
     }
 
     search-pill {
-        margin-top: 16px;
-    }
-
-    bookmark-board {
-        margin-top: 24px;
+        margin-top: 12px;
     }
 }
 
@@ -2293,7 +2259,7 @@ liquid-glass-system {
     animation: rise-in 480ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
-.enhanced-animations bookmark-board {
+.enhanced-animations .home-footer {
     animation: rise-in 480ms 60ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 

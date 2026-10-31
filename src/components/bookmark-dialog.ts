@@ -1,6 +1,7 @@
 import { appStore } from '../core/store';
 import type { Bookmark } from '../core/types';
 import { DEFAULT_ICON, escapeHtml, faviconUrl, normalizeUrl, sanitizeRemoteUrl } from '../core/utils';
+import { ROOT_FOLDER, folderLabel } from './bookmark-actions';
 import { ICONS } from './icons';
 import { notifyError, pushLayer } from './ui-layer';
 
@@ -24,7 +25,7 @@ export class BookmarkDialog extends HTMLElement {
         this.open(event.detail);
     };
 
-    private open({ bookmark, folder = '全部', draft }: DialogDetail): void {
+    private open({ bookmark, folder = ROOT_FOLDER, draft }: DialogDetail): void {
         this.close();
         const selected = bookmark?.folder ?? folder;
         const title = bookmark ? '编辑书签' : '添加书签';
@@ -48,7 +49,7 @@ export class BookmarkDialog extends HTMLElement {
                     </label>
                     <label class="field">
                         <span>文件夹</span>
-                        <span class="select-wrap"><select name="folder">${appStore.state.folders.map((item) => `<option value="${escapeHtml(item)}" ${item === selected ? 'selected' : ''}>${escapeHtml(item)}</option>`).join('')}</select></span>
+                        <span class="select-wrap"><select name="folder">${appStore.state.folders.map((item) => `<option value="${escapeHtml(item)}" ${item === selected ? 'selected' : ''}>${escapeHtml(folderLabel(item))}</option>`).join('')}</select></span>
                     </label>
                     <details class="field-advanced" ${bookmark?.icon ? 'open' : ''}>
                         <summary>自定义图标</summary>
@@ -94,7 +95,7 @@ export class BookmarkDialog extends HTMLElement {
             const input = {
                 url: String(data.get('url') ?? ''),
                 name: String(data.get('name') ?? ''),
-                folder: String(data.get('folder') ?? '全部'),
+                folder: String(data.get('folder') ?? ROOT_FOLDER),
                 icon: String(data.get('icon') ?? '').trim()
             };
             if (!normalizeUrl(input.url)) {
