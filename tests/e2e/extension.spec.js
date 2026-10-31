@@ -97,114 +97,27 @@ async function openExtension(page, seed = initialData, options = {}) {
     return errors;
 }
 
-async function centerOf(locator) {
-    const box = await locator.boundingBox();
-    expect(box).not.toBeNull();
-    return { x: box.x + box.width / 2, y: box.y + box.height / 2, box };
+/** Reports an emulated HDR screen so the WebGPU rim layer starts on an SDR test display. */
+async function emulateHdrScreen(page) {
+    await page.addInitScript(() => {
+        const original = window.matchMedia.bind(window);
+        window.matchMedia = (query) => original(query.includes('dynamic-range: high') ? '(min-width: 0px)' : query);
+    });
 }
 
-async function inspectArticleFilter(page, locator) {
-    await locator.hover();
-    const lens = page.locator('.liquid-glass-lens');
-    await expect(lens).toHaveClass(/is-visible/);
-    await expect.poll(() => lens.getAttribute('data-liquid-filter-id')).toBeTruthy();
-    const info = await page.evaluate(() => {
-        const lens = document.querySelector('.liquid-glass-lens');
-        const id = lens?.dataset.liquidFilterId;
-        const filter = id ? document.getElementById(id) : null;
-        const rect = lens?.getBoundingClientRect();
-        const magnifying = filter?.querySelector('feImage[data-optical-map="magnifying"]');
-        const displacement = filter?.querySelector('feImage[data-optical-map="displacement"]');
-        const specular = filter?.querySelector('feImage[data-optical-map="specular"]');
-        const scales = [...(filter?.querySelectorAll('feDisplacementMap') || [])].map((node) => Number(node.getAttribute('scale')));
-        const maximum = Number(filter?.dataset.maximumDisplacement || 0);
+async function glassFilter(locator) {
+    return locator.evaluate((element) => {
+        const filter = document.getElementById(element.dataset.glassFilter || '');
         return {
-            id,
-            width: Math.round(rect?.width || 0),
-            height: Math.round(rect?.height || 0),
-            backdrop: lens ? getComputedStyle(lens).backdropFilter : '',
-            lensText: lens?.textContent,
-            lensChildren: lens?.children.length,
-            magnifyingWidth: Number(magnifying?.getAttribute('width')),
-            magnifyingHeight: Number(magnifying?.getAttribute('height')),
-            magnifyingHref: magnifying?.getAttribute('href'),
-            displacementWidth: Number(displacement?.getAttribute('width')),
-            displacementHeight: Number(displacement?.getAttribute('height')),
-            displacementHref: displacement?.getAttribute('href'),
-            specularWidth: Number(specular?.getAttribute('width')),
-            specularHeight: Number(specular?.getAttribute('height')),
-            specularHref: specular?.getAttribute('href'),
-            compositeCount: filter?.querySelectorAll('feComposite').length,
-            transferCount: filter?.querySelectorAll('feComponentTransfer').length,
-            blendCount: filter?.querySelectorAll('feBlend').length,
-            nodeOrder: filter ? [...filter.children].map((node) => node.tagName.toLowerCase()) : [],
-            xChannel: filter?.querySelector('feDisplacementMap')?.getAttribute('xChannelSelector'),
-            yChannel: filter?.querySelector('feDisplacementMap')?.getAttribute('yChannelSelector'),
-            blur: filter?.querySelector('feGaussianBlur')?.getAttribute('stdDeviation'),
-            saturation: filter?.querySelector('feColorMatrix')?.getAttribute('values'),
-            specularOpacity: filter?.querySelector('feFuncA')?.getAttribute('slope'),
-            scales,
-            maximum
+            id: element.dataset.glassFilter,
+            backdrop: getComputedStyle(element).backdropFilter,
+            width: element.offsetWidth,
+            mapWidth: Number(filter?.querySelector('feImage')?.getAttribute('width')),
+            mapHeight: Number(filter?.querySelector('feImage')?.getAttribute('height')),
+            height: element.offsetHeight,
+            bend: Number(filter?.querySelector('feDisplacementMap')?.getAttribute('scale'))
         };
     });
-    expect(info.id).toBeTruthy();
-    expect(info.backdrop).toContain(info.id);
-    expect(info.lensText).toBe('');
-    expect(info.lensChildren).toBe(0);
-    expect(info.magnifyingWidth).toBe(info.width);
-    expect(info.magnifyingHeight).toBe(info.height);
-    expect(info.magnifyingHref).toMatch(/^data:image\/png;base64,/);
-    expect(info.displacementWidth).toBe(info.width);
-    expect(info.displacementHeight).toBe(info.height);
-    expect(info.specularWidth).toBe(info.width);
-    expect(info.specularHeight).toBe(info.height);
-    expect(info.displacementHref).toMatch(/^data:image\/png;base64,/);
-    expect(info.specularHref).toMatch(/^data:image\/png;base64,/);
-    expect(info.compositeCount).toBe(1);
-    expect(info.transferCount).toBe(1);
-    expect(info.blendCount).toBe(2);
-    expect(info.nodeOrder).toEqual([
-        'feimage',
-        'fedisplacementmap',
-        'fegaussianblur',
-        'feimage',
-        'fedisplacementmap',
-        'fecolormatrix',
-        'feimage',
-        'fecomposite',
-        'fecomponenttransfer',
-        'feblend',
-        'feblend'
-    ]);
-    expect(info.xChannel).toBe('R');
-    expect(info.yChannel).toBe('G');
-    expect(Number(info.blur)).toBeCloseTo(0, 2);
-    expect(Number(info.saturation)).toBeCloseTo(9, 2);
-    expect(Number(info.specularOpacity)).toBeCloseTo(0.5, 2);
-    expect(info.maximum).toBeGreaterThan(30);
-    expect(info.scales[0]).toBe(24);
-    expect(info.scales[1] / info.maximum).toBeCloseTo(1, 2);
-    return info;
-}
-
-async function expectRenderedRefraction(page, locator) {
-    await locator.hover();
-    const lens = page.locator('.liquid-glass-lens');
-    await expect(lens).toHaveClass(/is-visible/);
-    await expect.poll(() => lens.getAttribute('data-liquid-filter-id')).toBeTruthy();
-    const displacement = page.locator('.liquid-filter-defs feDisplacementMap');
-    const activeScales = await displacement.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('scale')));
-    expect(activeScales.some((scale) => Number(scale) > 30)).toBe(true);
-    const clip = await lens.boundingBox();
-    expect(clip).not.toBeNull();
-    await page.waitForTimeout(180);
-    const active = await page.screenshot({ clip });
-    const activeFilter = await lens.evaluate((element) => getComputedStyle(element).backdropFilter);
-    await lens.evaluate((element) => element.style.setProperty('--liquid-filter', 'none'));
-    await page.waitForTimeout(150);
-    const neutral = await page.screenshot({ clip });
-    expect(active.equals(neutral), 'SVG displacement must change rendered pixels').toBe(false);
-    await lens.evaluate((element, filter) => element.style.setProperty('--liquid-filter', filter), activeFilter);
 }
 
 async function openSettings(page, pane = 'appearance') {
@@ -222,19 +135,20 @@ test('renders the clock, search and every bookmark on one screen', async ({ page
     const errors = await openExtension(page);
     await expect(page).toHaveTitle('Infinity New Tab');
     await expect(page.locator('infinity-newtab-app')).toHaveCount(1);
-    await expect(page.locator('[data-bookmark-id="1"] .index-name')).toHaveText('google.com');
+    // Bookmarks saved under their bare address show the site's name without the domain suffix.
+    await expect(page.locator('[data-bookmark-id="1"] .index-name')).toHaveText('Google');
     await expect(page.locator('.battery-capsule')).toContainText('82%');
     await expect(page.locator('.media-capsule, .download-capsule')).toHaveCount(0);
     await expect(page.locator('.hero-time')).toHaveText(/^\d{2}:\d{2}$/);
-    await expect(page.locator('wallpaper-badge')).toContainText('Twilight Bay');
+    await expect(page.locator('wallpaper-badge')).not.toContainText('Twilight Bay');
+    await expect(page.locator('.wallpaper-pause')).toBeVisible();
     await expect(page.locator('.wallpaper-media .scene')).toHaveCount(1);
 
     // Every group is listed at once: loose bookmarks, each folder, then the frequent sites.
     await expect(page.locator('.index-title')).toHaveText(['书签', 'POM', '常访问']);
     await expect(page.locator('.index-group[data-folder="POM"] [data-bookmark-id]')).toHaveCount(1);
     await expect(page.locator('.index-group.is-recent .index-link')).toHaveCount(2);
-    await expect(page.locator('.index-group.is-recent')).toContainText('youtube.com');
-    await expect(page.locator('.index-group.is-recent')).not.toContainText('google');
+    await expect(page.locator('.index-group.is-recent .index-name')).toHaveText(['YouTube', 'V2EX']);
     // The clock sits top-left and the bookmarks along the bottom, leaving the middle to the wallpaper.
     const layout = await page.evaluate(() => {
         const hero = document.querySelector('.hero').getBoundingClientRect();
@@ -255,20 +169,14 @@ test('renders the clock, search and every bookmark on one screen', async ({ page
     expect(layout.indexBottom).toBeLessThanOrEqual(layout.height);
     expect(layout.pageScroll).toBe(false);
 
-    await expect(page.locator('liquid-glass-system')).toHaveCount(1);
-    const coverage = await page.evaluate(() => {
-        const items = [...document.querySelectorAll('[data-liquid-item]')];
-        return {
-            total: items.length,
-            movedChildren: items.filter((item) => item.querySelector('.liquid-glass-content')).length,
-            lenses: document.querySelectorAll('.liquid-glass-lens').length,
-            hdrLayers: document.querySelectorAll('.hdr-glass-layer').length
-        };
-    });
-    expect(coverage.total).toBeGreaterThanOrEqual(4);
-    expect(coverage.movedChildren).toBe(0);
-    expect(coverage.lenses).toBe(1);
-    expect(coverage.hdrLayers).toBe(1);
+    // Every control on the wallpaper is its own refracting glass; there is no shared lens any more.
+    await expect(page.locator('glass-system')).toHaveCount(1);
+    await expect(page.locator('.hdr-glass-layer')).toHaveCount(1);
+    const glass = await page.locator('[data-glass]').evaluateAll((elements) => elements
+        .filter((element) => element.getClientRects().length)
+        .map((element) => ({ filter: element.dataset.glassFilter, backdrop: getComputedStyle(element).backdropFilter })));
+    expect(glass.length).toBeGreaterThanOrEqual(4);
+    expect(glass.every((item) => item.filter && item.backdrop.includes(`url("#${item.filter}")`))).toBe(true);
     expect(await page.locator('.hero-time').evaluate((element) => getComputedStyle(element).textShadow)).not.toBe('none');
     const bodyWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(bodyWidth).toBeLessThanOrEqual(1440);
@@ -295,85 +203,75 @@ test('adds another extension page as a bookmark', async ({ page }) => {
     expect(errors).toEqual([]);
 });
 
-test('uses one empty article precision lens over every real component', async ({ page }) => {
+test('gives every glass control a refraction filter sized to it', async ({ page }) => {
     const errors = await openExtension(page);
-    const action = await inspectArticleFilter(page, page.locator('.shuffle-wallpaper'));
-    const secondAction = await inspectArticleFilter(page, page.locator('.settings-trigger'));
-    expect(secondAction.id).toBeTruthy();
-    expect(action.id).toBeTruthy();
-
-    const search = await inspectArticleFilter(page, page.locator('.search-pill'));
-    expect(search.id).toBeTruthy();
-
-    await page.mouse.move(720, 500);
-    await expect(page.locator('.liquid-glass-lens')).not.toHaveClass(/is-visible/, { timeout: 1000 });
-
-    await inspectArticleFilter(page, page.locator('.wallpaper-pause'));
-    await inspectArticleFilter(page, page.locator('.search-pill'));
+    const shuffle = await glassFilter(page.locator('.shuffle-wallpaper'));
+    const settings = await glassFilter(page.locator('.settings-trigger'));
+    const search = await glassFilter(page.locator('.search-field'));
+    for (const item of [shuffle, settings, search]) {
+        expect(item.backdrop).toContain(`url("#${item.id}")`);
+        expect(item.mapWidth).toBe(item.width);
+        expect(item.mapHeight).toBe(item.height);
+        expect(item.bend).toBeGreaterThan(4);
+    }
+    // Controls of the same size and corner share one filter.
+    expect(settings.id).toBe(shuffle.id);
+    expect(search.id).not.toBe(shuffle.id);
+    expect(await page.locator('.glass-filters filter').count()).toBeLessThanOrEqual(await page.locator('[data-glass]').count());
     expect(errors).toEqual([]);
 });
 
-test('renders real refraction pixels on hover', async ({ page }) => {
+test('bends the backdrop at the rim of the glass', async ({ page }) => {
     const seed = structuredClone(initialData);
     seed.settings.appearance.enhancedAnimations = false;
     const errors = await openExtension(page, seed);
     await page.addStyleTag({ content: `
-        body { background: repeating-linear-gradient(90deg, #101828 0 8px, #ff3f9f 8px 16px, #61d8ff 16px 24px) !important; }
+        body { background: repeating-linear-gradient(90deg, #101828 0 6px, #ff3f9f 6px 12px, #61d8ff 12px 18px) !important; }
         wallpaper-surface { display: none !important; }
-        .hero, .home-footer, .search-pill { transform: none !important; transition: none !important; animation: none !important; }
     ` });
-    await expectRenderedRefraction(page, page.locator('.search-pill'));
-    await expectRenderedRefraction(page, page.locator('.settings-trigger'));
+    await page.mouse.move(10, 500);
+    const button = page.locator('.settings-trigger');
+    const box = await button.boundingBox();
+    const clip = { x: box.x - 2, y: box.y - 2, width: box.width + 4, height: box.height + 4 };
+    await page.waitForTimeout(200);
+    const refracted = await page.screenshot({ clip });
+    const backdrop = await button.evaluate((element) => element.style.getPropertyValue('--glass-backdrop'));
+    await button.evaluate((element) => element.style.setProperty('--glass-backdrop', 'blur(1.2px) saturate(1.6) brightness(1.04)'));
+    await page.waitForTimeout(200);
+    const flat = await page.screenshot({ clip });
+    await button.evaluate((element, value) => element.style.setProperty('--glass-backdrop', value), backdrop);
+    expect(refracted.equals(flat), 'the SVG displacement must change rendered pixels').toBe(false);
     expect(errors).toEqual([]);
 });
 
-test('tracks the real pointer midway in both directions without flipping', async ({ page }) => {
+test('lights the glass under the pointer', async ({ page }) => {
     const errors = await openExtension(page);
-    const first = page.locator('.shuffle-wallpaper');
-    const second = page.locator('.settings-trigger');
-    const from = await centerOf(first);
-    const to = await centerOf(second);
-    const midpoint = {
-        x: (from.box.x + from.box.width + to.box.x) / 2,
-        y: (from.y + to.y) / 2
-    };
-    const expectedProgress = (midpoint.x - from.x) / (to.x - from.x);
-    await page.mouse.move(from.x, from.y);
-    await page.mouse.move(midpoint.x, midpoint.y);
-    const leftToRight = await page.locator('.liquid-glass-lens').evaluate((lens) => ({
-        rect: lens.getBoundingClientRect().toJSON(),
-        progress: Number(lens.dataset.liquidProgress),
-        scaleX: new DOMMatrix(getComputedStyle(lens).transform).a,
-        bridging: lens.classList.contains('is-bridging')
-    }));
-    const hdrGeometry = await page.locator('.hdr-glass-layer').evaluate((layer) => ({
-        x: Number.parseFloat(layer.style.getPropertyValue('--hdr-glass-x')),
-        y: Number.parseFloat(layer.style.getPropertyValue('--hdr-glass-y')),
-        width: Number.parseFloat(layer.style.getPropertyValue('--hdr-glass-width')),
-        height: Number.parseFloat(layer.style.getPropertyValue('--hdr-glass-height'))
-    }));
-    await page.mouse.move(to.x, to.y);
-    await page.mouse.move(midpoint.x, midpoint.y);
-    const rightToLeft = await page.locator('.liquid-glass-lens').evaluate((lens) => ({
-        rect: lens.getBoundingClientRect().toJSON(),
-        progress: Number(lens.dataset.liquidProgress),
-        scaleX: new DOMMatrix(getComputedStyle(lens).transform).a,
-        bridging: lens.classList.contains('is-bridging')
-    }));
-    expect(leftToRight.progress).toBeCloseTo(expectedProgress, 2);
-    expect(rightToLeft.progress).toBeCloseTo(1 - expectedProgress, 2);
-    expect(leftToRight.bridging).toBe(true);
-    expect(rightToLeft.bridging).toBe(true);
-    expect(leftToRight.rect.x).toBeCloseTo(rightToLeft.rect.x, 0);
-    expect(leftToRight.rect.width).toBeCloseTo(rightToLeft.rect.width, 0);
-    expect(leftToRight.rect.width).toBeGreaterThan(Math.max(from.box.width, to.box.width) + 16);
-    expect(hdrGeometry.x).toBeCloseTo(leftToRight.rect.x, 0);
-    expect(hdrGeometry.y).toBeCloseTo(leftToRight.rect.y, 0);
-    expect(hdrGeometry.width).toBeCloseTo(leftToRight.rect.width, 0);
-    expect(hdrGeometry.height).toBeCloseTo(leftToRight.rect.height, 0);
-    expect(leftToRight.scaleX).toBeGreaterThan(0);
-    expect(rightToLeft.scaleX).toBeGreaterThan(0);
-    expect(await page.locator('.liquid-glass-lens').textContent()).toBe('');
+    const field = page.locator('.search-field');
+    const box = await field.boundingBox();
+    await page.mouse.move(box.x + 60, box.y + 12);
+    await expect.poll(() => field.evaluate((element) => Number.parseFloat(element.style.getPropertyValue('--glint-x')))).toBeCloseTo(60, 0);
+    expect(await field.evaluate((element) => Number.parseFloat(element.style.getPropertyValue('--glint-y')))).toBeCloseTo(12, 0);
+    await expect.poll(() => field.evaluate((element) => getComputedStyle(element, '::after').opacity)).toBe('1');
+    await page.mouse.move(720, 500);
+    await expect.poll(() => field.evaluate((element) => getComputedStyle(element, '::after').opacity)).toBe('0');
+    expect(errors).toEqual([]);
+});
+
+test('draws HDR rims only for glass that is visible', async ({ page }) => {
+    await emulateHdrScreen(page);
+    const errors = await openExtension(page);
+    const layer = page.locator('.hdr-glass-layer');
+    await expect.poll(() => layer.getAttribute('data-hdr-renderer')).not.toBeNull();
+    test.skip(await layer.getAttribute('data-hdr-renderer') !== 'webgpu', 'WebGPU is not available in this browser');
+    await expect(layer).toHaveClass(/is-visible/);
+    const visibleGlass = await page.locator('[data-glass]').evaluateAll((elements) => elements.filter((element) => element.getClientRects().length).length);
+    await page.mouse.move(720, 500);
+    await expect(layer).toHaveAttribute('data-hdr-count', String(visibleGlass));
+    // The settings window covers the home screen, so its controls stop drawing rims.
+    await page.locator('.settings-trigger').click();
+    await expect(page.locator('.settings-window')).toHaveClass(/is-open/);
+    await page.mouse.move(700, 400);
+    await expect(layer).toHaveAttribute('data-hdr-count', '0');
     expect(errors).toEqual([]);
 });
 
@@ -410,7 +308,7 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
             overflowFree: window.scrollWidth <= window.clientWidth
         };
     });
-    expect(settingsLayout.width).toBe(920);
+    expect(settingsLayout.width).toBe(820);
     expect(settingsLayout.sidebarBeside).toBe(true);
     expect(settingsLayout.overflowFree).toBe(true);
     await page.locator('input[data-toggle="showStatus"]').uncheck();
@@ -423,28 +321,14 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     await page.locator('.settings-nav-item[data-pane="appearance"]').click();
     await page.locator('[data-segment="clockFormat"] [data-value="12h"]').click();
     await expect(page.locator('[data-segment="clockFormat"] [data-value="12h"]')).toHaveAttribute('aria-checked', 'true');
-    const appearanceToggles = page.locator('.settings-pane[data-pane="appearance"] liquid-toggle');
-    await expect(appearanceToggles).toHaveCount(2);
-    await expect(page.locator('.settings-pane[data-pane="appearance"] .liquid-toggle-thumb[data-liquid-profile="lip"]')).toHaveCount(2);
-    const toggleMapCount = await page.locator('liquid-toggle feImage[result="displacement_map"]').evaluateAll((images) => (
-        new Set(images.map((image) => image.getAttribute('href'))).size
-    ));
-    expect(toggleMapCount).toBe(1);
-    await appearanceToggles.first().evaluate((control) => { window.__retainedLiquidControl = control; });
-    await appearanceToggles.first().hover();
-    await expect(page.locator('.hdr-glass-layer')).toHaveAttribute('data-hdr-target', 'liquid-toggle');
-    const controlHdrSize = await page.locator('.hdr-glass-layer').evaluate((canvas) => ({
-        width: Number.parseFloat(canvas.style.getPropertyValue('--hdr-glass-width')),
-        height: Number.parseFloat(canvas.style.getPropertyValue('--hdr-glass-height'))
-    }));
-    expect(controlHdrSize.width).toBeGreaterThan(20);
-    expect(controlHdrSize.height).toBeGreaterThan(20);
-    await expect(appearanceToggles.first().locator('feDisplacementMap')).toHaveAttribute('scale', String(55.65161904498752 * 0.4));
+    // The thumb slides under the chosen option.
+    const clock = page.locator('[data-segment="clockFormat"]');
+    const twelveHour = await clock.locator('[data-value="12h"]').evaluate((button) => button.offsetLeft);
+    await expect.poll(() => clock.evaluate((element) => Number.parseFloat(element.style.getPropertyValue('--thumb-x')))).toBe(twelveHour);
+    const switches = page.locator('.settings-pane[data-pane="appearance"] .switch');
+    await expect(switches).toHaveCount(2);
+    await switches.first().locator('input').evaluate((input) => { window.__retainedSwitch = input; });
     const hdrToggle = page.locator('input[data-toggle="hdrHighlights"]');
-    await hdrToggle.dispatchEvent('pointerdown');
-    await expect(appearanceToggles.first()).toHaveClass(/is-active/);
-    await expect(appearanceToggles.first().locator('feDisplacementMap')).toHaveAttribute('scale', String(55.65161904498752 * 0.9));
-    await hdrToggle.dispatchEvent('pointerup');
     await expect(hdrToggle).toBeChecked();
     await hdrToggle.uncheck();
     await expect(page.locator('body')).not.toHaveClass(/hdr-highlights/);
@@ -457,26 +341,19 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     await page.locator('.settings-close').click();
     await expect(page.locator('.settings-window')).not.toHaveClass(/is-open/);
     await page.locator('.settings-trigger').click();
+    // Panes are built once: reopening keeps the same controls.
     expect(await page.evaluate(() => (
-        window.__retainedLiquidControl?.isConnected
-        && window.__retainedLiquidControl === document.querySelector('.settings-pane[data-pane="appearance"] liquid-toggle')
+        window.__retainedSwitch?.isConnected
+        && window.__retainedSwitch === document.querySelector('input[data-toggle="hdrHighlights"]')
     ))).toBe(true);
 
     await page.locator('.settings-nav-item[data-pane="wallpaper"]').click();
-    const wallpaperRanges = page.locator('.settings-pane[data-pane="wallpaper"] liquid-range');
-    await expect(wallpaperRanges).toHaveCount(2);
-    await expect(page.locator('.liquid-range-thumb[data-liquid-profile="convex"]')).toHaveCount(2);
-    const rangeMapCount = await page.locator('liquid-range feImage[result="displacement_map"]').evaluateAll((images) => (
-        new Set(images.map((image) => image.getAttribute('href'))).size
-    ));
-    expect(rangeMapCount).toBe(1);
+    const sliders = page.locator('.settings-pane[data-pane="wallpaper"] input.slider');
+    await expect(sliders).toHaveCount(2);
     const overlayRange = page.locator('input[name="overlay"]');
     await overlayRange.fill('45');
-    await expect(wallpaperRanges.nth(1)).toHaveCSS('--liquid-progress', '75%');
-    await overlayRange.dispatchEvent('pointerdown');
-    await expect(wallpaperRanges.nth(1)).toHaveClass(/is-active/);
-    await expect(wallpaperRanges.nth(1).locator('feDisplacementMap')).toHaveAttribute('scale', String(83.88118841653394 * 0.9));
-    await overlayRange.dispatchEvent('pointerup');
+    await expect(overlayRange).toHaveCSS('--progress', '75%');
+    await expect(page.locator('.setting-row', { has: overlayRange }).locator('output')).toHaveText('45%');
     await page.locator('.upload-wallpaper input').setInputFiles({
         name: 'wallpaper.png',
         mimeType: 'image/png',
@@ -592,7 +469,7 @@ test('imports a version 1 backup and exports version 2', async ({ page }, testIn
     await page.getByRole('alertdialog').getByRole('button', { name: '恢复' }).click();
     await expect(page.locator('.toast.is-success')).toContainText('已从备份恢复');
     await expect(page.locator('[data-bookmark-id]')).toHaveCount(1);
-    await expect(page.locator('[data-bookmark-id] .index-name')).toHaveText('v2ex.com');
+    await expect(page.locator('[data-bookmark-id] .index-name')).toHaveText('V2EX');
     const stored = await page.evaluate(() => window.__readMockSync());
     expect(stored.bookmarks).toHaveLength(1);
     expect(stored.bookmarks[0].folder).toBe('全部');
@@ -689,46 +566,68 @@ test('manages bookmarks and folders through the context menu and in-page dialogs
     expect(errors).toEqual([]);
 });
 
-test('Spotlight searches bookmarks, history and recent searches', async ({ page }) => {
+test('searches straight from the home field', async ({ page }) => {
     const errors = await openExtension(page, { ...initialData, recentSearches: ['二次元壁纸', 'typescript'] });
     await page.keyboard.press('/');
-    const input = page.locator('.spotlight-field input');
+    const input = page.locator('.search-field input');
     await expect(input).toBeFocused();
-    await expect(page.locator('body')).toHaveClass(/spotlight-open/);
-    await expect(page.locator('.spotlight-row', { hasText: '二次元壁纸' })).toHaveCount(1);
+    // No separate window: the suggestions hang under the field itself.
+    await expect(page.locator('spotlight-search, .modal-backdrop')).toHaveCount(0);
+    const results = page.locator('.search-results');
+    await expect(results).toBeVisible();
+    const fieldBox = await page.locator('.search-field').boundingBox();
+    // Measured once the drop-in animation has settled.
+    await expect.poll(async () => (await results.boundingBox()).x).toBeCloseTo(fieldBox.x, 0);
+    expect((await results.boundingBox()).y).toBeGreaterThan(fieldBox.y + fieldBox.height);
+    await expect(page.locator('.search-row', { hasText: '二次元壁纸' })).toHaveCount(1);
 
     await input.fill('git');
-    const first = page.locator('.spotlight-row').first();
+    const first = page.locator('.search-row').first();
     await expect(first).toContainText('GitHub');
     await expect(first).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('.ghost-rest')).toHaveText('hub.com');
-    await expect(page.locator('.spotlight-scope')).toHaveText('书签');
     await page.keyboard.press('ArrowDown');
-    await expect(page.locator('.spotlight-row').nth(1)).toHaveAttribute('aria-selected', 'true');
-    await expect(page.locator('.spotlight-row').nth(1)).toContainText('在 Google 中搜索');
+    await expect(page.locator('.search-row').nth(1)).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.search-row').nth(1)).toContainText('在 Google 中搜索');
     await page.keyboard.press('Tab');
-    await expect(page.locator('.spotlight-engines [data-engine="bing"]')).toHaveAttribute('aria-checked', 'true');
-    await expect(page.locator('.spotlight-row').nth(1)).toContainText('在 Bing 中搜索');
+    await expect(page.locator('.search-engine')).toHaveText('Bing');
+    await expect(page.locator('.search-row').nth(1)).toContainText('在 Bing 中搜索');
     await expect(input).toBeFocused();
 
     await input.fill('youtube.com');
-    await expect(page.locator('.spotlight-row').first()).toContainText('youtube.com');
-    await expect(page.locator('.spotlight-heading').first()).toHaveText('网址');
+    await expect(page.locator('.search-row').first()).toContainText('youtube.com');
+    await expect(page.locator('.search-heading').first()).toHaveText('网址');
 
     await input.fill('');
-    const recent = page.locator('.spotlight-row', { hasText: '二次元壁纸' });
+    const recent = page.locator('.search-row', { hasText: '二次元壁纸' });
     await recent.hover();
     await recent.locator('.row-remove').click();
-    await expect(page.locator('.spotlight-row', { hasText: '二次元壁纸' })).toHaveCount(0);
+    await expect(page.locator('.search-row', { hasText: '二次元壁纸' })).toHaveCount(0);
     expect((await page.evaluate(() => window.__readMockSync())).recentSearches).toEqual(['typescript']);
     expect((await page.evaluate(() => window.__readMockSync())).settings.layout.searchEngine).toBe('google');
 
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
-    await expect(page.locator('spotlight-search')).toBeHidden();
-    await page.locator('.search-pill').click();
+    await expect(input).not.toBeFocused();
+    await expect(results).toBeHidden();
+    await page.locator('.search-field').click();
     await expect(input).toBeFocused();
+    await input.fill('abc');
     await page.keyboard.press('Escape');
-    await expect(page.locator('spotlight-search')).toBeHidden();
+    await expect(input).toHaveValue('');
+    await page.keyboard.press('Escape');
+    await expect(input).not.toBeFocused();
+    expect(errors).toEqual([]);
+});
+
+test('summons a hidden search field with the shortcut', async ({ page }) => {
+    const seed = structuredClone(initialData);
+    seed.settings.layout = { ...seed.settings.layout, showSearch: false };
+    const errors = await openExtension(page, seed);
+    await expect(page.locator('search-box')).toBeHidden();
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
+    await expect(page.locator('.search-field input')).toBeFocused();
+    await page.mouse.click(720, 500);
+    await expect(page.locator('search-box')).toBeHidden();
     expect(errors).toEqual([]);
 });
 
@@ -754,9 +653,9 @@ test('keeps history out of every view when frequent sites are turned off', async
     const errors = await openExtension(page, seed);
     await expect(page.locator('.index-group.is-recent')).toHaveCount(0);
     await page.keyboard.press('/');
-    await expect(page.locator('.spotlight-field input')).toBeFocused();
-    await page.locator('.spotlight-field input').fill('youtube');
-    await expect(page.locator('.spotlight-heading', { hasText: '常访问' })).toHaveCount(0);
+    await expect(page.locator('.search-field input')).toBeFocused();
+    await page.locator('.search-field input').fill('youtube');
+    await expect(page.locator('.search-heading', { hasText: '常访问' })).toHaveCount(0);
     await page.keyboard.press('Escape');
 
     await openSettings(page, 'widgets');

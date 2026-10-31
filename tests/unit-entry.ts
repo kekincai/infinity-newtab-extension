@@ -3,8 +3,8 @@ import { sanitizeImportedData, sanitizeSettings } from '../src/core/backup';
 import { BOOKMARK_CHUNKS_KEY, bookmarkChunkKey } from '../src/core/bookmark-storage';
 import { rankSites } from '../src/core/history';
 import { AppStore } from '../src/core/store';
-import { convexSquircle, lipSquircle, precalculateDisplacements } from '../src/components/liquid-optics';
-import { bookmarkIcon, bookmarkIconCanUpgrade, bookmarkIconFallback, bookmarkIconIsRaster, bookmarkIconSrcSet, faviconUrl, normalizeUrl } from '../src/core/utils';
+import { convexSquircle, precalculateDisplacements } from '../src/components/liquid-optics';
+import { bookmarkIcon, bookmarkIconCanUpgrade, bookmarkIconFallback, bookmarkIconIsRaster, bookmarkIconSrcSet, faviconUrl, isAddressLike, normalizeUrl, siteLabel } from '../src/core/utils';
 
 const syncData: Record<string, unknown> = {};
 const localData: Record<string, unknown> = {};
@@ -121,8 +121,14 @@ assert.equal(ranked[0].host, 'youtube.com');
 assert.equal(ranked[0].url, 'https://www.youtube.com/', '应打开实际访问最多的主机名，而不是强行去掉 www');
 assert.equal(ranked[0].count, 13);
 assert.equal(ranked[0].title, 'YouTube', '首页标题可用时应作为网站名');
-assert.equal(ranked[1].title, 'v2ex.com', '没有首页标题时显示完整域名，而不是只取第一段');
-assert.equal(rankSites([{ url: 'https://news.ycombinator.com/item?id=1', visitCount: 3 }])[0].title, 'news.ycombinator.com');
+assert.equal(ranked[1].title, 'V2EX', '没有首页标题时显示去掉后缀的网站名');
+assert.equal(rankSites([{ url: 'https://news.ycombinator.com/item?id=1', visitCount: 3 }])[0].title, 'Hacker News');
+assert.equal(siteLabel('www.example.co.uk'), 'Example', '两段式后缀应整体去掉');
+assert.equal(siteLabel('docs.python.org'), 'Python');
+assert.equal(siteLabel('localhost'), 'localhost');
+assert.equal(siteLabel('192.168.1.1'), '192.168.1.1', 'IP 地址保持原样');
+assert.equal(isAddressLike('www.google.com'), true);
+assert.equal(isAddressLike('Google'), false);
 
 const opticalSamples = precalculateDisplacements(55, 63, convexSquircle, 1.5, 128);
 assert.equal(opticalSamples.length, 128, '折射场必须覆盖 SVG 颜色通道的 128 个径向取样位置');
@@ -131,11 +137,6 @@ assert.ok(Math.abs(opticalSamples.at(-1) ?? 0) < Math.abs(opticalSamples[0]), '�
 assert.ok(Math.max(...opticalSamples.map(Math.abs)) > 70, '凸面 squircle 必须产生可见的物理位移');
 assert.ok(convexSquircle(0.5) > 0.9, '凸面 squircle 应保持平滑的内侧曲率');
 
-const lipSamples = precalculateDisplacements(55, 63, lipSquircle, 1.5, 128);
-assert.ok(lipSamples.every(Number.isFinite));
-assert.ok(Math.max(...lipSamples) > 50 && Math.min(...lipSamples) < -30, 'lip 表面必须同时产生凸缘和凹心折射');
-assert.equal(lipSquircle(0), 0);
-assert.equal(lipSquircle(1), 0);
 
 async function testTransactions(): Promise<void> {
     Object.assign(syncData, {

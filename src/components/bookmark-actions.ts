@@ -1,6 +1,6 @@
 import { appStore } from '../core/store';
 import type { Bookmark, RecentSite } from '../core/types';
-import { cleanDisplayName } from '../core/utils';
+import { cleanText, isAddressLike, siteLabel } from '../core/utils';
 import { ICONS } from './icons';
 import { confirmAction, notifyError, openMenu, promptText } from './ui-layer';
 
@@ -25,8 +25,10 @@ export function bookmarksIn(folder: string): Bookmark[] {
     return appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks);
 }
 
+/** A bookmark saved under its bare address shows the site's name instead. */
 export function bookmarkName(bookmark: Bookmark): string {
-    return cleanDisplayName(bookmark.name) || cleanDisplayName(new URL(bookmark.url).hostname);
+    const name = cleanText(bookmark.name, 160);
+    return name && !isAddressLike(name) ? name : siteLabel(new URL(bookmark.url).hostname);
 }
 
 /** Extension pages cannot be opened through a plain link from another extension, so they go through the tabs API. */

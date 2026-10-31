@@ -77,16 +77,15 @@ function openModal(options: ModalOptions): Promise<string | null> {
         const backdrop = document.createElement('div');
         backdrop.className = 'modal-backdrop is-open';
         backdrop.innerHTML = `
-            <form class="modal glass glass-thick" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
+            <form class="modal glass-panel" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
                 <header class="modal-header">
                     <h2 id="modal-title">${escapeHtml(options.title)}</h2>
-                    <button class="icon-close" type="button" aria-label="关闭" data-action="cancel">${CLOSE_ICON}</button>
                 </header>
                 ${options.body ? `<p class="modal-body">${escapeHtml(options.body)}</p>` : ''}
                 ${options.input ? `<label class="field"><span>${escapeHtml(options.input.label)}</span><input name="value" type="text" autocomplete="off" maxlength="${options.input.maxLength ?? 80}" placeholder="${escapeHtml(options.input.placeholder ?? '')}" value="${escapeHtml(options.input.value ?? '')}"></label>` : ''}
                 <footer class="modal-actions">
-                    <button class="pill-button" type="button" data-action="cancel" data-liquid-item>${escapeHtml(options.cancelText ?? '取消')}</button>
-                    <button class="pill-button ${options.danger ? 'danger' : 'primary'}" type="submit" data-liquid-item>${escapeHtml(options.confirmText ?? '确定')}</button>
+                    <button class="pill-button" type="button" data-action="cancel">${escapeHtml(options.cancelText ?? '取消')}</button>
+                    <button class="pill-button ${options.danger ? 'danger' : 'primary'}" type="submit">${escapeHtml(options.confirmText ?? '确定')}</button>
                 </footer>
             </form>`;
         document.body.append(backdrop);
@@ -137,7 +136,7 @@ export function notify(message: string, kind: ToastKind = 'info', timeout = kind
         document.body.append(region);
     }
     const toast = document.createElement('div');
-    toast.className = `toast glass glass-thick app-notice is-${kind}`;
+    toast.className = `toast glass-panel app-notice is-${kind}`;
     toast.textContent = message;
     region.append(toast);
     window.setTimeout(() => {
@@ -159,7 +158,7 @@ export type MenuItem =
 export function openMenu(items: MenuItem[], at: { x: number; y: number } | HTMLElement): void {
     document.querySelector('.context-menu')?.dispatchEvent(new Event('menu-close'));
     const menu = document.createElement('div');
-    menu.className = 'context-menu glass glass-thick';
+    menu.className = 'context-menu glass-panel';
     menu.setAttribute('role', 'menu');
     menu.innerHTML = items.map((item, index) => {
         if ('separator' in item) return '<hr>';
@@ -207,8 +206,6 @@ export function openMenu(items: MenuItem[], at: { x: number; y: number } | HTMLE
     });
     buttons[0]?.focus({ preventScroll: true });
 }
-
-export const CLOSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg>';
 
 /**
  * Runs once an element's open animation or transition has settled, so focus

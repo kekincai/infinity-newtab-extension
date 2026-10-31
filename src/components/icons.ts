@@ -3,8 +3,8 @@ const icon = (paths: string) => `<svg class="icon" viewBox="0 0 24 24" aria-hidd
 const solid = (paths: string) => `<svg class="icon icon-solid" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
 
 export const ICONS = {
-    settings: icon('<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>'),
-    sparkle: icon('<path d="M12 3l1.8 4.6L18 9.4l-4.2 1.8L12 16l-1.8-4.8L6 9.4l4.2-1.8z"></path><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"></path>'),
+    settings: icon('<path d="M10.02 4.87L10.45 2.73A9.4 9.4 0 0 1 13.55 2.73L13.98 4.87A7.4 7.4 0 0 1 15.64 5.56L17.46 4.35A9.4 9.4 0 0 1 19.65 6.54L18.44 8.36A7.4 7.4 0 0 1 19.13 10.02L21.27 10.45A9.4 9.4 0 0 1 21.27 13.55L19.13 13.98A7.4 7.4 0 0 1 18.44 15.64L19.65 17.46A9.4 9.4 0 0 1 17.46 19.65L15.64 18.44A7.4 7.4 0 0 1 13.98 19.13L13.55 21.27A9.4 9.4 0 0 1 10.45 21.27L10.02 19.13A7.4 7.4 0 0 1 8.36 18.44L6.54 19.65A9.4 9.4 0 0 1 4.35 17.46L5.56 15.64A7.4 7.4 0 0 1 4.87 13.98L2.73 13.55A9.4 9.4 0 0 1 2.73 10.45L4.87 10.02A7.4 7.4 0 0 1 5.56 8.36L4.35 6.54A9.4 9.4 0 0 1 6.54 4.35L8.36 5.56A7.4 7.4 0 0 1 10.02 4.87Z"></path><circle cx="12" cy="12" r="3.1"></circle>'),
+    shuffle: icon('<path d="M3 17h3.4c1.6 0 2.6-.7 3.5-2l4.2-6c.9-1.3 1.9-2 3.5-2H21"></path><path d="M3 7h3.4c1.6 0 2.6.7 3.5 2l.6.9M13.5 14.1l.6.9c.9 1.3 1.9 2 3.5 2H21"></path><path d="m18.5 4.5 2.5 2.5-2.5 2.5M18.5 14.5l2.5 2.5-2.5 2.5"></path>'),
     search: icon('<circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>'),
     plus: icon('<path d="M12 5v14M5 12h14"></path>'),
     folder: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path>'),
@@ -24,9 +24,13 @@ export const ICONS = {
     bolt: icon('<path d="m13 3-7 10h5l-1 8 7-10h-5z"></path>'),
     clock: icon('<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>'),
     grid: solid('<rect x="4" y="4" width="4" height="4" rx="1.2"></rect><rect x="10" y="4" width="4" height="4" rx="1.2"></rect><rect x="16" y="4" width="4" height="4" rx="1.2"></rect><rect x="4" y="10" width="4" height="4" rx="1.2"></rect><rect x="10" y="10" width="4" height="4" rx="1.2"></rect><rect x="16" y="10" width="4" height="4" rx="1.2"></rect><rect x="4" y="16" width="4" height="4" rx="1.2"></rect><rect x="10" y="16" width="4" height="4" rx="1.2"></rect><rect x="16" y="16" width="4" height="4" rx="1.2"></rect>'),
-    look: icon('<circle cx="12" cy="12" r="8"></circle><path class="icon-fill" d="M12 4a8 8 0 0 0 0 16z"></path>'),
-    widgets: solid('<rect x="4" y="4" width="7" height="7" rx="2"></rect><rect x="13" y="4" width="7" height="7" rx="2"></rect><rect x="4" y="13" width="7" height="7" rx="2"></rect><rect x="13" y="13" width="7" height="7" rx="2"></rect>'),
-    wallpaper: icon('<rect x="3" y="5" width="18" height="14" rx="3"></rect><path class="icon-fill" d="M10 9.5v5l4.5-2.5z"></path>'),
-    database: icon('<ellipse cx="12" cy="6" rx="7" ry="2.5"></ellipse><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"></path>'),
     close: icon('<path d="M6 6l12 12M18 6 6 18"></path>')
+} as const;
+
+/** Settings sidebar glyphs, drawn white on a coloured tile like macOS System Settings. */
+export const SETTINGS_GLYPHS = {
+    appearance: icon('<circle cx="12" cy="12" r="7.6"></circle><path class="icon-fill" d="M12 4.4a7.6 7.6 0 0 0 0 15.2z"></path>'),
+    widgets: solid('<rect x="4.5" y="4.5" width="6.4" height="6.4" rx="1.8"></rect><rect x="13.1" y="4.5" width="6.4" height="6.4" rx="1.8"></rect><rect x="4.5" y="13.1" width="6.4" height="6.4" rx="1.8"></rect><rect x="13.1" y="13.1" width="6.4" height="6.4" rx="1.8"></rect>'),
+    wallpaper: icon('<rect x="3.8" y="5.3" width="16.4" height="13.4" rx="2.8"></rect><path class="icon-fill" stroke="none" d="M5.6 16.9l4-4.9 2.9 3.2 2.1-2.2 3.8 3.9z"></path><circle class="icon-fill" stroke="none" cx="15.4" cy="9.4" r="1.5"></circle>'),
+    data: icon('<path d="M3.8 12.6 6.2 6.5A2 2 0 0 1 8.1 5.2h7.8a2 2 0 0 1 1.9 1.3l2.4 6.1"></path><rect x="3.8" y="12.6" width="16.4" height="6.2" rx="2"></rect><circle class="icon-fill" stroke="none" cx="16.6" cy="15.7" r="1"></circle>')
 } as const;

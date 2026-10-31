@@ -1,82 +1,102 @@
-type GlassGeometry = {
+/** One glass control as the HDR layer sees it, in CSS pixels. `glint` is the pointer light on it, 0–1. */
+export type GlassRim = {
     x: number;
     y: number;
     width: number;
     height: number;
     radius: number;
+    opacity: number;
+    glint: number;
 };
 
-const HDR_MAX_EDGE = 512;
-const HDR_RESOLUTION_STEP = 32;
+export const MAX_RIMS = 16;
+/** Brightest rim light as a multiple of SDR white; the display clips anything past its own headroom. */
+const PEAK = 2.2;
+/** Caps the layer's backing store; larger windows render at a slightly lower density. */
+const MAX_PIXELS = 3840 * 2400;
+const FRAME_FLOATS = 8;
+const RIM_FLOATS = 8;
 
 const HDR_SHADER = `
-struct GlassUniforms {
-    size: vec2f,
-    radius: f32,
-    bridge: f32,
-    resolution: vec2f,
-    padding: vec2f,
+struct Frame {
+    pointer: vec2f,
+    count: f32,
+    scale: f32,
+    peak: f32,
+    unused0: f32,
+    unused1: f32,
+    unused2: f32,
 }
 
-@group(0) @binding(0) var<uniform> glass: GlassUniforms;
+struct Rim {
+    rect: vec4f,
+    shape: vec4f,
+}
+
+@group(0) @binding(0) var<uniform> frame: Frame;
+@group(0) @binding(1) var<uniform> rims: array<Rim, ${MAX_RIMS}>;
 
 @vertex
 fn vertexMain(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
-    var positions = array<vec2f, 3>(
-        vec2f(-1.0, -1.0),
-        vec2f(3.0, -1.0),
-        vec2f(-1.0, 3.0)
-    );
+    var positions = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
     return vec4f(positions[index], 0.0, 1.0);
 }
 
-fn roundedRectDistance(point: vec2f, halfSize: vec2f, radius: f32) -> f32 {
-    let corner = abs(point) - (halfSize - vec2f(radius));
+fn roundedRect(point: vec2f, half: vec2f, radius: f32) -> f32 {
+    let corner = abs(point) - half + vec2f(radius);
     return length(max(corner, vec2f(0.0))) + min(max(corner.x, corner.y), 0.0) - radius;
 }
 
 @fragment
 fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
-    let uv = position.xy / glass.resolution;
-    let point = (uv - vec2f(0.5)) * glass.size;
-    let halfSize = max(glass.size * 0.5 - vec2f(2.0), vec2f(1.0));
-    let radius = min(glass.radius, min(halfSize.x, halfSize.y));
-    let sdf = roundedRectDistance(point, halfSize, radius);
-    let inside = 1.0 - smoothstep(0.0, 2.0, sdf);
-    let rim = exp(-abs(sdf) * 0.58) * inside;
-
-    let gradient = vec2f(dpdx(sdf), dpdy(sdf));
-    let normal = gradient / max(length(gradient), 0.0001);
-    let light = normalize(vec2f(0.5, -0.8660254));
-    let tangent = vec2f(-light.y, light.x);
-    let facing = abs(dot(normal, light));
-    let specular = pow(facing, 3.2);
-    let dispersion = dot(normal, tangent);
-    let cyanEdge = pow(max(dispersion, 0.0), 2.4);
-    let pinkEdge = pow(max(-dispersion, 0.0), 2.4);
-    let innerCaustic = exp(-abs(sdf + 4.2) * 0.42) * inside;
-    let motionGain = 1.0 + glass.bridge * 0.42;
-
-    let whiteSpecular = vec3f(3.25) * rim * (0.16 + specular * 1.12);
-    let skyDispersion = vec3f(0.16, 1.05, 2.8) * rim * cyanEdge * 0.52;
-    let pinkDispersion = vec3f(2.35, 0.22, 0.82) * rim * pinkEdge * 0.4;
-    let caustic = vec3f(0.52, 0.82, 1.35) * innerCaustic * (0.08 + glass.bridge * 0.12);
-    let radiance = (whiteSpecular + skyDispersion + pinkDispersion + caustic) * motionGain;
-    let alpha = clamp(rim * (0.2 + specular * 0.7 + (cyanEdge + pinkEdge) * 0.12) + innerCaustic * 0.08, 0.0, 0.96);
-
-    return vec4f(radiance * alpha, alpha);
+    let point = position.xy / frame.scale;
+    let pixel = 1.0 / frame.scale;
+    let light = normalize(vec2f(-0.55, -0.85));
+    var radiance = 0.0;
+    var coverage = 0.0;
+    for (var index = 0u; index < u32(frame.count); index = index + 1u) {
+        let rim = rims[index];
+        let half = rim.rect.zw * 0.5;
+        let local = point - rim.rect.xy - half;
+        let radius = min(rim.shape.x, min(half.x, half.y));
+        let distance = roundedRect(local, half, radius);
+        if (distance > pixel || distance < -4.0) {
+            continue;
+        }
+        // A 1.25 px band just inside the edge, anti-aliased to the device pixel on both sides.
+        let band = smoothstep(-1.25 - pixel, -1.25, distance) * (1.0 - smoothstep(-pixel, pixel * 0.5, distance));
+        let step = 0.5;
+        let normal = normalize(vec2f(
+            roundedRect(local + vec2f(step, 0.0), half, radius) - roundedRect(local - vec2f(step, 0.0), half, radius),
+            roundedRect(local + vec2f(0.0, step), half, radius) - roundedRect(local - vec2f(0.0, step), half, radius)
+        ));
+        let facing = max(dot(normal, light), 0.0);
+        let away = max(-dot(normal, light), 0.0);
+        let toPointer = point - frame.pointer;
+        let glint = rim.shape.z * exp(-dot(toPointer, toPointer) / 1800.0);
+        let brightness = 0.12 + pow(facing, 2.0) * 0.6 + pow(away, 3.0) * 0.18 + glint * 1.3;
+        radiance = radiance + band * brightness * rim.shape.y;
+        coverage = max(coverage, band * rim.shape.y);
+    }
+    // Premultiplied light that may exceed its alpha: it adds to what is below, past SDR white on HDR screens.
+    return vec4f(vec3f(radiance * frame.peak), coverage * 0.3);
 }`;
 
-export class HdrGlassRenderer {
+/**
+ * A transparent full-window WebGPU layer that draws the rim light of every
+ * glass control in extended range, so the highlights rise above SDR white on
+ * HDR screens. It only exists on HDR displays with the setting on.
+ */
+export class HdrRimLayer {
     readonly canvas = document.createElement('canvas');
     private device: any = null;
     private context: any = null;
     private pipeline: any = null;
-    private uniformBuffer: any = null;
+    private frameBuffer: any = null;
+    private rimBuffer: any = null;
     private bindGroup: any = null;
-    private geometry: GlassGeometry | null = null;
-    private bridge = 0;
-    private wantsVisible = false;
+    private rims: GlassRim[] = [];
+    private pointer = { x: -1e4, y: -1e4 };
     private initializing = false;
     private drawFrame = 0;
     private readonly hdrMedia = window.matchMedia('(dynamic-range: high)');
@@ -84,52 +104,51 @@ export class HdrGlassRenderer {
 
     constructor() {
         this.canvas.className = 'hdr-glass-layer';
-        this.canvas.width = HDR_MAX_EDGE;
-        this.canvas.height = HDR_MAX_EDGE;
         this.canvas.setAttribute('aria-hidden', 'true');
+    }
+
+    /** Ready to draw: HDR screen, the setting on and a WebGPU device. */
+    get active(): boolean {
+        return Boolean(this.device) && this.hdrMedia.matches && document.body.classList.contains('hdr-highlights');
     }
 
     connect(): void {
         this.classObserver.observe(document.body, { attributeFilter: ['class'] });
         this.hdrMedia.addEventListener('change', this.onDisplayChange);
+        window.addEventListener('resize', this.onResize);
+        this.onResize();
         void this.initialize();
     }
 
     disconnect(): void {
         this.classObserver.disconnect();
         this.hdrMedia.removeEventListener('change', this.onDisplayChange);
+        window.removeEventListener('resize', this.onResize);
+        cancelAnimationFrame(this.drawFrame);
+        this.drawFrame = 0;
         this.device?.destroy?.();
         this.device = null;
         this.canvas.classList.remove('is-visible');
-        cancelAnimationFrame(this.drawFrame);
-        this.drawFrame = 0;
     }
 
-    show(): void {
-        this.wantsVisible = true;
-        this.syncVisibility();
-    }
-
-    hide(): void {
-        this.wantsVisible = false;
-        this.canvas.classList.remove('is-visible');
-    }
-
-    render(geometry: GlassGeometry, bridge: number): void {
-        this.geometry = geometry;
-        this.bridge = bridge;
-        this.resizeRenderTarget(geometry);
-        this.canvas.style.setProperty('--hdr-glass-x', `${geometry.x}px`);
-        this.canvas.style.setProperty('--hdr-glass-y', `${geometry.y}px`);
-        this.canvas.style.setProperty('--hdr-glass-width', `${geometry.width}px`);
-        this.canvas.style.setProperty('--hdr-glass-height', `${geometry.height}px`);
-        this.canvas.style.setProperty('--hdr-glass-radius', `${geometry.radius}px`);
+    update(rims: GlassRim[], pointer: { x: number; y: number }): void {
+        this.rims = rims.slice(0, MAX_RIMS);
+        this.pointer = pointer;
+        this.canvas.dataset.hdrCount = String(this.rims.length);
         this.scheduleDraw();
     }
 
     private readonly onDisplayChange = (): void => {
         if (this.hdrMedia.matches) void this.initialize();
         this.syncVisibility();
+    };
+
+    private readonly onResize = (): void => {
+        const ratio = Math.max(1, window.devicePixelRatio || 1);
+        const scale = Math.min(ratio, Math.sqrt(MAX_PIXELS / Math.max(1, innerWidth * innerHeight)));
+        this.canvas.width = Math.max(1, Math.round(innerWidth * scale));
+        this.canvas.height = Math.max(1, Math.round(innerHeight * scale));
+        this.scheduleDraw();
     };
 
     private async initialize(): Promise<void> {
@@ -155,37 +174,33 @@ export class HdrGlassRenderer {
                 fragment: {
                     module: shader,
                     entryPoint: 'fragmentMain',
-                    targets: [{
-                        format: 'rgba16float',
-                        blend: {
-                            color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
-                            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }
-                        }
-                    }]
+                    targets: [{ format: 'rgba16float' }]
                 },
                 primitive: { topology: 'triangle-list' }
             });
-            const uniformBuffer = device.createBuffer({
-                size: 32,
-                usage: 0x40 | 0x08
-            });
-            const bindGroup = device.createBindGroup({
+            // GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+            const frameBuffer = device.createBuffer({ size: FRAME_FLOATS * 4, usage: 0x40 | 0x08 });
+            const rimBuffer = device.createBuffer({ size: MAX_RIMS * RIM_FLOATS * 4, usage: 0x40 | 0x08 });
+            this.bindGroup = device.createBindGroup({
                 layout: pipeline.getBindGroupLayout(0),
-                entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
+                entries: [
+                    { binding: 0, resource: { buffer: frameBuffer } },
+                    { binding: 1, resource: { buffer: rimBuffer } }
+                ]
             });
             this.device = device;
             this.context = context;
             this.pipeline = pipeline;
-            this.uniformBuffer = uniformBuffer;
-            this.bindGroup = bindGroup;
+            this.frameBuffer = frameBuffer;
+            this.rimBuffer = rimBuffer;
             this.canvas.dataset.hdrRenderer = 'webgpu';
             void device.lost.then(() => {
                 this.device = null;
-                this.canvas.classList.remove('is-visible');
                 this.canvas.dataset.hdrRenderer = 'lost';
+                this.syncVisibility();
             });
-            this.scheduleDraw();
             this.syncVisibility();
+            this.scheduleDraw();
         } catch {
             this.canvas.dataset.hdrRenderer = 'unavailable';
         } finally {
@@ -194,26 +209,30 @@ export class HdrGlassRenderer {
     }
 
     private syncVisibility(): void {
-        const enabled = this.wantsVisible
-            && Boolean(this.device)
-            && this.hdrMedia.matches
-            && document.body.classList.contains('hdr-highlights');
-        this.canvas.classList.toggle('is-visible', enabled);
+        this.canvas.classList.toggle('is-visible', this.active);
+        if (this.active) this.scheduleDraw();
+    }
+
+    private scheduleDraw(): void {
+        if (this.drawFrame || !this.active) return;
+        this.drawFrame = requestAnimationFrame(() => {
+            this.drawFrame = 0;
+            this.draw();
+        });
     }
 
     private draw(): void {
-        if (!this.device || !this.context || !this.pipeline || !this.uniformBuffer || !this.bindGroup || !this.geometry) return;
-        const values = new Float32Array([
-            this.geometry.width,
-            this.geometry.height,
-            this.geometry.radius,
-            this.bridge,
-            this.canvas.width,
-            this.canvas.height,
-            0,
-            0
-        ]);
-        this.device.queue.writeBuffer(this.uniformBuffer, 0, values);
+        if (!this.active) return;
+        const scale = this.canvas.width / Math.max(1, innerWidth);
+        this.device.queue.writeBuffer(this.frameBuffer, 0, new Float32Array([
+            this.pointer.x, this.pointer.y, this.rims.length, scale, PEAK, 0, 0, 0
+        ]));
+        const rims = new Float32Array(MAX_RIMS * RIM_FLOATS);
+        this.rims.forEach((rim, index) => rims.set(
+            [rim.x, rim.y, rim.width, rim.height, rim.radius, rim.opacity, rim.glint, 0],
+            index * RIM_FLOATS
+        ));
+        this.device.queue.writeBuffer(this.rimBuffer, 0, rims);
         const encoder = this.device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
             colorAttachments: [{
@@ -229,27 +248,4 @@ export class HdrGlassRenderer {
         pass.end();
         this.device.queue.submit([encoder.finish()]);
     }
-
-    private scheduleDraw(): void {
-        if (this.drawFrame) return;
-        this.drawFrame = requestAnimationFrame(() => {
-            this.drawFrame = 0;
-            this.draw();
-        });
-    }
-
-    private resizeRenderTarget(geometry: GlassGeometry): void {
-        const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
-        const longestEdge = Math.max(geometry.width, geometry.height) * pixelRatio;
-        const scale = Math.min(1, HDR_MAX_EDGE / Math.max(1, longestEdge));
-        const width = quantizeResolution(geometry.width * pixelRatio * scale);
-        const height = quantizeResolution(geometry.height * pixelRatio * scale);
-        if (this.canvas.width === width && this.canvas.height === height) return;
-        this.canvas.width = width;
-        this.canvas.height = height;
-    }
-}
-
-function quantizeResolution(value: number): number {
-    return Math.max(1, Math.min(HDR_MAX_EDGE, Math.ceil(value / HDR_RESOLUTION_STEP) * HDR_RESOLUTION_STEP));
 }

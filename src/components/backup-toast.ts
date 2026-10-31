@@ -18,11 +18,11 @@ export class BackupToast extends StoreElement {
             return;
         }
         this.innerHTML = `
-            <div class="backup-toast glass glass-thick" role="status">
+            <div class="backup-toast glass-panel" role="status">
                 <span>已经一个月没备份了，导出一份书签更安心</span>
                 <div class="backup-actions">
-                    <button class="pill-button backup-later" type="button" data-liquid-item>稍后</button>
-                    <button class="pill-button primary backup-now" type="button" data-liquid-item>立即导出</button>
+                    <button class="pill-button backup-later" type="button">稍后</button>
+                    <button class="pill-button primary backup-now" type="button">立即导出</button>
                 </div>
             </div>
         `;

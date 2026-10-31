@@ -41,7 +41,7 @@ export class StatusStrip extends StoreElement {
         const muteLabel = media?.muted ? '取消静音' : '静音';
         this.innerHTML = [
             media ? `
-                <div class="glass glass-dark capsule media-capsule">
+                <div class="glass glass-dark capsule media-capsule" data-glass>
                     <button class="media-open" type="button" title="切换到正在播放的标签页">
                         <img class="media-art" src="${escapeHtml(media.icon)}" alt="" draggable="false">
                         <span class="capsule-text">
@@ -50,10 +50,10 @@ export class StatusStrip extends StoreElement {
                         </span>
                         ${media.muted ? '' : '<span class="equalizer" aria-hidden="true"><span></span><span></span><span></span><span></span></span>'}
                     </button>
-                    <button class="media-mute" type="button" data-liquid-item aria-label="${muteLabel}" title="${muteLabel}">${media.muted ? ICONS.muted : ICONS.speaker}</button>
+                    <button class="media-mute" type="button" aria-label="${muteLabel}" title="${muteLabel}">${media.muted ? ICONS.muted : ICONS.speaker}</button>
                 </div>` : '',
-            downloads.length ? `<button class="glass glass-dark capsule download-capsule" type="button" data-liquid-item title="在文件夹中显示">${ICONS.download}<span>${downloads.length} 项下载中</span></button>` : '',
-            battery ? `<span class="glass glass-dark capsule battery-capsule ${battery.level <= 0.2 && !battery.charging ? 'is-low' : ''}" title="${battery.charging ? '正在充电' : '正在使用电池'}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ''
+            downloads.length ? `<button class="glass glass-dark capsule download-capsule" type="button" data-glass title="在文件夹中显示">${ICONS.download}<span>${downloads.length} 项下载中</span></button>` : '',
+            battery ? `<span data-glass class="glass glass-dark capsule battery-capsule ${battery.level <= 0.2 && !battery.charging ? 'is-low' : ''}" title="${battery.charging ? '正在充电' : '正在使用电池'}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ''
         ].join('');
         this.querySelector('.media-open')?.addEventListener('click', () => {
             if (media) chrome.tabs.update(media.id, { active: true });
