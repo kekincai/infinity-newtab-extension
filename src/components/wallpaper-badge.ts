@@ -1,7 +1,7 @@
 import { ICONS } from './icons';
 import type { WallpaperState, WallpaperSurface } from './wallpaper-surface';
 
-/** Bottom-right caption naming the wallpaper, with a pause button for moving ones. */
+/** A pause button for moving wallpapers, bottom-right; still pictures show nothing. */
 export class WallpaperBadge extends HTMLElement {
     connectedCallback(): void {
         document.addEventListener('wallpaper-state', this.onState as EventListener);
@@ -23,14 +23,13 @@ export class WallpaperBadge extends HTMLElement {
     };
 
     /** Updates in place so a keyboard user keeps focus on the pause button. */
-    private update({ label, animated, paused }: WallpaperState): void {
-        if (!this.querySelector('.wallpaper-label')) {
-            this.innerHTML = `<span class="wallpaper-label"></span><button class="glass round-button wallpaper-pause" type="button" data-liquid-item></button>`;
+    private update({ animated, paused }: WallpaperState): void {
+        if (!this.querySelector('.wallpaper-pause')) {
+            this.innerHTML = '<button class="glass round-button wallpaper-pause" type="button" data-glass></button>';
         }
         const action = paused ? '播放动态壁纸' : '暂停动态壁纸';
         const button = this.querySelector<HTMLButtonElement>('.wallpaper-pause')!;
-        this.querySelector('.wallpaper-label')!.textContent = label;
-        button.hidden = !animated;
+        this.hidden = !animated;
         button.setAttribute('aria-label', action);
         button.title = action;
         button.setAttribute('aria-pressed', String(paused));

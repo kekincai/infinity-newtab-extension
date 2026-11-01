@@ -4,7 +4,7 @@ import type { ResolvedTheme } from '../core/types';
 import { toneOf, toneOfBlob } from '../core/wallpaper-service';
 import { StoreElement } from './base';
 
-export type WallpaperState = { label: string; animated: boolean; paused: boolean };
+export type WallpaperState = { animated: boolean; paused: boolean };
 
 type BatteryManager = EventTarget & { charging: boolean };
 
@@ -39,12 +39,8 @@ export class WallpaperSurface extends StoreElement {
     }
 
     get state(): WallpaperState {
-        const { type, value } = appStore.state.settings.wallpaper;
-        const label = type === 'gradient' ? 'Twilight Bay · 动态'
-            : type === 'video' ? '本地视频 · 动态'
-                : type === 'local' ? (value.startsWith('online') ? '在线壁纸' : '本地图片')
-                    : '在线图片';
-        return { label, animated: type === 'gradient' || type === 'video', paused: this.userPaused };
+        const { type } = appStore.state.settings.wallpaper;
+        return { animated: type === 'gradient' || type === 'video', paused: this.userPaused };
     }
 
     togglePaused(): void {

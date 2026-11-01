@@ -1,7 +1,7 @@
 import { appStore } from '../core/store';
 import type { Bookmark } from '../core/types';
 import { DEFAULT_ICON, escapeHtml, faviconUrl, normalizeUrl, sanitizeRemoteUrl } from '../core/utils';
-import { ICONS } from './icons';
+import { ROOT_FOLDER, folderLabel } from './bookmark-actions';
 import { notifyError, pushLayer } from './ui-layer';
 
 type DialogDetail = { bookmark?: Bookmark; folder?: string; draft?: { url: string; name: string } };
@@ -24,16 +24,15 @@ export class BookmarkDialog extends HTMLElement {
         this.open(event.detail);
     };
 
-    private open({ bookmark, folder = '全部', draft }: DialogDetail): void {
+    private open({ bookmark, folder = ROOT_FOLDER, draft }: DialogDetail): void {
         this.close();
         const selected = bookmark?.folder ?? folder;
         const title = bookmark ? '编辑书签' : '添加书签';
         this.innerHTML = `
             <div class="modal-backdrop dialog-backdrop is-open">
-                <form class="modal bookmark-dialog glass glass-thick" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
+                <form class="modal bookmark-dialog glass-panel" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
                     <header class="modal-header">
                         <h2>${title}</h2>
-                        <button class="icon-close dialog-close" type="button" aria-label="关闭">${ICONS.close}</button>
                     </header>
                     <label class="field">
                         <span>网址</span>
@@ -44,11 +43,11 @@ export class BookmarkDialog extends HTMLElement {
                     </label>
                     <label class="field">
                         <span>名称</span>
-                        <input name="name" type="text" maxlength="160" autocomplete="off" placeholder="留空则使用网站域名" value="${escapeHtml(bookmark?.name ?? draft?.name ?? '')}">
+                        <input name="name" type="text" maxlength="160" autocomplete="off" placeholder="留空则使用网站名" value="${escapeHtml(bookmark?.name ?? draft?.name ?? '')}">
                     </label>
                     <label class="field">
                         <span>文件夹</span>
-                        <span class="select-wrap"><select name="folder">${appStore.state.folders.map((item) => `<option value="${escapeHtml(item)}" ${item === selected ? 'selected' : ''}>${escapeHtml(item)}</option>`).join('')}</select></span>
+                        <span class="select-wrap"><select name="folder">${appStore.state.folders.map((item) => `<option value="${escapeHtml(item)}" ${item === selected ? 'selected' : ''}>${escapeHtml(folderLabel(item))}</option>`).join('')}</select></span>
                     </label>
                     <details class="field-advanced" ${bookmark?.icon ? 'open' : ''}>
                         <summary>自定义图标</summary>
@@ -59,8 +58,8 @@ export class BookmarkDialog extends HTMLElement {
                     </details>
                     <p class="field-error" role="alert" hidden></p>
                     <footer class="modal-actions">
-                        <button class="pill-button cancel-dialog" type="button" data-liquid-item>取消</button>
-                        <button class="pill-button primary" type="submit" data-liquid-item>保存</button>
+                        <button class="pill-button cancel-dialog" type="button">取消</button>
+                        <button class="pill-button primary" type="submit">保存</button>
                     </footer>
                 </form>
             </div>
@@ -85,7 +84,6 @@ export class BookmarkDialog extends HTMLElement {
             updatePreview();
         });
         iconInput.addEventListener('change', updatePreview);
-        this.querySelector('.dialog-close')?.addEventListener('click', () => this.close());
         this.querySelector('.cancel-dialog')?.addEventListener('click', () => this.close());
         backdrop.addEventListener('pointerdown', (event) => { if (event.target === backdrop) this.close(); });
         form.addEventListener('submit', async (event) => {
@@ -94,7 +92,7 @@ export class BookmarkDialog extends HTMLElement {
             const input = {
                 url: String(data.get('url') ?? ''),
                 name: String(data.get('name') ?? ''),
-                folder: String(data.get('folder') ?? '全部'),
+                folder: String(data.get('folder') ?? ROOT_FOLDER),
                 icon: String(data.get('icon') ?? '').trim()
             };
             if (!normalizeUrl(input.url)) {

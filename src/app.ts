@@ -5,15 +5,12 @@ import { escapeHtml } from './core/utils';
 import { migrateLegacyWallpaper, useOnlineWallpaper } from './core/wallpaper-service';
 import { BackupToast } from './components/backup-toast';
 import { BookmarkDialog } from './components/bookmark-dialog';
-import { BookmarkLaunchpad, type LaunchpadView } from './components/bookmark-launchpad';
+import { BookmarkIndex } from './components/bookmark-index';
 import { DashboardHeader } from './components/dashboard-header';
-import { HomeDock } from './components/home-dock';
 import { ICONS } from './components/icons';
-import { LiquidGlassSystem } from './components/liquid-glass';
-import { LiquidRange, LiquidToggle } from './components/liquid-controls';
-import { SearchPill } from './components/search-pill';
+import { GlassSystem } from './components/glass';
+import { SearchBox } from './components/search-box';
 import { SettingsPanel } from './components/settings-panel';
-import { SpotlightSearch } from './components/spotlight-search';
 import { StatusStrip } from './components/status-strip';
 import { hasOpenLayer, notify, notifyError } from './components/ui-layer';
 import { WallpaperBadge } from './components/wallpaper-badge';
@@ -52,7 +49,7 @@ class InfinityNewTabApp extends HTMLElement {
     };
 
     async connectedCallback(): Promise<void> {
-        this.innerHTML = '<div class="app-loading" role="status"><span></span><p>正在整理你的启动台…</p></div>';
+        this.innerHTML = '<div class="app-loading" role="status"><span></span><p>正在载入书签…</p></div>';
         try {
             await appStore.init();
             this.updateClasses();
@@ -66,7 +63,7 @@ class InfinityNewTabApp extends HTMLElement {
             this.wake();
             void migrateLegacyWallpaper();
         } catch (error) {
-            this.innerHTML = `<div class="app-error"><h1>启动台加载失败</h1><p>${escapeHtml(error instanceof Error ? error.message : '未知错误')}</p></div>`;
+            this.innerHTML = `<div class="app-error"><h1>新标签页加载失败</h1><p>${escapeHtml(error instanceof Error ? error.message : '未知错误')}</p></div>`;
         }
     }
 
@@ -90,41 +87,31 @@ class InfinityNewTabApp extends HTMLElement {
             <div class="home">
                 <header class="top-bar">
                     <status-strip></status-strip>
-                    <div class="top-actions">
-                        <button class="glass round-button shuffle-wallpaper" type="button" data-liquid-item aria-label="换一个在线壁纸" title="换一个在线壁纸">${ICONS.sparkle}</button>
-                        <button class="glass round-button settings-trigger" type="button" data-liquid-item aria-label="设置" title="设置">${ICONS.settings}</button>
-                    </div>
+                    <button class="glass round-button shuffle-wallpaper" type="button" data-glass aria-label="换一个在线壁纸" title="换一个在线壁纸">${ICONS.shuffle}</button>
+                    <button class="glass round-button settings-trigger" type="button" data-glass aria-label="设置" title="设置">${ICONS.settings}</button>
                 </header>
                 <main class="hero">
                     <dashboard-header></dashboard-header>
-                    <search-pill></search-pill>
+                    <search-box></search-box>
                 </main>
-                <home-dock></home-dock>
-                <wallpaper-badge></wallpaper-badge>
+                <footer class="home-footer">
+                    <bookmark-index></bookmark-index>
+                    <wallpaper-badge></wallpaper-badge>
+                </footer>
             </div>
-            <spotlight-search></spotlight-search>
-            <bookmark-launchpad></bookmark-launchpad>
             <settings-panel></settings-panel>
             <bookmark-dialog></bookmark-dialog>
             <backup-toast></backup-toast>
-            <liquid-glass-system></liquid-glass-system>
+            <glass-system></glass-system>
         `;
         this.querySelector('.settings-trigger')?.addEventListener('click', () => this.settings?.open());
         this.querySelector('.shuffle-wallpaper')?.addEventListener('click', (event) => void this.shuffleWallpaper(event.currentTarget as HTMLButtonElement));
         this.addEventListener('wallpaper-error', this.onWallpaperError as EventListener);
         this.addEventListener('wallpaper-tone', this.onWallpaperTone as EventListener);
-        this.addEventListener('open-spotlight', () => this.spotlight?.open());
-        this.addEventListener('open-launchpad', ((event: CustomEvent<{ view?: LaunchpadView }>) => {
-            this.launchpad?.open(event.detail?.view ?? 'bookmarks');
-        }) as EventListener);
     }
 
-    private get spotlight(): SpotlightSearch | null {
-        return this.querySelector('spotlight-search');
-    }
-
-    private get launchpad(): BookmarkLaunchpad | null {
-        return this.querySelector('bookmark-launchpad');
+    private get search(): SearchBox | null {
+        return this.querySelector('search-box');
     }
 
     private get settings(): SettingsPanel | null {
@@ -154,10 +141,10 @@ class InfinityNewTabApp extends HTMLElement {
     };
 
     private readonly goIdle = (): void => {
-        // Stay awake while something is open, being typed into or resting under the pointer's glass lens.
+        // Stay awake while something is open or being typed into.
         if (hasOpenLayer()
             || isTypingTarget(document.activeElement)
-            || document.querySelector('.liquid-glass-lens.is-visible, .context-menu, .modal-backdrop')) {
+            || document.querySelector('.context-menu, .modal-backdrop')) {
             this.wake();
             return;
         }
@@ -175,15 +162,15 @@ class InfinityNewTabApp extends HTMLElement {
 
     private readonly onKeyDown = (event: KeyboardEvent): void => {
         const commandK = event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey;
-        if (commandK && this.spotlight?.isOpen) {
+        if (commandK && this.search?.hasFocus) {
             event.preventDefault();
-            this.spotlight.close();
+            (document.activeElement as HTMLElement | null)?.blur();
             return;
         }
         if (hasOpenLayer()) return;
         if (commandK || (event.key === '/' && !isTypingTarget(event.target))) {
             event.preventDefault();
-            this.spotlight?.open();
+            this.search?.focusField();
         }
     };
 }
@@ -196,17 +183,13 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 const elements: Array<[string, CustomElementConstructor]> = [
-    ['liquid-glass-system', LiquidGlassSystem],
-    ['liquid-range', LiquidRange],
-    ['liquid-toggle', LiquidToggle],
+    ['glass-system', GlassSystem],
     ['wallpaper-surface', WallpaperSurface],
     ['wallpaper-badge', WallpaperBadge],
     ['status-strip', StatusStrip],
     ['dashboard-header', DashboardHeader],
-    ['search-pill', SearchPill],
-    ['home-dock', HomeDock],
-    ['spotlight-search', SpotlightSearch],
-    ['bookmark-launchpad', BookmarkLaunchpad],
+    ['search-box', SearchBox],
+    ['bookmark-index', BookmarkIndex],
     ['settings-panel', SettingsPanel],
     ['bookmark-dialog', BookmarkDialog],
     ['backup-toast', BackupToast],

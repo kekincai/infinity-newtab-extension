@@ -6,21 +6,21 @@ import { escapeHtml } from '../core/utils';
 import { resetWallpaper, useLocalWallpaper, useOnlineWallpaper, wallpaperLabel } from '../core/wallpaper-service';
 import { StoreElement } from './base';
 import { formatDate } from './dashboard-header';
-import { ICONS } from './icons';
-import { ENGINES, SHORTCUT_LABEL } from './spotlight-search';
+import { ICONS, SETTINGS_GLYPHS } from './icons';
+import { ENGINES, SHORTCUT_LABEL } from './search-box';
 import { afterMotion, confirmAction, notify, notifyError, pushLayer } from './ui-layer';
 
 type Pane = 'appearance' | 'widgets' | 'wallpaper' | 'data';
 type Option = [value: string, label: string];
 
-const PANES: Array<[Pane, string, string, string]> = [
-    ['appearance', '外观', ICONS.look, '#0a84ff'],
-    ['widgets', '组件', ICONS.widgets, '#ff9f0a'],
-    ['wallpaper', '壁纸', ICONS.wallpaper, '#30b0c7'],
-    ['data', '数据', ICONS.database, '#8e8e93']
+const PANES: Array<[Pane, string]> = [
+    ['appearance', '外观'],
+    ['widgets', '组件'],
+    ['wallpaper', '壁纸'],
+    ['data', '数据']
 ];
 
-/** Centered settings window. Every pane is built once, so liquid controls keep their filters between visits. */
+/** A macOS-style settings window. Every pane is built once and only synced afterwards. */
 export class SettingsPanel extends StoreElement {
     protected readonly observedChanges = ['settings.appearance', 'settings.wallpaper', 'settings.layout', 'bookmarks', 'folders'] as const;
     private openState = false;
@@ -34,6 +34,7 @@ export class SettingsPanel extends StoreElement {
         if (this.openState) return;
         this.openState = true;
         this.syncOpenState();
+        this.placeSegmentThumbs();
         this.releaseLayer = pushLayer(this.querySelector<HTMLElement>('.settings-window')!, () => this.close());
         void this.refreshPreview();
         void this.refreshData();
@@ -66,20 +67,19 @@ export class SettingsPanel extends StoreElement {
         const settings = appStore.state.settings;
         this.innerHTML = `
             <div class="settings-scrim" aria-hidden="true"></div>
-            <section class="glass glass-window settings-window" role="dialog" aria-modal="true" aria-label="设置" aria-hidden="true" inert>
+            <section class="glass-panel settings-window" role="dialog" aria-modal="true" aria-label="设置" aria-hidden="true" inert>
                 <aside class="settings-sidebar">
                     <div class="settings-title">
-                        <button class="settings-close" type="button" aria-label="关闭设置">${ICONS.close}</button>
-                        <h2>设置</h2>
+                        <button class="settings-close" type="button" aria-label="关闭设置" title="关闭">${ICONS.close}</button>
                     </div>
                     <label class="settings-search">
                         ${ICONS.search}
                         <input type="search" placeholder="搜索" aria-label="搜索设置" autocomplete="off">
                     </label>
                     <nav class="settings-nav" aria-label="设置分类">
-                        ${PANES.map(([pane, label, icon, color]) => `
-                            <button class="settings-nav-item" type="button" data-pane="${pane}" data-liquid-item>
-                                <span class="nav-glyph" style="background:${color}">${icon}</span><span>${label}</span>
+                        ${PANES.map(([pane, label]) => `
+                            <button class="settings-nav-item" type="button" data-pane="${pane}">
+                                <span class="nav-tile" data-tile="${pane}">${SETTINGS_GLYPHS[pane]}</span><span>${label}</span>
                             </button>`).join('')}
                     </nav>
                     <span class="settings-version">Infinity New Tab ${escapeHtml(chrome.runtime?.getManifest?.().version ?? '')}</span>
@@ -120,14 +120,11 @@ export class SettingsPanel extends StoreElement {
             ${group('', `
                 ${toggleRow('showClock', '时间与日期')}
                 ${toggleRow('showSearch', '搜索栏', `关闭后仍可用 ${SHORTCUT_LABEL} 呼出`)}
-                ${toggleRow('showBookmarks', 'Dock')}
+                ${toggleRow('showBookmarks', '书签')}
                 ${toggleRow('showStatus', '状态胶囊', '只在播放媒体、下载或使用电池时出现')}
-                ${toggleRow('showRecent', '常访问网站', '根据本机最近 30 天的浏览记录生成，出现在 Dock、启动台和搜索中')}
             `)}
-            ${group('Dock', `
-                ${segmentRow('dockSource', '显示的书签', layout.dockSource, [['bookmarks', '固定的书签'], ['recent', '常访问']], '固定的书签就是“全部”里的书签，可在启动台中拖动排序', 'showBookmarks showRecent')}
-                ${rangeRow('dockSize', '图标大小', layout.dockSize, 40, 72, '', 'showBookmarks')}
-                ${toggleRow('dockMagnify', '悬停放大', '', 'showBookmarks')}
+            ${group('书签', `
+                ${toggleRow('showRecent', '常访问网站', '根据本机最近 30 天的浏览记录生成，排在书签最后，也出现在搜索中')}
                 ${toggleRow('openInNewTab', '在新标签页打开书签')}
             `)}
             ${group('搜索', `
@@ -145,9 +142,9 @@ export class SettingsPanel extends StoreElement {
                     <strong class="wallpaper-name"></strong>
                     <span class="row-sub wallpaper-meta"></span>
                     <div class="wallpaper-actions">
-                        <label class="pill-button primary upload-wallpaper" data-liquid-item>选择视频或图片…<input type="file" accept="image/*,video/*" hidden></label>
-                        <button class="pill-button random-wallpaper" type="button" data-liquid-item>换一个在线壁纸</button>
-                        <button class="pill-button reset-wallpaper" type="button" data-liquid-item>恢复默认</button>
+                        <label class="pill-button primary upload-wallpaper">选择视频或图片…<input type="file" accept="image/*,video/*" hidden></label>
+                        <button class="pill-button random-wallpaper" type="button">换一个在线壁纸</button>
+                        <button class="pill-button reset-wallpaper" type="button">恢复默认</button>
                     </div>
                 </div>
             </div>
@@ -172,12 +169,12 @@ export class SettingsPanel extends StoreElement {
                 ${infoRow('本地媒体', '视频与图片壁纸保存在本机，不占用同步空间', '<span class="row-value media-usage"></span>')}
             `)}
             ${group('备份', `
-                ${infoRow('导出备份', '书签、设置和本地壁纸，一个 JSON 文件', '<button class="pill-button export-data" type="button" data-liquid-item>导出…</button>')}
-                ${infoRow('从备份恢复', '支持 1.0 / 2.0 备份，会覆盖当前数据', '<label class="pill-button import-data" data-liquid-item>导入…<input type="file" accept="application/json,.json" hidden></label>')}
+                ${infoRow('导出备份', '书签、设置和本地壁纸，一个 JSON 文件', '<button class="pill-button export-data" type="button">导出…</button>')}
+                ${infoRow('从备份恢复', '支持 1.0 / 2.0 备份，会覆盖当前数据', '<label class="pill-button import-data">导入…<input type="file" accept="application/json,.json" hidden></label>')}
                 ${toggleRow('backupReminder', '每月提醒我备份')}
             `)}
             ${group('', `
-                ${infoRow('清空所有数据', '删除书签、设置与本地壁纸，无法撤销', '<button class="pill-button danger reset-data" type="button" data-liquid-item>清空…</button>')}
+                ${infoRow('清空所有数据', '删除书签、设置与本地壁纸，无法撤销', '<button class="pill-button danger reset-data" type="button">清空…</button>')}
             `)}
         `);
     }
@@ -228,17 +225,15 @@ export class SettingsPanel extends StoreElement {
             input.addEventListener('input', () => {
                 const output = input.closest('.setting-row')?.querySelector('output');
                 if (output) output.textContent = `${input.value}${input.dataset.unit ?? ''}`;
+                syncSlider(input);
                 // Preview live; persisted on release to spare sync write quota.
-                const [selector, property, value] = input.name === 'dockSize'
-                    ? ['home-dock', '--dock-size', `${input.value}px`]
-                    : input.name === 'blur'
-                        ? ['wallpaper-surface', '--wallpaper-blur', `${input.value}px`]
-                        : ['wallpaper-surface', '--wallpaper-overlay', String(Number(input.value) / 100)];
-                document.querySelector<HTMLElement>(selector)?.style.setProperty(property, value);
+                const [property, value] = input.name === 'blur'
+                    ? ['--wallpaper-blur', `${input.value}px`]
+                    : ['--wallpaper-overlay', String(Number(input.value) / 100)];
+                document.querySelector<HTMLElement>('wallpaper-surface')?.style.setProperty(property, value);
             });
             input.addEventListener('change', () => {
-                const section = input.name === 'dockSize' ? 'layout' : 'wallpaper';
-                void appStore.updateSettings(section, { [input.name]: Number(input.value) }).catch(notifyError);
+                void appStore.updateSettings('wallpaper', { [input.name]: Number(input.value) }).catch(notifyError);
             });
         });
         const upload = this.querySelector<HTMLInputElement>('.upload-wallpaper input')!;
@@ -272,7 +267,21 @@ export class SettingsPanel extends StoreElement {
         });
         const content = this.querySelector<HTMLElement>('.settings-content');
         if (content) content.scrollTop = 0;
+        this.placeSegmentThumbs();
         if (target === 'wallpaper') void this.refreshPreview();
+    }
+
+    /** Slides each visible segmented control's thumb under its selected option. */
+    private placeSegmentThumbs(): void {
+        this.querySelectorAll<HTMLElement>('[data-segment]').forEach((groupElement) => {
+            const active = groupElement.querySelector<HTMLElement>('.is-active');
+            if (!active || !groupElement.offsetWidth) return;
+            groupElement.style.setProperty('--thumb-x', `${active.offsetLeft}px`);
+            groupElement.style.setProperty('--thumb-width', `${active.offsetWidth}px`);
+            groupElement.classList.toggle('has-thumb', true);
+            // The first placement lands without sliding in from the left edge.
+            if (!groupElement.classList.contains('is-placed')) requestAnimationFrame(() => groupElement.classList.add('is-placed'));
+        });
     }
 
     /** Searching shows matching rows from every pane at once. */
@@ -333,7 +342,6 @@ export class SettingsPanel extends StoreElement {
             glass: appearance.glass,
             clockFormat: appearance.clockFormat,
             dateFormat: appearance.dateFormat,
-            dockSource: layout.dockSource,
             searchEngine: layout.searchEngine,
             wallpaperKind: wallpaperKind(wallpaper)
         };
@@ -357,7 +365,6 @@ export class SettingsPanel extends StoreElement {
             showBookmarks: layout.showBookmarks,
             showStatus: layout.showStatus,
             showRecent: layout.showRecent,
-            dockMagnify: layout.dockMagnify,
             openInNewTab: layout.openInNewTab,
             saveSearches: layout.saveSearches,
             backupReminder: layout.backupReminder,
@@ -368,19 +375,20 @@ export class SettingsPanel extends StoreElement {
         };
         this.querySelectorAll<HTMLInputElement>('input[data-toggle]').forEach((input) => {
             input.checked = toggles[input.dataset.toggle ?? ''] ?? input.checked;
-            input.closest('liquid-toggle')?.classList.toggle('is-checked', input.checked);
         });
         this.querySelectorAll<HTMLElement>('[data-depends]').forEach((row) => {
             row.classList.toggle('is-disabled', (row.dataset.depends ?? '').split(' ').some((name) => !toggles[name]));
         });
 
-        const ranges: Record<string, number> = { blur: wallpaper.blur, overlay: wallpaper.overlay, dockSize: layout.dockSize };
+        const ranges: Record<string, number> = { blur: wallpaper.blur, overlay: wallpaper.overlay };
         this.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach((input) => {
             const value = ranges[input.name];
+            syncSlider(input);
             if (!Number.isFinite(value) || Number(input.value) === value) return;
             input.value = String(value);
             input.dispatchEvent(new Event('input', { bubbles: false }));
         });
+        this.placeSegmentThumbs();
         const reset = this.querySelector<HTMLElement>('.reset-wallpaper');
         if (reset) reset.hidden = wallpaper.type === 'gradient';
         if (this.openState) void this.refreshPreview();
@@ -406,7 +414,6 @@ export class SettingsPanel extends StoreElement {
             else if (name === 'glass') await appStore.updateSettings('appearance', { glass: value as AppSettings['appearance']['glass'] });
             else if (name === 'clockFormat') await appStore.updateSettings('appearance', { clockFormat: value as '12h' | '24h' });
             else if (name === 'dateFormat') await appStore.updateSettings('appearance', { dateFormat: value as 'long' | 'short' });
-            else if (name === 'dockSource') await appStore.updateSettings('layout', { dockSource: value as AppSettings['layout']['dockSource'] });
             else if (name === 'searchEngine') await appStore.updateSettings('layout', { searchEngine: value as AppSettings['layout']['searchEngine'] });
             else if (name === 'wallpaperKind') this.pickWallpaper(value);
         } catch (error) { notifyError(error); }
@@ -562,14 +569,14 @@ function segmentRow(name: string, label: string, value: string, options: Option[
             <div class="segmented" role="radiogroup" aria-labelledby="segment-${name}" data-segment="${name}">
                 ${options.map(([optionValue, optionLabel]) => {
                     const checked = optionValue === value;
-                    return `<button type="button" role="radio" aria-checked="${checked}" tabindex="${checked ? 0 : -1}" class="${checked ? 'is-active' : ''}" data-value="${optionValue}" data-liquid-item>${escapeHtml(optionLabel)}</button>`;
+                    return `<button type="button" role="radio" aria-checked="${checked}" tabindex="${checked ? 0 : -1}" class="${checked ? 'is-active' : ''}" data-value="${optionValue}">${escapeHtml(optionLabel)}</button>`;
                 }).join('')}
             </div>
         </div>`;
 }
 
 function toggleRow(name: string, label: string, sub = '', dependsOn = ''): string {
-    return `<label class="setting-row toggle-row" ${depends(dependsOn)}>${rowLabel(label, sub)}<liquid-toggle><input type="checkbox" role="switch" data-toggle="${name}"><span class="liquid-toggle-track" aria-hidden="true"><span class="liquid-toggle-thumb"></span></span></liquid-toggle></label>`;
+    return `<label class="setting-row toggle-row" ${depends(dependsOn)}>${rowLabel(label, sub)}<span class="switch"><input type="checkbox" role="switch" data-toggle="${name}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></span></label>`;
 }
 
 function rangeRow(name: string, label: string, value: number, min: number, max: number, unit: string, dependsOn = '', sub = ''): string {
@@ -577,10 +584,18 @@ function rangeRow(name: string, label: string, value: number, min: number, max: 
         <div class="setting-row" ${depends(dependsOn)}>
             ${rowLabel(label, sub)}
             <span class="range-control">
-                <span class="range-row"><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}"></liquid-range></span>
+                <input class="slider" type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}">
                 <output>${value}${unit}</output>
             </span>
         </div>`;
+}
+
+/** The filled part of a slider's track follows its value. */
+function syncSlider(input: HTMLInputElement): void {
+    const minimum = Number(input.min) || 0;
+    const maximum = Number(input.max) || 100;
+    const progress = maximum === minimum ? 0 : (Number(input.value) - minimum) / (maximum - minimum);
+    input.style.setProperty('--progress', `${Math.max(0, Math.min(1, progress)) * 100}%`);
 }
 
 function wallpaperKind({ type, value }: AppSettings['wallpaper']): string {

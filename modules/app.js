@@ -47,6 +47,18 @@
   function cleanDisplayName(value) {
     return cleanText(value, 160).replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "");
   }
+  function siteLabel(hostname) {
+    const host = hostname.toLowerCase().replace(/^www\./, "");
+    if (HOST_NAMES[host]) return HOST_NAMES[host];
+    if (!host.includes(".") || /^[\d.]+$/.test(host) || host.includes(":")) return host;
+    const parts = host.split(".");
+    const suffix = parts.length > 2 && TWO_LEVEL_SUFFIXES.has(parts.slice(-2).join(".")) ? 2 : 1;
+    const label = parts[parts.length - suffix - 1] ?? host;
+    return BRAND_NAMES[label] ?? label.charAt(0).toUpperCase() + label.slice(1);
+  }
+  function isAddressLike(value) {
+    return /^(https?:\/\/)?[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/i.test(value.trim());
+  }
   function truncate(value, maxLength) {
     const text = String(value ?? "");
     return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}\u2026`;
@@ -84,12 +96,69 @@
   function bookmarkIconFallback(bookmark) {
     return bookmark.icon && !isManagedFavicon(bookmark.icon) ? faviconUrl(bookmark.url) : DEFAULT_ICON;
   }
-  var DEFAULT_ICON, BOOKMARK_PROTOCOLS;
+  var DEFAULT_ICON, BOOKMARK_PROTOCOLS, TWO_LEVEL_SUFFIXES, HOST_NAMES, BRAND_NAMES;
   var init_utils = __esm({
     "src/core/utils.ts"() {
       "use strict";
       DEFAULT_ICON = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI4IiBmaWxsPSIjNjM2NmYxIi8+PHBhdGggZD0iTTE2IDhWMjRNOCAxNkgyNCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=";
       BOOKMARK_PROTOCOLS = /* @__PURE__ */ new Set(["http:", "https:", "chrome-extension:"]);
+      TWO_LEVEL_SUFFIXES = /* @__PURE__ */ new Set([
+        "com.cn",
+        "net.cn",
+        "org.cn",
+        "gov.cn",
+        "edu.cn",
+        "com.hk",
+        "com.tw",
+        "co.jp",
+        "ne.jp",
+        "or.jp",
+        "co.kr",
+        "co.uk",
+        "org.uk",
+        "ac.uk",
+        "com.au",
+        "co.nz",
+        "com.br",
+        "co.in",
+        "com.sg"
+      ]);
+      HOST_NAMES = {
+        "mail.google.com": "Gmail",
+        "docs.google.com": "Google \u6587\u6863",
+        "drive.google.com": "Google \u4E91\u7AEF\u786C\u76D8",
+        "translate.google.com": "Google \u7FFB\u8BD1",
+        "maps.google.com": "Google \u5730\u56FE",
+        "music.youtube.com": "YouTube Music",
+        "news.ycombinator.com": "Hacker News",
+        "developer.mozilla.org": "MDN",
+        "chat.openai.com": "ChatGPT"
+      };
+      BRAND_NAMES = {
+        "163": "\u7F51\u6613",
+        baidu: "\u767E\u5EA6",
+        bgm: "Bangumi",
+        bilibili: "Bilibili",
+        chatgpt: "ChatGPT",
+        douban: "\u8C46\u74E3",
+        github: "GitHub",
+        icloud: "iCloud",
+        jd: "\u4EAC\u4E1C",
+        linkedin: "LinkedIn",
+        moegirl: "\u840C\u5A18\u767E\u79D1",
+        myanimelist: "MyAnimeList",
+        npmjs: "npm",
+        openai: "OpenAI",
+        pixiv: "pixiv",
+        qq: "QQ",
+        sspai: "\u5C11\u6570\u6D3E",
+        stackoverflow: "Stack Overflow",
+        taobao: "\u6DD8\u5B9D",
+        v2ex: "V2EX",
+        weibo: "\u5FAE\u535A",
+        youtube: "YouTube",
+        zhihu: "\u77E5\u4E4E"
+      };
     }
   });
 
@@ -169,9 +238,6 @@
         showRecent: booleanOr(layout.showRecent, true),
         openInNewTab: booleanOr(layout.openInNewTab, false),
         searchEngine: searchEngines.includes(String(layout.searchEngine)) ? layout.searchEngine : "google",
-        dockSource: layout.dockSource === "recent" ? "recent" : "bookmarks",
-        dockSize: Math.round(clampNumber(layout.dockSize, 40, 72, 56)),
-        dockMagnify: booleanOr(layout.dockMagnify, true),
         saveSearches: booleanOr(layout.saveSearches, true),
         backupReminder: booleanOr(layout.backupReminder, true)
       },
@@ -251,9 +317,6 @@
           showRecent: true,
           openInNewTab: false,
           searchEngine: "google",
-          dockSource: "bookmarks",
-          dockSize: 56,
-          dockMagnify: true,
           saveSearches: true,
           backupReminder: true
         },
@@ -1071,16 +1134,15 @@
       const backdrop = document.createElement("div");
       backdrop.className = "modal-backdrop is-open";
       backdrop.innerHTML = `
-            <form class="modal glass glass-thick" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
+            <form class="modal glass-panel" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
                 <header class="modal-header">
                     <h2 id="modal-title">${escapeHtml(options.title)}</h2>
-                    <button class="icon-close" type="button" aria-label="\u5173\u95ED" data-action="cancel">${CLOSE_ICON}</button>
                 </header>
                 ${options.body ? `<p class="modal-body">${escapeHtml(options.body)}</p>` : ""}
                 ${options.input ? `<label class="field"><span>${escapeHtml(options.input.label)}</span><input name="value" type="text" autocomplete="off" maxlength="${options.input.maxLength ?? 80}" placeholder="${escapeHtml(options.input.placeholder ?? "")}" value="${escapeHtml(options.input.value ?? "")}"></label>` : ""}
                 <footer class="modal-actions">
-                    <button class="pill-button" type="button" data-action="cancel" data-liquid-item>${escapeHtml(options.cancelText ?? "\u53D6\u6D88")}</button>
-                    <button class="pill-button ${options.danger ? "danger" : "primary"}" type="submit" data-liquid-item>${escapeHtml(options.confirmText ?? "\u786E\u5B9A")}</button>
+                    <button class="pill-button" type="button" data-action="cancel">${escapeHtml(options.cancelText ?? "\u53D6\u6D88")}</button>
+                    <button class="pill-button ${options.danger ? "danger" : "primary"}" type="submit">${escapeHtml(options.confirmText ?? "\u786E\u5B9A")}</button>
                 </footer>
             </form>`;
       document.body.append(backdrop);
@@ -1129,7 +1191,7 @@
       document.body.append(region);
     }
     const toast = document.createElement("div");
-    toast.className = `toast glass glass-thick app-notice is-${kind}`;
+    toast.className = `toast glass-panel app-notice is-${kind}`;
     toast.textContent = message;
     region.append(toast);
     window.setTimeout(() => {
@@ -1143,7 +1205,7 @@
   function openMenu(items, at) {
     document.querySelector(".context-menu")?.dispatchEvent(new Event("menu-close"));
     const menu = document.createElement("div");
-    menu.className = "context-menu glass glass-thick";
+    menu.className = "context-menu glass-panel";
     menu.setAttribute("role", "menu");
     menu.innerHTML = items.map((item, index) => {
       if ("separator" in item) return "<hr>";
@@ -1201,7 +1263,7 @@
       void Promise.all(running.map((animation) => animation.finished.catch(() => void 0))).then(run);
     });
   }
-  var layers, FOCUSABLE, CLOSE_ICON;
+  var layers, FOCUSABLE;
   var init_ui_layer = __esm({
     "src/components/ui-layer.ts"() {
       "use strict";
@@ -1219,7 +1281,6 @@
         }
         if (event.key === "Tab") trapFocus(top.element, event);
       }, true);
-      CLOSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"></path></svg>';
     }
   });
 
@@ -1244,11 +1305,11 @@
             return;
           }
           this.innerHTML = `
-            <div class="backup-toast glass glass-thick" role="status">
+            <div class="backup-toast glass-panel" role="status">
                 <span>\u5DF2\u7ECF\u4E00\u4E2A\u6708\u6CA1\u5907\u4EFD\u4E86\uFF0C\u5BFC\u51FA\u4E00\u4EFD\u4E66\u7B7E\u66F4\u5B89\u5FC3</span>
                 <div class="backup-actions">
-                    <button class="pill-button backup-later" type="button" data-liquid-item>\u7A0D\u540E</button>
-                    <button class="pill-button primary backup-now" type="button" data-liquid-item>\u7ACB\u5373\u5BFC\u51FA</button>
+                    <button class="pill-button backup-later" type="button">\u7A0D\u540E</button>
+                    <button class="pill-button primary backup-now" type="button">\u7ACB\u5373\u5BFC\u51FA</button>
                 </div>
             </div>
         `;
@@ -1269,15 +1330,15 @@
   });
 
   // src/components/icons.ts
-  var icon, solid, ICONS;
+  var icon, solid, ICONS, SETTINGS_GLYPHS;
   var init_icons = __esm({
     "src/components/icons.ts"() {
       "use strict";
       icon = (paths) => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
       solid = (paths) => `<svg class="icon icon-solid" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
       ICONS = {
-        settings: icon('<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>'),
-        sparkle: icon('<path d="M12 3l1.8 4.6L18 9.4l-4.2 1.8L12 16l-1.8-4.8L6 9.4l4.2-1.8z"></path><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"></path>'),
+        settings: icon('<path d="M10.02 4.87L10.45 2.73A9.4 9.4 0 0 1 13.55 2.73L13.98 4.87A7.4 7.4 0 0 1 15.64 5.56L17.46 4.35A9.4 9.4 0 0 1 19.65 6.54L18.44 8.36A7.4 7.4 0 0 1 19.13 10.02L21.27 10.45A9.4 9.4 0 0 1 21.27 13.55L19.13 13.98A7.4 7.4 0 0 1 18.44 15.64L19.65 17.46A9.4 9.4 0 0 1 17.46 19.65L15.64 18.44A7.4 7.4 0 0 1 13.98 19.13L13.55 21.27A9.4 9.4 0 0 1 10.45 21.27L10.02 19.13A7.4 7.4 0 0 1 8.36 18.44L6.54 19.65A9.4 9.4 0 0 1 4.35 17.46L5.56 15.64A7.4 7.4 0 0 1 4.87 13.98L2.73 13.55A9.4 9.4 0 0 1 2.73 10.45L4.87 10.02A7.4 7.4 0 0 1 5.56 8.36L4.35 6.54A9.4 9.4 0 0 1 6.54 4.35L8.36 5.56A7.4 7.4 0 0 1 10.02 4.87Z"></path><circle cx="12" cy="12" r="3.1"></circle>'),
+        shuffle: icon('<path d="M3 17h3.4c1.6 0 2.6-.7 3.5-2l4.2-6c.9-1.3 1.9-2 3.5-2H21"></path><path d="M3 7h3.4c1.6 0 2.6.7 3.5 2l.6.9M13.5 14.1l.6.9c.9 1.3 1.9 2 3.5 2H21"></path><path d="m18.5 4.5 2.5 2.5-2.5 2.5M18.5 14.5l2.5 2.5-2.5 2.5"></path>'),
         search: icon('<circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>'),
         plus: icon('<path d="M12 5v14M5 12h14"></path>'),
         folder: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path>'),
@@ -1297,12 +1358,130 @@
         bolt: icon('<path d="m13 3-7 10h5l-1 8 7-10h-5z"></path>'),
         clock: icon('<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>'),
         grid: solid('<rect x="4" y="4" width="4" height="4" rx="1.2"></rect><rect x="10" y="4" width="4" height="4" rx="1.2"></rect><rect x="16" y="4" width="4" height="4" rx="1.2"></rect><rect x="4" y="10" width="4" height="4" rx="1.2"></rect><rect x="10" y="10" width="4" height="4" rx="1.2"></rect><rect x="16" y="10" width="4" height="4" rx="1.2"></rect><rect x="4" y="16" width="4" height="4" rx="1.2"></rect><rect x="10" y="16" width="4" height="4" rx="1.2"></rect><rect x="16" y="16" width="4" height="4" rx="1.2"></rect>'),
-        look: icon('<circle cx="12" cy="12" r="8"></circle><path class="icon-fill" d="M12 4a8 8 0 0 0 0 16z"></path>'),
-        widgets: solid('<rect x="4" y="4" width="7" height="7" rx="2"></rect><rect x="13" y="4" width="7" height="7" rx="2"></rect><rect x="4" y="13" width="7" height="7" rx="2"></rect><rect x="13" y="13" width="7" height="7" rx="2"></rect>'),
-        wallpaper: icon('<rect x="3" y="5" width="18" height="14" rx="3"></rect><path class="icon-fill" d="M10 9.5v5l4.5-2.5z"></path>'),
-        database: icon('<ellipse cx="12" cy="6" rx="7" ry="2.5"></ellipse><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"></path>'),
         close: icon('<path d="M6 6l12 12M18 6 6 18"></path>')
       };
+      SETTINGS_GLYPHS = {
+        appearance: icon('<circle cx="12" cy="12" r="7.6"></circle><path class="icon-fill" d="M12 4.4a7.6 7.6 0 0 0 0 15.2z"></path>'),
+        widgets: solid('<rect x="4.5" y="4.5" width="6.4" height="6.4" rx="1.8"></rect><rect x="13.1" y="4.5" width="6.4" height="6.4" rx="1.8"></rect><rect x="4.5" y="13.1" width="6.4" height="6.4" rx="1.8"></rect><rect x="13.1" y="13.1" width="6.4" height="6.4" rx="1.8"></rect>'),
+        wallpaper: icon('<rect x="3.8" y="5.3" width="16.4" height="13.4" rx="2.8"></rect><path class="icon-fill" stroke="none" d="M5.6 16.9l4-4.9 2.9 3.2 2.1-2.2 3.8 3.9z"></path><circle class="icon-fill" stroke="none" cx="15.4" cy="9.4" r="1.5"></circle>'),
+        data: icon('<path d="M3.8 12.6 6.2 6.5A2 2 0 0 1 8.1 5.2h7.8a2 2 0 0 1 1.9 1.3l2.4 6.1"></path><rect x="3.8" y="12.6" width="16.4" height="6.2" rx="2"></rect><circle class="icon-fill" stroke="none" cx="16.6" cy="15.7" r="1"></circle>')
+      };
+    }
+  });
+
+  // src/components/bookmark-actions.ts
+  function folderLabel(folder) {
+    return folder === ROOT_FOLDER ? "\u4E66\u7B7E" : folder;
+  }
+  function findBookmark(id) {
+    return appStore.state.bookmarks.find((item) => String(item.id) === String(id));
+  }
+  function compareBookmarks2(left, right) {
+    return left.order - right.order || String(left.id).localeCompare(String(right.id));
+  }
+  function bookmarksIn(folder) {
+    return appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks2);
+  }
+  function bookmarkName(bookmark) {
+    const name = cleanText(bookmark.name, 160);
+    return name && !isAddressLike(name) ? name : siteLabel(new URL(bookmark.url).hostname);
+  }
+  function interceptExtensionLink(event, url) {
+    if (event.defaultPrevented || new URL(url).protocol !== "chrome-extension:") return;
+    event.preventDefault();
+    void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
+  }
+  function openInNewTab(url) {
+    void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
+  }
+  function openBookmarkDialog(source, detail) {
+    source.dispatchEvent(new CustomEvent("open-bookmark-dialog", { bubbles: true, composed: true, detail }));
+  }
+  function bookmarkMenu(source, bookmark, at) {
+    const destinations = appStore.state.folders.filter((folder) => folder !== bookmark.folder);
+    openMenu([
+      { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => openInNewTab(bookmark.url) },
+      { label: "\u7F16\u8F91\u2026", icon: ICONS.edit, action: () => openBookmarkDialog(source, { bookmark }) },
+      ...destinations.length ? [
+        { separator: true },
+        { heading: "\u79FB\u52A8\u5230\u6587\u4EF6\u5939" },
+        ...destinations.map((folder) => ({ label: folderLabel(folder), icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder) }))
+      ] : [],
+      { separator: true },
+      { label: "\u5220\u9664\u4E66\u7B7E", icon: ICONS.trash, danger: true, action: () => void deleteBookmark(bookmark) }
+    ], at);
+  }
+  function siteMenu(source, site, at) {
+    openMenu([
+      { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => openInNewTab(site.url) },
+      { label: "\u6DFB\u52A0\u5230\u4E66\u7B7E", icon: ICONS.plus, action: () => openBookmarkDialog(source, { draft: { url: site.url, name: site.title } }) }
+    ], at);
+  }
+  async function moveBookmark(id, folder, targetId) {
+    try {
+      await appStore.moveBookmark(id, folder, targetId);
+    } catch (error) {
+      notifyError(error);
+    }
+  }
+  async function deleteBookmark(bookmark) {
+    const confirmed = await confirmAction({
+      title: `\u5220\u9664\u201C${bookmarkName(bookmark) || bookmark.url}\u201D\uFF1F`,
+      confirmText: "\u5220\u9664",
+      danger: true
+    });
+    if (confirmed) await appStore.deleteBookmark(bookmark.id).catch(notifyError);
+  }
+  async function createFolder() {
+    const name = await promptText("\u65B0\u5EFA\u6587\u4EF6\u5939", { label: "\u540D\u79F0", placeholder: "\u4F8B\u5982\uFF1A\u5DE5\u4F5C\u3001\u5A31\u4E50" }, "\u521B\u5EFA");
+    if (!name) return null;
+    try {
+      if (await appStore.addFolder(name)) return name;
+      notifyError(new Error(`\u5DF2\u7ECF\u6709\u540D\u4E3A\u201C${name}\u201D\u7684\u6587\u4EF6\u5939`));
+    } catch (error) {
+      notifyError(error);
+    }
+    return null;
+  }
+  async function renameFolder(folder, follow = () => void 0) {
+    const name = await promptText("\u91CD\u547D\u540D\u6587\u4EF6\u5939", { label: "\u540D\u79F0", value: folder });
+    if (!name || name === folder) return;
+    follow(name);
+    try {
+      if (await appStore.renameFolder(folder, name)) return;
+      follow(folder);
+      notifyError(new Error(`\u5DF2\u7ECF\u6709\u540D\u4E3A\u201C${name}\u201D\u7684\u6587\u4EF6\u5939`));
+    } catch (error) {
+      follow(folder);
+      notifyError(error);
+    }
+  }
+  async function deleteFolder(folder) {
+    const count = bookmarksIn(folder).length;
+    const confirmed = await confirmAction({
+      title: `\u5220\u9664\u6587\u4EF6\u5939\u201C${folder}\u201D\uFF1F`,
+      body: count ? `\u5176\u4E2D\u7684 ${count} \u4E2A\u4E66\u7B7E\u4F1A\u79FB\u5230\u201C${folderLabel(ROOT_FOLDER)}\u201D\uFF0C\u4E0D\u4F1A\u88AB\u5220\u9664\u3002` : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\u3002",
+      confirmText: "\u5220\u9664",
+      danger: true
+    });
+    if (!confirmed) return false;
+    try {
+      await appStore.deleteFolder(folder);
+      return true;
+    } catch (error) {
+      notifyError(error);
+      return false;
+    }
+  }
+  var ROOT_FOLDER;
+  var init_bookmark_actions = __esm({
+    "src/components/bookmark-actions.ts"() {
+      "use strict";
+      init_store();
+      init_utils();
+      init_icons();
+      init_ui_layer();
+      ROOT_FOLDER = "\u5168\u90E8";
     }
   });
 
@@ -1316,7 +1495,7 @@
       "use strict";
       init_store();
       init_utils();
-      init_icons();
+      init_bookmark_actions();
       init_ui_layer();
       BookmarkDialog = class extends HTMLElement {
         editing;
@@ -1332,16 +1511,15 @@
           this.editing = event.detail.bookmark;
           this.open(event.detail);
         };
-        open({ bookmark, folder = "\u5168\u90E8", draft }) {
+        open({ bookmark, folder = ROOT_FOLDER, draft }) {
           this.close();
           const selected = bookmark?.folder ?? folder;
           const title = bookmark ? "\u7F16\u8F91\u4E66\u7B7E" : "\u6DFB\u52A0\u4E66\u7B7E";
           this.innerHTML = `
             <div class="modal-backdrop dialog-backdrop is-open">
-                <form class="modal bookmark-dialog glass glass-thick" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
+                <form class="modal bookmark-dialog glass-panel" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
                     <header class="modal-header">
                         <h2>${title}</h2>
-                        <button class="icon-close dialog-close" type="button" aria-label="\u5173\u95ED">${ICONS.close}</button>
                     </header>
                     <label class="field">
                         <span>\u7F51\u5740</span>
@@ -1352,11 +1530,11 @@
                     </label>
                     <label class="field">
                         <span>\u540D\u79F0</span>
-                        <input name="name" type="text" maxlength="160" autocomplete="off" placeholder="\u7559\u7A7A\u5219\u4F7F\u7528\u7F51\u7AD9\u57DF\u540D" value="${escapeHtml(bookmark?.name ?? draft?.name ?? "")}">
+                        <input name="name" type="text" maxlength="160" autocomplete="off" placeholder="\u7559\u7A7A\u5219\u4F7F\u7528\u7F51\u7AD9\u540D" value="${escapeHtml(bookmark?.name ?? draft?.name ?? "")}">
                     </label>
                     <label class="field">
                         <span>\u6587\u4EF6\u5939</span>
-                        <span class="select-wrap"><select name="folder">${appStore.state.folders.map((item) => `<option value="${escapeHtml(item)}" ${item === selected ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></span>
+                        <span class="select-wrap"><select name="folder">${appStore.state.folders.map((item) => `<option value="${escapeHtml(item)}" ${item === selected ? "selected" : ""}>${escapeHtml(folderLabel(item))}</option>`).join("")}</select></span>
                     </label>
                     <details class="field-advanced" ${bookmark?.icon ? "open" : ""}>
                         <summary>\u81EA\u5B9A\u4E49\u56FE\u6807</summary>
@@ -1367,8 +1545,8 @@
                     </details>
                     <p class="field-error" role="alert" hidden></p>
                     <footer class="modal-actions">
-                        <button class="pill-button cancel-dialog" type="button" data-liquid-item>\u53D6\u6D88</button>
-                        <button class="pill-button primary" type="submit" data-liquid-item>\u4FDD\u5B58</button>
+                        <button class="pill-button cancel-dialog" type="button">\u53D6\u6D88</button>
+                        <button class="pill-button primary" type="submit">\u4FDD\u5B58</button>
                     </footer>
                 </form>
             </div>
@@ -1394,7 +1572,6 @@
             updatePreview();
           });
           iconInput.addEventListener("change", updatePreview);
-          this.querySelector(".dialog-close")?.addEventListener("click", () => this.close());
           this.querySelector(".cancel-dialog")?.addEventListener("click", () => this.close());
           backdrop.addEventListener("pointerdown", (event) => {
             if (event.target === backdrop) this.close();
@@ -1405,7 +1582,7 @@
             const input = {
               url: String(data.get("url") ?? ""),
               name: String(data.get("name") ?? ""),
-              folder: String(data.get("folder") ?? "\u5168\u90E8"),
+              folder: String(data.get("folder") ?? ROOT_FOLDER),
               icon: String(data.get("icon") ?? "").trim()
             };
             if (!normalizeUrl(input.url)) {
@@ -1473,8 +1650,8 @@
   }
   function siteName(host, rootTitle) {
     const cleaned = rootTitle.replace(/^\(\d+\+?\)\s*/, "").split(/\s+[-|–—·]\s+/)[0].trim();
-    if (cleaned && cleaned.length <= 18) return cleaned;
-    return host;
+    if (cleaned && cleaned.length <= 18 && !isAddressLike(cleaned)) return cleaned;
+    return siteLabel(host);
   }
   function loadRecentSites(refresh = false) {
     if (!recentSites || refresh) {
@@ -1498,119 +1675,8 @@
   var init_history = __esm({
     "src/core/history.ts"() {
       "use strict";
-      recentSites = null;
-    }
-  });
-
-  // src/components/bookmark-actions.ts
-  function findBookmark(id) {
-    return appStore.state.bookmarks.find((item) => String(item.id) === String(id));
-  }
-  function compareBookmarks2(left, right) {
-    return left.order - right.order || String(left.id).localeCompare(String(right.id));
-  }
-  function bookmarksIn(folder) {
-    return appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks2);
-  }
-  function bookmarkName(bookmark) {
-    return cleanDisplayName(bookmark.name) || cleanDisplayName(new URL(bookmark.url).hostname);
-  }
-  function interceptExtensionLink(event, url) {
-    if (event.defaultPrevented || new URL(url).protocol !== "chrome-extension:") return;
-    event.preventDefault();
-    void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
-  }
-  function openInNewTab(url) {
-    void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
-  }
-  function openBookmarkDialog(source, detail) {
-    source.dispatchEvent(new CustomEvent("open-bookmark-dialog", { bubbles: true, composed: true, detail }));
-  }
-  function bookmarkMenu(source, bookmark, at) {
-    const destinations = appStore.state.folders.filter((folder) => folder !== bookmark.folder);
-    openMenu([
-      { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => openInNewTab(bookmark.url) },
-      { label: "\u7F16\u8F91\u2026", icon: ICONS.edit, action: () => openBookmarkDialog(source, { bookmark }) },
-      ...destinations.length ? [
-        { separator: true },
-        { heading: "\u79FB\u52A8\u5230\u6587\u4EF6\u5939" },
-        ...destinations.map((folder) => ({ label: folder, icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder) }))
-      ] : [],
-      { separator: true },
-      { label: "\u5220\u9664\u4E66\u7B7E", icon: ICONS.trash, danger: true, action: () => void deleteBookmark(bookmark) }
-    ], at);
-  }
-  function siteMenu(source, site, at) {
-    openMenu([
-      { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => openInNewTab(site.url) },
-      { label: "\u6DFB\u52A0\u5230\u4E66\u7B7E", icon: ICONS.plus, action: () => openBookmarkDialog(source, { draft: { url: site.url, name: site.title } }) }
-    ], at);
-  }
-  async function moveBookmark(id, folder, targetId) {
-    try {
-      await appStore.moveBookmark(id, folder, targetId);
-    } catch (error) {
-      notifyError(error);
-    }
-  }
-  async function deleteBookmark(bookmark) {
-    const confirmed = await confirmAction({
-      title: `\u5220\u9664\u201C${bookmarkName(bookmark) || bookmark.url}\u201D\uFF1F`,
-      confirmText: "\u5220\u9664",
-      danger: true
-    });
-    if (confirmed) await appStore.deleteBookmark(bookmark.id).catch(notifyError);
-  }
-  async function createFolder() {
-    const name = await promptText("\u65B0\u5EFA\u6587\u4EF6\u5939", { label: "\u540D\u79F0", placeholder: "\u4F8B\u5982\uFF1A\u5DE5\u4F5C\u3001\u5A31\u4E50" }, "\u521B\u5EFA");
-    if (!name) return null;
-    try {
-      if (await appStore.addFolder(name)) return name;
-      notifyError(new Error(`\u5DF2\u7ECF\u6709\u540D\u4E3A\u201C${name}\u201D\u7684\u6587\u4EF6\u5939`));
-    } catch (error) {
-      notifyError(error);
-    }
-    return null;
-  }
-  async function renameFolder(folder, follow = () => void 0) {
-    const name = await promptText("\u91CD\u547D\u540D\u6587\u4EF6\u5939", { label: "\u540D\u79F0", value: folder });
-    if (!name || name === folder) return;
-    follow(name);
-    try {
-      if (await appStore.renameFolder(folder, name)) return;
-      follow(folder);
-      notifyError(new Error(`\u5DF2\u7ECF\u6709\u540D\u4E3A\u201C${name}\u201D\u7684\u6587\u4EF6\u5939`));
-    } catch (error) {
-      follow(folder);
-      notifyError(error);
-    }
-  }
-  async function deleteFolder(folder) {
-    const count = bookmarksIn(folder).length;
-    const confirmed = await confirmAction({
-      title: `\u5220\u9664\u6587\u4EF6\u5939\u201C${folder}\u201D\uFF1F`,
-      body: count ? `\u5176\u4E2D\u7684 ${count} \u4E2A\u4E66\u7B7E\u4F1A\u79FB\u56DE\u201C${ROOT_FOLDER}\u201D\uFF0C\u4E0D\u4F1A\u88AB\u5220\u9664\u3002` : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\u3002",
-      confirmText: "\u5220\u9664",
-      danger: true
-    });
-    if (!confirmed) return false;
-    try {
-      await appStore.deleteFolder(folder);
-      return true;
-    } catch (error) {
-      notifyError(error);
-      return false;
-    }
-  }
-  var ROOT_FOLDER;
-  var init_bookmark_actions = __esm({
-    "src/components/bookmark-actions.ts"() {
-      "use strict";
-      init_store();
       init_utils();
-      init_icons();
-      init_ui_layer();
-      ROOT_FOLDER = "\u5168\u90E8";
+      recentSites = null;
     }
   });
 
@@ -1677,10 +1743,10 @@
     }
   });
 
-  // src/components/bookmark-launchpad.ts
-  var BookmarkLaunchpad;
-  var init_bookmark_launchpad = __esm({
-    "src/components/bookmark-launchpad.ts"() {
+  // src/components/bookmark-index.ts
+  var MIN_ROWS, ROW_HEIGHT, MAX_HEIGHT_SHARE, RECENT_LIMIT, BookmarkIndex;
+  var init_bookmark_index = __esm({
+    "src/components/bookmark-index.ts"() {
       "use strict";
       init_history();
       init_store();
@@ -1690,293 +1756,216 @@
       init_icons();
       init_site_icon();
       init_ui_layer();
-      BookmarkLaunchpad = class extends StoreElement {
+      MIN_ROWS = 4;
+      ROW_HEIGHT = 28;
+      MAX_HEIGHT_SHARE = 0.4;
+      RECENT_LIMIT = 8;
+      BookmarkIndex = class extends StoreElement {
         observedChanges = ["bookmarks", "folders", "settings.layout"];
-        view = "bookmarks";
-        folder = ROOT_FOLDER;
-        query = "";
         draggingId = null;
+        /** Refits when the footer gives the index a different width, e.g. once the wallpaper caption appears. */
+        resizeObserver = new ResizeObserver(([entry]) => {
+          if (entry.contentRect.width === this.fittedWidth) return;
+          this.fit();
+        });
+        fittedWidth = 0;
         recent = { sites: [], state: "idle", error: "" };
-        releaseLayer = null;
         connectedCallback() {
-          this.hidden = true;
+          this.addEventListener("click", this.onClick);
+          this.addEventListener("contextmenu", this.onContextMenu);
+          this.addEventListener("dragstart", this.onDragStart);
+          this.addEventListener("dragover", this.onDragOver);
+          this.addEventListener("dragleave", this.onDragLeave);
+          this.addEventListener("drop", this.onDrop);
+          this.addEventListener("dragend", this.onDragEnd);
+          this.addEventListener("wheel", this.onWheel, { passive: false });
+          window.addEventListener("resize", this.fit);
+          this.resizeObserver.observe(this);
           super.connectedCallback();
         }
         disconnectedCallback() {
           super.disconnectedCallback();
-          this.close();
-        }
-        get isOpen() {
-          return !this.hidden;
-        }
-        open(view = "bookmarks", folder = ROOT_FOLDER) {
-          this.view = view;
-          this.folder = folder;
-          this.query = "";
-          this.innerHTML = "";
-          if (!this.isOpen) {
-            this.hidden = false;
-            document.body.classList.add("launchpad-open");
-            this.releaseLayer = pushLayer(this, () => this.close());
-          }
-          this.render();
-          afterMotion(this, () => {
-            if (this.isOpen && !this.contains(document.activeElement)) this.querySelector(".launchpad-tab.is-active")?.focus({ preventScroll: true });
-          });
-        }
-        close() {
-          if (!this.isOpen) return;
-          this.hidden = true;
-          document.body.classList.remove("launchpad-open");
-          this.innerHTML = "";
-          const release = this.releaseLayer;
-          this.releaseLayer = null;
-          release?.();
+          window.removeEventListener("resize", this.fit);
+          this.resizeObserver.disconnect();
         }
         render() {
-          if (!this.isOpen) return;
-          if (!appStore.state.folders.includes(this.folder)) this.folder = ROOT_FOLDER;
-          if (!appStore.state.settings.layout.showRecent) this.view = "bookmarks";
-          if (this.view === "recent" && this.recent.state === "idle") void this.loadRecent();
-          if (!this.querySelector(".launchpad")) this.renderShell();
-          const grid = this.querySelector(".launchpad-grid");
-          const scroll = grid.scrollTop;
-          this.querySelector(".launchpad-tabs").innerHTML = this.tabsTemplate();
-          grid.dataset.view = this.query ? "search" : this.view;
-          grid.innerHTML = this.gridTemplate();
-          grid.scrollTop = scroll;
-          bindSiteIcons(this);
-          this.querySelectorAll(".bookmark-tile").forEach((card) => this.bindBookmark(card));
-          this.querySelectorAll("[data-drop-folder]").forEach((target) => this.bindFolderDrop(target));
-        }
-        /** The shell (and its search field) is built once per opening so typing, including IME input, is never interrupted. */
-        renderShell() {
+          const { showBookmarks, showRecent } = appStore.state.settings.layout;
+          this.hidden = !showBookmarks;
+          if (this.hidden) return;
+          if (showRecent && this.recent.state === "idle") void this.loadRecent();
+          const folders = appStore.state.folders.filter((folder) => folder !== ROOT_FOLDER);
           this.innerHTML = `
-            <div class="launchpad-backdrop" aria-hidden="true"></div>
-            <section class="launchpad" role="dialog" aria-modal="true" aria-label="\u542F\u52A8\u53F0">
-                <header class="launchpad-top">
-                    <label class="glass launchpad-search">
-                        ${ICONS.search}
-                        <input type="search" placeholder="\u5728\u4E66\u7B7E\u4E2D\u641C\u7D22" aria-label="\u5728\u4E66\u7B7E\u4E2D\u641C\u7D22" autocomplete="off" spellcheck="false">
-                    </label>
-                    <div class="glass launchpad-tabs" role="tablist" aria-label="\u4E66\u7B7E\u5206\u7EC4"></div>
-                </header>
-                <button class="glass launchpad-done" type="button" data-liquid-item>\u5B8C\u6210</button>
-                <div class="launchpad-grid"></div>
+            <nav class="index" aria-label="\u4E66\u7B7E">
+                ${this.groupTemplate(ROOT_FOLDER)}
+                ${folders.map((folder) => this.groupTemplate(folder)).join("")}
+                ${showRecent ? this.recentTemplate() : ""}
+            </nav>`;
+          bindSiteIcons(this);
+          this.querySelector(".index")?.addEventListener("scroll", this.syncEdges, { passive: true });
+          this.fit();
+        }
+        groupTemplate(folder) {
+          const bookmarks = bookmarksIn(folder);
+          const label = escapeHtml(folderLabel(folder));
+          const empty = bookmarks.length ? "" : folder === ROOT_FOLDER && !appStore.state.bookmarks.length ? `<li><button class="index-link index-first" type="button" data-add-folder="${escapeHtml(folder)}">${ICONS.plus}\u6DFB\u52A0\u7B2C\u4E00\u4E2A\u4E66\u7B7E</button></li>` : '<li class="index-note">\u62D6\u4E66\u7B7E\u5230\u8FD9\u91CC</li>';
+          return `
+            <section class="index-group" data-folder="${escapeHtml(folder)}" aria-label="${label}">
+                <h2 class="index-heading">
+                    <span class="index-title">${label}</span>
+                    <button class="index-action" type="button" data-add-folder="${escapeHtml(folder)}" aria-label="\u6DFB\u52A0\u4E66\u7B7E\u5230\u201C${label}\u201D" title="\u6DFB\u52A0\u4E66\u7B7E">${ICONS.plus}</button>
+                    <button class="index-action index-more" type="button" aria-label="\u201C${label}\u201D\u7684\u66F4\u591A\u64CD\u4F5C" title="\u66F4\u591A\u64CD\u4F5C">${ICONS.more}</button>
+                </h2>
+                <ul class="index-list">
+                    ${bookmarks.map((bookmark) => this.bookmarkTemplate(bookmark)).join("")}
+                    ${empty}
+                </ul>
             </section>`;
-          this.bindShell();
-        }
-        tabsTemplate() {
-          const { bookmarks, folders } = appStore.state;
-          const tab = (label, active, attributes) => `
-            <button class="launchpad-tab ${active ? "is-active" : ""}" type="button" role="tab" aria-selected="${active}" tabindex="${active ? 0 : -1}" data-liquid-item ${attributes}>${label}</button>`;
-          const browsing = !this.query;
-          return `
-                ${tab(`\u5168\u90E8 \xB7 ${bookmarks.length}`, browsing && this.view === "bookmarks" && this.folder === ROOT_FOLDER, `data-folder="${ROOT_FOLDER}" data-drop-folder="${ROOT_FOLDER}"`)}
-                ${appStore.state.settings.layout.showRecent ? tab("\u5E38\u8BBF\u95EE", browsing && this.view === "recent", 'data-view="recent"') : ""}
-                ${folders.filter((folder) => folder !== ROOT_FOLDER).map((folder) => tab(
-            escapeHtml(folder),
-            browsing && this.view === "bookmarks" && this.folder === folder,
-            `data-folder="${escapeHtml(folder)}" data-drop-folder="${escapeHtml(folder)}"`
-          )).join("")}
-                <button class="launchpad-tab create-folder" type="button" data-liquid-item aria-label="\u65B0\u5EFA\u6587\u4EF6\u5939" title="\u65B0\u5EFA\u6587\u4EF6\u5939">${ICONS.plus}</button>`;
-        }
-        gridTemplate() {
-          if (this.query) {
-            const query = this.query.toLowerCase();
-            const matches = [...appStore.state.bookmarks].sort(compareBookmarks2).filter((bookmark) => bookmarkName(bookmark).toLowerCase().includes(query) || bookmark.url.toLowerCase().includes(query));
-            return matches.map((bookmark) => this.bookmarkTemplate(bookmark)).join("") || `<p class="launchpad-message">\u6CA1\u6709\u627E\u5230\u201C${escapeHtml(this.query)}\u201D</p>`;
-          }
-          if (this.view === "recent") return this.recentTemplate();
-          const folders = this.folder === ROOT_FOLDER ? appStore.state.folders.filter((folder) => folder !== ROOT_FOLDER).map((folder) => this.folderTemplate(folder)).join("") : "";
-          const bookmarks = bookmarksIn(this.folder);
-          const empty = !bookmarks.length && !folders ? `<p class="launchpad-message">${this.folder === ROOT_FOLDER ? "\u8FD8\u6CA1\u6709\u4E66\u7B7E\uFF0C\u70B9\u51FB\u52A0\u53F7\u6DFB\u52A0\u7B2C\u4E00\u4E2A" : "\u8FD9\u4E2A\u6587\u4EF6\u5939\u662F\u7A7A\u7684\uFF0C\u53EF\u4EE5\u628A\u4E66\u7B7E\u62D6\u5230\u4E0A\u65B9\u7684\u6587\u4EF6\u5939\u6807\u7B7E\u4E0A"}</p>` : "";
-          return `
-            ${folders}
-            ${bookmarks.map((bookmark) => this.bookmarkTemplate(bookmark)).join("")}
-            <button class="tile add-tile add-bookmark" type="button" data-liquid-item>
-                <span class="app-icon app-icon-glass">${ICONS.plus}</span>
-                <span class="tile-name">\u6DFB\u52A0\u4E66\u7B7E</span>
-            </button>
-            ${empty}`;
-        }
-        folderTemplate(folder) {
-          const items = bookmarksIn(folder);
-          const minis = items.slice(0, 4).map((bookmark) => siteIcon({ url: bookmark.url, name: bookmark.name, bookmark }, "mini-icon")).join("");
-          return `
-            <button class="tile folder-tile" type="button" data-folder="${escapeHtml(folder)}" data-drop-folder="${escapeHtml(folder)}" data-liquid-item title="${escapeHtml(folder)} \xB7 ${items.length} \u4E2A\u4E66\u7B7E">
-                <span class="app-icon app-icon-glass folder-icon">${minis || ICONS.folder}</span>
-                <span class="tile-name">${escapeHtml(folder)}</span>
-            </button>`;
         }
         bookmarkTemplate(bookmark) {
           const name = bookmarkName(bookmark);
-          const newTab = appStore.state.settings.layout.openInNewTab;
           return `
-            <a class="tile bookmark-tile" href="${escapeHtml(bookmark.url)}" ${newTab ? 'target="_blank"' : ""} rel="noopener noreferrer"
-                data-bookmark-id="${escapeHtml(bookmark.id)}" data-liquid-item draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
-                ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark })}
-                <span class="tile-name">${escapeHtml(name)}</span>
-                <button class="tile-more" type="button" tabindex="-1" aria-label="\u4E66\u7B7E\u64CD\u4F5C">${ICONS.more}</button>
-            </a>`;
+            <li><a class="index-link" href="${escapeHtml(bookmark.url)}" ${this.target()} rel="noopener noreferrer"
+                data-bookmark-id="${escapeHtml(bookmark.id)}" draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
+                ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark }, "index-icon")}<span class="index-name">${escapeHtml(name)}</span>
+            </a></li>`;
         }
         recentTemplate() {
-          if (this.recent.state === "loading" || this.recent.state === "idle") return '<p class="launchpad-message">\u6B63\u5728\u6574\u7406\u6D4F\u89C8\u8BB0\u5F55\u2026</p>';
-          if (this.recent.state === "error") return `<p class="launchpad-message">${escapeHtml(this.recent.error)}</p>`;
-          if (!this.recent.sites.length) return '<p class="launchpad-message">\u6700\u8FD1 30 \u5929\u8FD8\u6CA1\u6709\u53EF\u5C55\u793A\u7684\u7F51\u7AD9</p>';
-          const newTab = appStore.state.settings.layout.openInNewTab;
-          return this.recent.sites.map((site, index) => `
-            <a class="tile recent-tile" href="${escapeHtml(site.url)}" ${newTab ? 'target="_blank"' : ""} rel="noopener noreferrer" data-recent-index="${index}" data-liquid-item title="${escapeHtml(hostOf(site.url))}">
-                ${siteIcon({ url: site.url, name: site.title })}
-                <span class="tile-name">${escapeHtml(site.title)}</span>
-            </a>`).join("");
+          const { sites, state } = this.recent;
+          const items = state === "ready" ? sites.slice(0, RECENT_LIMIT).map((site, index) => `
+                <li><a class="index-link" href="${escapeHtml(site.url)}" ${this.target()} rel="noopener noreferrer" data-recent-index="${index}" title="${escapeHtml(hostOf(site.url))}">
+                    ${siteIcon({ url: site.url, name: site.title }, "index-icon")}<span class="index-name">${escapeHtml(site.title)}</span>
+                </a></li>`).join("") : "";
+          const note = state === "error" ? escapeHtml(this.recent.error) : state === "ready" && !items ? "\u6700\u8FD1 30 \u5929\u6CA1\u6709\u8BB0\u5F55" : state === "ready" ? "" : "\u6B63\u5728\u6574\u7406\u2026";
+          return `
+            <section class="index-group is-recent" aria-label="\u5E38\u8BBF\u95EE">
+                <h2 class="index-heading"><span class="index-title">\u5E38\u8BBF\u95EE</span></h2>
+                <ul class="index-list">${items}${note ? `<li class="index-note">${note}</li>` : ""}</ul>
+            </section>`;
         }
-        bindShell() {
-          this.querySelector(".launchpad-done")?.addEventListener("click", () => this.close());
-          this.querySelector(".launchpad-backdrop")?.addEventListener("click", () => this.close());
-          this.querySelector(".launchpad")?.addEventListener("click", (event) => {
-            if (event.target.matches(".launchpad, .launchpad-top")) this.close();
-          });
-          const search = this.querySelector(".launchpad-search input");
-          search.addEventListener("input", () => {
-            this.query = search.value.trim();
-            this.render();
-          });
-          const tabs = this.querySelector(".launchpad-tabs");
-          tabs.addEventListener("click", (event) => {
-            const button = event.target.closest(".launchpad-tab");
-            if (!button) return;
-            if (button.classList.contains("create-folder")) void createFolder();
-            else if (button.dataset.view === "recent") this.show("recent", ROOT_FOLDER);
-            else this.show("bookmarks", button.dataset.folder ?? ROOT_FOLDER);
-          });
-          tabs.addEventListener("keydown", (event) => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            const items = [...tabs.querySelectorAll(".launchpad-tab")];
-            const index = items.indexOf(document.activeElement);
-            if (index < 0) return;
-            event.preventDefault();
-            items[(index + (event.key === "ArrowRight" ? 1 : -1) + items.length) % items.length].focus();
-          });
-          const grid = this.querySelector(".launchpad-grid");
-          grid.addEventListener("click", (event) => {
-            const target = event.target;
-            if (target === grid) {
-              this.close();
-              return;
-            }
-            const more = target.closest(".tile-more");
-            if (more) {
-              event.preventDefault();
-              event.stopPropagation();
-              this.openTileMenu(more.closest(".tile"), more);
-              return;
-            }
-            const folder = target.closest(".folder-tile");
-            if (folder) this.show("bookmarks", folder.dataset.folder ?? ROOT_FOLDER);
-            else if (target.closest(".add-bookmark")) openBookmarkDialog(this, { folder: this.folder });
-          });
-          grid.addEventListener("dragover", (event) => {
-            if (this.draggingId !== null) event.preventDefault();
-          });
-          grid.addEventListener("drop", (event) => {
-            if (event.target.closest(".bookmark-tile, [data-drop-folder]")) return;
-            event.preventDefault();
-            const id = this.dragId(event);
-            if (id !== null) void moveBookmark(id, this.folder);
-          });
-          this.querySelector(".launchpad")?.addEventListener("contextmenu", (event) => {
-            const mouse = event;
-            const target = mouse.target;
-            const tile = target.closest(".tile:not(.add-tile), .launchpad-tab[data-folder]");
-            if (!tile && !target.closest(".launchpad-grid")) return;
-            event.preventDefault();
-            const at = mouse.clientX || mouse.clientY ? { x: mouse.clientX, y: mouse.clientY } : tile ?? target;
-            if (tile) this.openTileMenu(tile, at);
-            else if (this.view === "bookmarks" && !this.query) openMenu([
-              { label: "\u6DFB\u52A0\u4E66\u7B7E", icon: ICONS.plus, action: () => openBookmarkDialog(this, { folder: this.folder }) },
-              { label: "\u65B0\u5EFA\u6587\u4EF6\u5939", icon: ICONS.folderPlus, action: () => void createFolder() }
-            ], at);
-          });
+        target() {
+          return appStore.state.settings.layout.openInNewTab ? 'target="_blank"' : "";
         }
-        bindBookmark(card) {
-          const id = card.dataset.bookmarkId ?? "";
-          card.addEventListener("click", (event) => interceptExtensionLink(event, card.href));
-          card.addEventListener("dragstart", (event) => {
-            this.draggingId = id;
-            event.dataTransfer?.setData("text/plain", id);
-            if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-            card.classList.add("is-dragging");
-            this.classList.add("is-dragging");
-          });
-          card.addEventListener("dragend", () => {
-            this.draggingId = null;
-            card.classList.remove("is-dragging");
-            this.classList.remove("is-dragging");
-            this.querySelectorAll(".drop-target").forEach((item) => item.classList.remove("drop-target"));
-          });
-          card.addEventListener("dragover", (event) => {
-            if (this.draggingId === null || this.draggingId === id) return;
-            event.preventDefault();
-            card.classList.add("drop-target");
-          });
-          card.addEventListener("dragleave", () => card.classList.remove("drop-target"));
-          card.addEventListener("drop", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            card.classList.remove("drop-target");
-            const sourceId = this.dragId(event);
-            const target = findBookmark(id);
-            if (sourceId !== null && sourceId !== id && target) void moveBookmark(sourceId, target.folder, id);
-          });
-        }
-        bindFolderDrop(target) {
-          const folder = target.dataset.dropFolder ?? ROOT_FOLDER;
-          target.addEventListener("dragover", (event) => {
-            if (this.draggingId === null) return;
-            event.preventDefault();
-            target.classList.add("drop-target");
-          });
-          target.addEventListener("dragleave", () => target.classList.remove("drop-target"));
-          target.addEventListener("drop", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            target.classList.remove("drop-target");
-            const id = this.dragId(event);
-            if (id !== null) void moveBookmark(id, folder);
-          });
-        }
-        openTileMenu(tile, at) {
-          const folder = tile.dataset.folder;
-          if (folder !== void 0) {
-            if (folder === ROOT_FOLDER) return;
-            openMenu([
-              { label: "\u6253\u5F00", icon: ICONS.open, action: () => this.show("bookmarks", folder) },
-              { label: "\u91CD\u547D\u540D\u2026", icon: ICONS.edit, action: () => void renameFolder(folder, (name) => {
-                if (this.folder === folder || this.folder === name) this.folder = name;
-              }) },
-              { separator: true },
-              { label: "\u5220\u9664\u6587\u4EF6\u5939", icon: ICONS.trash, danger: true, action: () => void deleteFolder(folder) }
-            ], at);
+        /** Adds rows until every column fits the width, up to a share of the window; past that the index scrolls sideways. */
+        fit = () => {
+          const index = this.querySelector(".index");
+          if (!index) return;
+          this.fittedWidth = this.getBoundingClientRect().width;
+          const longest = Math.max(MIN_ROWS, ...[...index.querySelectorAll(".index-list")].map((list) => list.childElementCount));
+          const maxRows = Math.min(longest, Math.max(MIN_ROWS, Math.floor(window.innerHeight * MAX_HEIGHT_SHARE / ROW_HEIGHT)));
+          let rows = MIN_ROWS;
+          index.style.setProperty("--rows", String(rows));
+          while (rows < maxRows && index.scrollWidth > index.clientWidth + 1) {
+            rows += 1;
+            index.style.setProperty("--rows", String(rows));
+          }
+          this.syncEdges();
+        };
+        /** Fades only the edges that have columns scrolled past them. */
+        syncEdges = () => {
+          const index = this.querySelector(".index");
+          if (!index) return;
+          index.classList.toggle("can-scroll-left", index.scrollLeft > 1);
+          index.classList.toggle("can-scroll-right", index.scrollLeft + index.clientWidth < index.scrollWidth - 1);
+        };
+        /** A mouse wheel scrolls an overflowing index sideways. */
+        onWheel = (event) => {
+          const index = this.querySelector(".index");
+          if (!index || index.scrollWidth <= index.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+          event.preventDefault();
+          index.scrollLeft += event.deltaY;
+        };
+        onClick = (event) => {
+          const target = event.target;
+          const add = target.closest("[data-add-folder]");
+          if (add) {
+            openBookmarkDialog(this, { folder: add.dataset.addFolder ?? ROOT_FOLDER });
             return;
           }
-          if (tile.dataset.recentIndex !== void 0) {
-            const site = this.recent.sites[Number(tile.dataset.recentIndex)];
+          const more = target.closest(".index-more");
+          if (more) {
+            this.openFolderMenu(more.closest(".index-group")?.dataset.folder ?? ROOT_FOLDER, more);
+            return;
+          }
+          const link = target.closest("a.index-link");
+          if (link) interceptExtensionLink(event, link.href);
+        };
+        onContextMenu = (event) => {
+          const target = event.target;
+          if (!target.closest(".index")) return;
+          event.preventDefault();
+          const link = target.closest(".index-link");
+          const group2 = target.closest(".index-group");
+          const at = event.clientX || event.clientY ? { x: event.clientX, y: event.clientY } : link ?? group2 ?? target;
+          if (link?.dataset.recentIndex !== void 0) {
+            const site = this.recent.sites[Number(link.dataset.recentIndex)];
             if (site) siteMenu(this, site, at);
             return;
           }
-          const bookmark = findBookmark(tile.dataset.bookmarkId ?? "");
+          const bookmark = link?.dataset.bookmarkId ? findBookmark(link.dataset.bookmarkId) : void 0;
           if (bookmark) bookmarkMenu(this, bookmark, at);
+          else if (group2 && !group2.classList.contains("is-recent")) this.openFolderMenu(group2.dataset.folder ?? ROOT_FOLDER, at);
+        };
+        openFolderMenu(folder, at) {
+          const add = { label: "\u6DFB\u52A0\u4E66\u7B7E\u2026", icon: ICONS.plus, action: () => openBookmarkDialog(this, { folder }) };
+          const create = { label: "\u65B0\u5EFA\u6587\u4EF6\u5939\u2026", icon: ICONS.folderPlus, action: () => void createFolder() };
+          if (folder === ROOT_FOLDER) {
+            openMenu([add, create], at);
+            return;
+          }
+          openMenu([
+            add,
+            { label: "\u91CD\u547D\u540D\u2026", icon: ICONS.edit, action: () => void renameFolder(folder) },
+            create,
+            { separator: true },
+            { label: "\u5220\u9664\u6587\u4EF6\u5939", icon: ICONS.trash, danger: true, action: () => void deleteFolder(folder) }
+          ], at);
         }
-        show(view, folder) {
-          if (view === this.view && folder === this.folder && !this.query) return;
-          this.view = view;
-          this.folder = folder;
-          this.query = "";
-          const search = this.querySelector(".launchpad-search input");
-          if (search) search.value = "";
-          this.render();
-          this.querySelector(".launchpad-tab.is-active")?.focus({ preventScroll: true });
+        onDragStart = (event) => {
+          const link = event.target.closest("[data-bookmark-id]");
+          if (!link) return;
+          this.draggingId = link.dataset.bookmarkId ?? null;
+          event.dataTransfer?.setData("text/plain", this.draggingId ?? "");
+          if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+          link.classList.add("is-dragging");
+          this.classList.add("is-dragging");
+        };
+        /** A bookmark under the pointer takes the drop (reorder); otherwise its whole folder group does (move). */
+        onDragOver = (event) => {
+          if (this.draggingId === null) return;
+          const target = this.dropTarget(event);
+          if (!target) return;
+          event.preventDefault();
+          if (target.classList.contains("drop-target")) return;
+          this.clearDropTargets();
+          target.classList.add("drop-target");
+        };
+        onDragLeave = (event) => {
+          if (!this.contains(event.relatedTarget)) this.clearDropTargets();
+        };
+        onDrop = (event) => {
+          const target = this.dropTarget(event);
+          const id = event.dataTransfer?.getData("text/plain") || this.draggingId;
+          this.clearDropTargets();
+          if (!target || id === null) return;
+          event.preventDefault();
+          const folder = target.closest(".index-group")?.dataset.folder ?? ROOT_FOLDER;
+          const before = target.dataset.bookmarkId;
+          void moveBookmark(id, before ? findBookmark(before)?.folder ?? folder : folder, before);
+        };
+        onDragEnd = () => {
+          this.draggingId = null;
+          this.classList.remove("is-dragging");
+          this.querySelectorAll(".is-dragging").forEach((item) => item.classList.remove("is-dragging"));
+          this.clearDropTargets();
+        };
+        dropTarget(event) {
+          const target = event.target;
+          const link = target.closest("[data-bookmark-id]");
+          if (link) return String(link.dataset.bookmarkId) === String(this.draggingId) ? null : link;
+          return target.closest(".index-group[data-folder]");
+        }
+        clearDropTargets() {
+          this.querySelectorAll(".drop-target").forEach((item) => item.classList.remove("drop-target"));
         }
         async loadRecent() {
           this.recent = { ...this.recent, state: "loading", error: "" };
@@ -1985,10 +1974,7 @@
           } catch (error) {
             this.recent = { sites: [], state: "error", error: error instanceof Error && error.message ? error.message : "\u8BFB\u53D6\u6D4F\u89C8\u8BB0\u5F55\u5931\u8D25" };
           }
-          if (this.view === "recent") this.render();
-        }
-        dragId(event) {
-          return event.dataTransfer?.getData("text/plain") || this.draggingId;
+          if (this.isConnected) this.render();
         }
       };
     }
@@ -2052,101 +2038,235 @@
     }
   });
 
-  // src/components/home-dock.ts
-  var MAX_ITEMS, HomeDock;
-  var init_home_dock = __esm({
-    "src/components/home-dock.ts"() {
+  // src/components/hdr-glass.ts
+  var MAX_RIMS, PEAK, MAX_PIXELS, FRAME_FLOATS, RIM_FLOATS, HDR_SHADER, HdrRimLayer;
+  var init_hdr_glass = __esm({
+    "src/components/hdr-glass.ts"() {
       "use strict";
-      init_history();
-      init_store();
-      init_utils();
-      init_base();
-      init_bookmark_actions();
-      init_icons();
-      init_site_icon();
-      MAX_ITEMS = 12;
-      HomeDock = class extends StoreElement {
-        observedChanges = ["bookmarks", "settings.layout"];
-        sites = null;
-        render() {
-          const { showBookmarks, showRecent, dockSize, dockMagnify, openInNewTab: openInNewTab2 } = appStore.state.settings.layout;
-          const dockSource = showRecent ? appStore.state.settings.layout.dockSource : "bookmarks";
-          this.hidden = !showBookmarks;
-          if (this.hidden) {
-            this.innerHTML = "";
-            return;
-          }
-          this.style.setProperty("--dock-size", `${dockSize}px`);
-          this.classList.toggle("is-magnifying", dockMagnify);
-          const target = openInNewTab2 ? 'target="_blank"' : "";
-          let items = "";
-          if (dockSource === "recent") {
-            if (!this.sites) void this.loadSites();
-            items = (this.sites ?? []).slice(0, MAX_ITEMS).map((site, index) => `
-                <a class="dock-item" href="${escapeHtml(site.url)}" ${target} rel="noopener noreferrer" data-site-index="${index}" data-liquid-item aria-label="${escapeHtml(site.title)}" draggable="false">
-                    ${siteIcon({ url: site.url, name: site.title })}
-                    <span class="dock-label glass glass-dark" aria-hidden="true">${escapeHtml(site.title)}</span>
-                </a>`).join("");
-          } else {
-            const bookmarks = bookmarksIn(ROOT_FOLDER).slice(0, MAX_ITEMS);
-            items = bookmarks.map((bookmark) => `
-                <a class="dock-item" href="${escapeHtml(bookmark.url)}" ${target} rel="noopener noreferrer" data-bookmark-id="${escapeHtml(bookmark.id)}" data-liquid-item aria-label="${escapeHtml(bookmarkName(bookmark))}" draggable="false">
-                    ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark })}
-                    <span class="dock-label glass glass-dark" aria-hidden="true">${escapeHtml(bookmarkName(bookmark))}</span>
-                </a>`).join("");
-            if (!bookmarks.length) items = `
-                <button class="dock-item dock-add" type="button" data-liquid-item aria-label="\u6DFB\u52A0\u4E66\u7B7E">
-                    <span class="app-icon app-icon-glass">${ICONS.plus}</span>
-                    <span class="dock-label glass glass-dark" aria-hidden="true">\u6DFB\u52A0\u4E66\u7B7E</span>
-                </button>`;
-          }
-          this.innerHTML = `
-            <nav class="glass dock" aria-label="\u5E38\u7528\u4E66\u7B7E">
-                ${items}
-                <span class="dock-divider" aria-hidden="true"></span>
-                    ${showRecent ? `<button class="dock-item dock-recent" type="button" data-liquid-item aria-label="\u5E38\u8BBF\u95EE">
-                        <span class="app-icon app-icon-glass">${ICONS.clock}</span>
-                        <span class="dock-label glass glass-dark" aria-hidden="true">\u5E38\u8BBF\u95EE</span>
-                    </button>` : ""}
-                    <button class="dock-item dock-all" type="button" data-liquid-item aria-label="\u5168\u90E8\u4E66\u7B7E">
-                        <span class="app-icon app-icon-glass">${ICONS.grid}</span>
-                        <span class="dock-label glass glass-dark" aria-hidden="true">\u5168\u90E8\u4E66\u7B7E</span>
-                    </button>
-            </nav>`;
-          bindSiteIcons(this);
-          this.bindEvents();
+      MAX_RIMS = 16;
+      PEAK = 2.2;
+      MAX_PIXELS = 3840 * 2400;
+      FRAME_FLOATS = 8;
+      RIM_FLOATS = 8;
+      HDR_SHADER = `
+struct Frame {
+    pointer: vec2f,
+    count: f32,
+    scale: f32,
+    peak: f32,
+    unused0: f32,
+    unused1: f32,
+    unused2: f32,
+}
+
+struct Rim {
+    rect: vec4f,
+    shape: vec4f,
+}
+
+@group(0) @binding(0) var<uniform> frame: Frame;
+@group(0) @binding(1) var<uniform> rims: array<Rim, ${MAX_RIMS}>;
+
+@vertex
+fn vertexMain(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
+    var positions = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+    return vec4f(positions[index], 0.0, 1.0);
+}
+
+fn roundedRect(point: vec2f, half: vec2f, radius: f32) -> f32 {
+    let corner = abs(point) - half + vec2f(radius);
+    return length(max(corner, vec2f(0.0))) + min(max(corner.x, corner.y), 0.0) - radius;
+}
+
+@fragment
+fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
+    let point = position.xy / frame.scale;
+    let pixel = 1.0 / frame.scale;
+    let light = normalize(vec2f(-0.55, -0.85));
+    var radiance = 0.0;
+    var coverage = 0.0;
+    for (var index = 0u; index < u32(frame.count); index = index + 1u) {
+        let rim = rims[index];
+        let half = rim.rect.zw * 0.5;
+        let local = point - rim.rect.xy - half;
+        let radius = min(rim.shape.x, min(half.x, half.y));
+        let distance = roundedRect(local, half, radius);
+        if (distance > pixel || distance < -4.0) {
+            continue;
         }
-        bindEvents() {
-          this.querySelector(".dock-recent")?.addEventListener("click", () => this.openLaunchpad("recent"));
-          this.querySelector(".dock-all")?.addEventListener("click", () => this.openLaunchpad("bookmarks"));
-          this.querySelector(".dock-add")?.addEventListener("click", (event) => openBookmarkDialog(event.currentTarget, { folder: ROOT_FOLDER }));
-          this.querySelectorAll(".dock-item[data-bookmark-id]").forEach((item) => {
-            item.addEventListener("click", (event) => interceptExtensionLink(event, item.href));
-          });
-          this.querySelector(".dock")?.addEventListener("contextmenu", (event) => {
-            const mouse = event;
-            const item = mouse.target.closest(".dock-item");
-            const at = mouse.clientX || mouse.clientY ? { x: mouse.clientX, y: mouse.clientY } : item;
-            if (!item || !at) return;
-            const bookmark = item.dataset.bookmarkId ? findBookmark(item.dataset.bookmarkId) : void 0;
-            const site = item.dataset.siteIndex !== void 0 ? this.sites?.[Number(item.dataset.siteIndex)] : void 0;
-            if (!bookmark && !site) return;
-            event.preventDefault();
-            if (bookmark) bookmarkMenu(this, bookmark, at);
-            else if (site) siteMenu(this, site, at);
-          });
+        // A 1.25 px band just inside the edge, anti-aliased to the device pixel on both sides.
+        let band = smoothstep(-1.25 - pixel, -1.25, distance) * (1.0 - smoothstep(-pixel, pixel * 0.5, distance));
+        let step = 0.5;
+        let normal = normalize(vec2f(
+            roundedRect(local + vec2f(step, 0.0), half, radius) - roundedRect(local - vec2f(step, 0.0), half, radius),
+            roundedRect(local + vec2f(0.0, step), half, radius) - roundedRect(local - vec2f(0.0, step), half, radius)
+        ));
+        let facing = max(dot(normal, light), 0.0);
+        let away = max(-dot(normal, light), 0.0);
+        let toPointer = point - frame.pointer;
+        let glint = rim.shape.z * exp(-dot(toPointer, toPointer) / 1800.0);
+        let brightness = 0.12 + pow(facing, 2.0) * 0.6 + pow(away, 3.0) * 0.18 + glint * 1.3;
+        radiance = radiance + band * brightness * rim.shape.y;
+        coverage = max(coverage, band * rim.shape.y);
+    }
+    // Premultiplied light that may exceed its alpha: it adds to what is below, past SDR white on HDR screens.
+    return vec4f(vec3f(radiance * frame.peak), coverage * 0.3);
+}`;
+      HdrRimLayer = class {
+        canvas = document.createElement("canvas");
+        device = null;
+        context = null;
+        pipeline = null;
+        frameBuffer = null;
+        rimBuffer = null;
+        bindGroup = null;
+        rims = [];
+        pointer = { x: -1e4, y: -1e4 };
+        initializing = false;
+        drawFrame = 0;
+        hdrMedia = window.matchMedia("(dynamic-range: high)");
+        classObserver = new MutationObserver(() => this.syncVisibility());
+        constructor() {
+          this.canvas.className = "hdr-glass-layer";
+          this.canvas.setAttribute("aria-hidden", "true");
         }
-        openLaunchpad(view) {
-          this.dispatchEvent(new CustomEvent("open-launchpad", { bubbles: true, composed: true, detail: { view } }));
+        /** Ready to draw: HDR screen, the setting on and a WebGPU device. */
+        get active() {
+          return Boolean(this.device) && this.hdrMedia.matches && document.body.classList.contains("hdr-highlights");
         }
-        async loadSites() {
-          this.sites = [];
+        connect() {
+          this.classObserver.observe(document.body, { attributeFilter: ["class"] });
+          this.hdrMedia.addEventListener("change", this.onDisplayChange);
+          window.addEventListener("resize", this.onResize);
+          this.onResize();
+          void this.initialize();
+        }
+        disconnect() {
+          this.classObserver.disconnect();
+          this.hdrMedia.removeEventListener("change", this.onDisplayChange);
+          window.removeEventListener("resize", this.onResize);
+          cancelAnimationFrame(this.drawFrame);
+          this.drawFrame = 0;
+          this.device?.destroy?.();
+          this.device = null;
+          this.canvas.classList.remove("is-visible");
+        }
+        update(rims, pointer) {
+          this.rims = rims.slice(0, MAX_RIMS);
+          this.pointer = pointer;
+          this.canvas.dataset.hdrCount = String(this.rims.length);
+          this.scheduleDraw();
+        }
+        onDisplayChange = () => {
+          if (this.hdrMedia.matches) void this.initialize();
+          this.syncVisibility();
+        };
+        onResize = () => {
+          const ratio = Math.max(1, window.devicePixelRatio || 1);
+          const scale = Math.min(ratio, Math.sqrt(MAX_PIXELS / Math.max(1, innerWidth * innerHeight)));
+          this.canvas.width = Math.max(1, Math.round(innerWidth * scale));
+          this.canvas.height = Math.max(1, Math.round(innerHeight * scale));
+          this.scheduleDraw();
+        };
+        async initialize() {
+          if (this.device || this.initializing || !this.hdrMedia.matches || !("gpu" in navigator)) return;
+          this.initializing = true;
           try {
-            this.sites = await loadRecentSites();
+            const gpu = navigator.gpu;
+            const adapter = await gpu?.requestAdapter();
+            if (!adapter) return;
+            const device = await adapter.requestDevice();
+            const context = this.canvas.getContext("webgpu");
+            if (!context) return;
+            context.configure({
+              device,
+              format: "rgba16float",
+              alphaMode: "premultiplied",
+              toneMapping: { mode: "extended" }
+            });
+            const shader = device.createShaderModule({ code: HDR_SHADER });
+            const pipeline = device.createRenderPipeline({
+              layout: "auto",
+              vertex: { module: shader, entryPoint: "vertexMain" },
+              fragment: {
+                module: shader,
+                entryPoint: "fragmentMain",
+                targets: [{ format: "rgba16float" }]
+              },
+              primitive: { topology: "triangle-list" }
+            });
+            const frameBuffer = device.createBuffer({ size: FRAME_FLOATS * 4, usage: 64 | 8 });
+            const rimBuffer = device.createBuffer({ size: MAX_RIMS * RIM_FLOATS * 4, usage: 64 | 8 });
+            this.bindGroup = device.createBindGroup({
+              layout: pipeline.getBindGroupLayout(0),
+              entries: [
+                { binding: 0, resource: { buffer: frameBuffer } },
+                { binding: 1, resource: { buffer: rimBuffer } }
+              ]
+            });
+            this.device = device;
+            this.context = context;
+            this.pipeline = pipeline;
+            this.frameBuffer = frameBuffer;
+            this.rimBuffer = rimBuffer;
+            this.canvas.dataset.hdrRenderer = "webgpu";
+            void device.lost.then(() => {
+              this.device = null;
+              this.canvas.dataset.hdrRenderer = "lost";
+              this.syncVisibility();
+            });
+            this.syncVisibility();
+            this.scheduleDraw();
           } catch {
-            this.sites = [];
+            this.canvas.dataset.hdrRenderer = "unavailable";
+          } finally {
+            this.initializing = false;
           }
-          this.render();
+        }
+        syncVisibility() {
+          this.canvas.classList.toggle("is-visible", this.active);
+          if (this.active) this.scheduleDraw();
+        }
+        scheduleDraw() {
+          if (this.drawFrame || !this.active) return;
+          this.drawFrame = requestAnimationFrame(() => {
+            this.drawFrame = 0;
+            this.draw();
+          });
+        }
+        draw() {
+          if (!this.active) return;
+          const scale = this.canvas.width / Math.max(1, innerWidth);
+          this.device.queue.writeBuffer(this.frameBuffer, 0, new Float32Array([
+            this.pointer.x,
+            this.pointer.y,
+            this.rims.length,
+            scale,
+            PEAK,
+            0,
+            0,
+            0
+          ]));
+          const rims = new Float32Array(MAX_RIMS * RIM_FLOATS);
+          this.rims.forEach((rim, index) => rims.set(
+            [rim.x, rim.y, rim.width, rim.height, rim.radius, rim.opacity, rim.glint, 0],
+            index * RIM_FLOATS
+          ));
+          this.device.queue.writeBuffer(this.rimBuffer, 0, rims);
+          const encoder = this.device.createCommandEncoder();
+          const pass = encoder.beginRenderPass({
+            colorAttachments: [{
+              view: this.context.getCurrentTexture().createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: "clear",
+              storeOp: "store"
+            }]
+          });
+          pass.setPipeline(this.pipeline);
+          pass.setBindGroup(0, this.bindGroup);
+          pass.draw(3);
+          pass.end();
+          this.device.queue.submit([encoder.finish()]);
         }
       };
     }
@@ -2159,12 +2279,6 @@
   }
   function convexSquircle(value) {
     return Math.pow(1 - Math.pow(1 - value, 4), 1 / 4);
-  }
-  function lipSquircle(value) {
-    const convex = convexSquircle(value);
-    const concave = 1 - convex;
-    const blend = smootherstep(value);
-    return convex * (1 - blend) + concave * blend;
   }
   function precalculateDisplacements(distanceToBackdrop = DISTANCE_TO_BACKDROP, glassThickness = GLASS_THICKNESS, surface = convexSquircle, refractiveIndex = REFRACTIVE_INDEX, samples = RADIAL_SAMPLE_COUNT) {
     const ratio = 1 / refractiveIndex;
@@ -2189,19 +2303,13 @@
       return refracted[0] * (depth / refracted[1]);
     });
   }
-  function createOpticalMaps(shape, profile = "convex") {
+  function createRefractionMap(shape) {
     const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
     const radius = clamp(shape.radius, 2, Math.min(shape.width, shape.height) / 2);
     const bezelWidth = Math.max(2, radius * 0.75);
-    const surface = profile === "lip" ? lipSquircle : convexSquircle;
-    const displacements = precalculateDisplacements(DISTANCE_TO_BACKDROP, GLASS_THICKNESS, surface);
+    const displacements = precalculateDisplacements();
     const maximumDisplacement = Math.max(...displacements.map(Math.abs));
     return {
-      magnifying: imageDataUrl(createMagnifyingMap(
-        shape.width,
-        shape.height,
-        pixelRatio
-      )),
       displacement: imageDataUrl(createDisplacementMap(
         shape.width,
         shape.height,
@@ -2211,35 +2319,8 @@
         displacements,
         pixelRatio
       )),
-      specular: imageDataUrl(createSpecularMap(
-        shape.width,
-        shape.height,
-        radius,
-        bezelWidth,
-        SPECULAR_ANGLE,
-        pixelRatio
-      )),
       maximumDisplacement
     };
-  }
-  function createMagnifyingMap(width, height, pixelRatio) {
-    const canvasWidth = Math.max(1, Math.round(width * pixelRatio));
-    const canvasHeight = Math.max(1, Math.round(height * pixelRatio));
-    const image = new ImageData(canvasWidth, canvasHeight);
-    for (let y = 0; y < canvasHeight; y += 1) {
-      for (let x = 0; x < canvasWidth; x += 1) {
-        const normalizedX = (x + 0.5) / canvasWidth * 2 - 1;
-        const normalizedY = (y + 0.5) / canvasHeight * 2 - 1;
-        const distance = Math.hypot(normalizedX, normalizedY);
-        const strength = distance < 1 ? 1 - smoothstep(0.08, 0.94, distance) : 0;
-        const index = (y * canvasWidth + x) * 4;
-        image.data[index] = 128 - normalizedX * strength * 112;
-        image.data[index + 1] = 128 - normalizedY * strength * 112;
-        image.data[index + 2] = 128;
-        image.data[index + 3] = 255;
-      }
-    }
-    return image;
   }
   function createDisplacementMap(width, height, radius, bezelWidth, maximumDisplacement, displacements, pixelRatio) {
     const canvasWidth = Math.max(1, Math.round(width * pixelRatio));
@@ -2280,45 +2361,6 @@
     }
     return image;
   }
-  function createSpecularMap(width, height, radius, bezelWidth, angle, pixelRatio) {
-    const canvasWidth = Math.max(1, Math.round(width * pixelRatio));
-    const canvasHeight = Math.max(1, Math.round(height * pixelRatio));
-    const image = new ImageData(canvasWidth, canvasHeight);
-    const scaledRadius = radius * pixelRatio;
-    const scaledBezel = bezelWidth * pixelRatio;
-    const radiusSquared = scaledRadius ** 2;
-    const outerSquared = (scaledRadius + pixelRatio) ** 2;
-    const innerSquared = (scaledRadius - scaledBezel) ** 2;
-    const middleWidth = canvasWidth - scaledRadius * 2;
-    const middleHeight = canvasHeight - scaledRadius * 2;
-    const light = [Math.cos(angle), Math.sin(angle)];
-    for (let y = 0; y < canvasHeight; y += 1) {
-      for (let x = 0; x < canvasWidth; x += 1) {
-        const left = x < scaledRadius;
-        const right = x >= canvasWidth - scaledRadius;
-        const top = y < scaledRadius;
-        const bottom = y >= canvasHeight - scaledRadius;
-        const offsetX = left ? x - scaledRadius : right ? x - scaledRadius - middleWidth : 0;
-        const offsetY = top ? y - scaledRadius : bottom ? y - scaledRadius - middleHeight : 0;
-        const distanceSquared = offsetX * offsetX + offsetY * offsetY;
-        if (distanceSquared > outerSquared || distanceSquared < innerSquared) continue;
-        const distance = Math.sqrt(distanceSquared);
-        if (!distance) continue;
-        const distanceFromBorder = scaledRadius - distance;
-        const antiAlias = distanceSquared < radiusSquared ? 1 : 1 - (distance - scaledRadius) / pixelRatio;
-        const normalX = offsetX / distance;
-        const normalY = -offsetY / distance;
-        const highlight = Math.abs(normalX * light[0] + normalY * light[1]) * Math.sqrt(Math.max(0, 1 - (1 - distanceFromBorder / pixelRatio) ** 2));
-        const brightness = 255 * highlight;
-        const index = (y * canvasWidth + x) * 4;
-        image.data[index] = brightness;
-        image.data[index + 1] = brightness;
-        image.data[index + 2] = brightness;
-        image.data[index + 3] = brightness * highlight * antiAlias;
-      }
-    }
-    return image;
-  }
   function imageDataUrl(image) {
     const canvas = document.createElement("canvas");
     canvas.width = image.width;
@@ -2331,15 +2373,7 @@
   function clamp(value, minimum, maximum) {
     return Math.min(maximum, Math.max(minimum, value));
   }
-  function smoothstep(start, end, value) {
-    const progress = clamp((value - start) / (end - start), 0, 1);
-    return progress * progress * (3 - 2 * progress);
-  }
-  function smootherstep(value) {
-    const progress = clamp(value, 0, 1);
-    return progress ** 3 * (progress * (progress * 6 - 15) + 10);
-  }
-  var REFRACTIVE_INDEX, RADIAL_SAMPLE_COUNT, DISTANCE_TO_BACKDROP, GLASS_THICKNESS, SPECULAR_ANGLE;
+  var REFRACTIVE_INDEX, RADIAL_SAMPLE_COUNT, DISTANCE_TO_BACKDROP, GLASS_THICKNESS;
   var init_liquid_optics = __esm({
     "src/components/liquid-optics.ts"() {
       "use strict";
@@ -2347,824 +2381,171 @@
       RADIAL_SAMPLE_COUNT = 128;
       DISTANCE_TO_BACKDROP = 55;
       GLASS_THICKNESS = 63;
-      SPECULAR_ANGLE = -Math.PI / 3;
     }
   });
 
-  // src/components/hdr-glass.ts
-  function quantizeResolution(value) {
-    return Math.max(1, Math.min(HDR_MAX_EDGE, Math.ceil(value / HDR_RESOLUTION_STEP) * HDR_RESOLUTION_STEP));
-  }
-  var HDR_MAX_EDGE, HDR_RESOLUTION_STEP, HDR_SHADER, HdrGlassRenderer;
-  var init_hdr_glass = __esm({
-    "src/components/hdr-glass.ts"() {
-      "use strict";
-      HDR_MAX_EDGE = 512;
-      HDR_RESOLUTION_STEP = 32;
-      HDR_SHADER = `
-struct GlassUniforms {
-    size: vec2f,
-    radius: f32,
-    bridge: f32,
-    resolution: vec2f,
-    padding: vec2f,
-}
-
-@group(0) @binding(0) var<uniform> glass: GlassUniforms;
-
-@vertex
-fn vertexMain(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
-    var positions = array<vec2f, 3>(
-        vec2f(-1.0, -1.0),
-        vec2f(3.0, -1.0),
-        vec2f(-1.0, 3.0)
-    );
-    return vec4f(positions[index], 0.0, 1.0);
-}
-
-fn roundedRectDistance(point: vec2f, halfSize: vec2f, radius: f32) -> f32 {
-    let corner = abs(point) - (halfSize - vec2f(radius));
-    return length(max(corner, vec2f(0.0))) + min(max(corner.x, corner.y), 0.0) - radius;
-}
-
-@fragment
-fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
-    let uv = position.xy / glass.resolution;
-    let point = (uv - vec2f(0.5)) * glass.size;
-    let halfSize = max(glass.size * 0.5 - vec2f(2.0), vec2f(1.0));
-    let radius = min(glass.radius, min(halfSize.x, halfSize.y));
-    let sdf = roundedRectDistance(point, halfSize, radius);
-    let inside = 1.0 - smoothstep(0.0, 2.0, sdf);
-    let rim = exp(-abs(sdf) * 0.58) * inside;
-
-    let gradient = vec2f(dpdx(sdf), dpdy(sdf));
-    let normal = gradient / max(length(gradient), 0.0001);
-    let light = normalize(vec2f(0.5, -0.8660254));
-    let tangent = vec2f(-light.y, light.x);
-    let facing = abs(dot(normal, light));
-    let specular = pow(facing, 3.2);
-    let dispersion = dot(normal, tangent);
-    let cyanEdge = pow(max(dispersion, 0.0), 2.4);
-    let pinkEdge = pow(max(-dispersion, 0.0), 2.4);
-    let innerCaustic = exp(-abs(sdf + 4.2) * 0.42) * inside;
-    let motionGain = 1.0 + glass.bridge * 0.42;
-
-    let whiteSpecular = vec3f(3.25) * rim * (0.16 + specular * 1.12);
-    let skyDispersion = vec3f(0.16, 1.05, 2.8) * rim * cyanEdge * 0.52;
-    let pinkDispersion = vec3f(2.35, 0.22, 0.82) * rim * pinkEdge * 0.4;
-    let caustic = vec3f(0.52, 0.82, 1.35) * innerCaustic * (0.08 + glass.bridge * 0.12);
-    let radiance = (whiteSpecular + skyDispersion + pinkDispersion + caustic) * motionGain;
-    let alpha = clamp(rim * (0.2 + specular * 0.7 + (cyanEdge + pinkEdge) * 0.12) + innerCaustic * 0.08, 0.0, 0.96);
-
-    return vec4f(radiance * alpha, alpha);
-}`;
-      HdrGlassRenderer = class {
-        canvas = document.createElement("canvas");
-        device = null;
-        context = null;
-        pipeline = null;
-        uniformBuffer = null;
-        bindGroup = null;
-        geometry = null;
-        bridge = 0;
-        wantsVisible = false;
-        initializing = false;
-        drawFrame = 0;
-        hdrMedia = window.matchMedia("(dynamic-range: high)");
-        classObserver = new MutationObserver(() => this.syncVisibility());
-        constructor() {
-          this.canvas.className = "hdr-glass-layer";
-          this.canvas.width = HDR_MAX_EDGE;
-          this.canvas.height = HDR_MAX_EDGE;
-          this.canvas.setAttribute("aria-hidden", "true");
-        }
-        connect() {
-          this.classObserver.observe(document.body, { attributeFilter: ["class"] });
-          this.hdrMedia.addEventListener("change", this.onDisplayChange);
-          void this.initialize();
-        }
-        disconnect() {
-          this.classObserver.disconnect();
-          this.hdrMedia.removeEventListener("change", this.onDisplayChange);
-          this.device?.destroy?.();
-          this.device = null;
-          this.canvas.classList.remove("is-visible");
-          cancelAnimationFrame(this.drawFrame);
-          this.drawFrame = 0;
-        }
-        show() {
-          this.wantsVisible = true;
-          this.syncVisibility();
-        }
-        hide() {
-          this.wantsVisible = false;
-          this.canvas.classList.remove("is-visible");
-        }
-        render(geometry, bridge) {
-          this.geometry = geometry;
-          this.bridge = bridge;
-          this.resizeRenderTarget(geometry);
-          this.canvas.style.setProperty("--hdr-glass-x", `${geometry.x}px`);
-          this.canvas.style.setProperty("--hdr-glass-y", `${geometry.y}px`);
-          this.canvas.style.setProperty("--hdr-glass-width", `${geometry.width}px`);
-          this.canvas.style.setProperty("--hdr-glass-height", `${geometry.height}px`);
-          this.canvas.style.setProperty("--hdr-glass-radius", `${geometry.radius}px`);
-          this.scheduleDraw();
-        }
-        onDisplayChange = () => {
-          if (this.hdrMedia.matches) void this.initialize();
-          this.syncVisibility();
-        };
-        async initialize() {
-          if (this.device || this.initializing || !this.hdrMedia.matches || !("gpu" in navigator)) return;
-          this.initializing = true;
-          try {
-            const gpu = navigator.gpu;
-            const adapter = await gpu?.requestAdapter();
-            if (!adapter) return;
-            const device = await adapter.requestDevice();
-            const context = this.canvas.getContext("webgpu");
-            if (!context) return;
-            context.configure({
-              device,
-              format: "rgba16float",
-              alphaMode: "premultiplied",
-              toneMapping: { mode: "extended" }
-            });
-            const shader = device.createShaderModule({ code: HDR_SHADER });
-            const pipeline = device.createRenderPipeline({
-              layout: "auto",
-              vertex: { module: shader, entryPoint: "vertexMain" },
-              fragment: {
-                module: shader,
-                entryPoint: "fragmentMain",
-                targets: [{
-                  format: "rgba16float",
-                  blend: {
-                    color: { srcFactor: "one", dstFactor: "one-minus-src-alpha" },
-                    alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" }
-                  }
-                }]
-              },
-              primitive: { topology: "triangle-list" }
-            });
-            const uniformBuffer = device.createBuffer({
-              size: 32,
-              usage: 64 | 8
-            });
-            const bindGroup = device.createBindGroup({
-              layout: pipeline.getBindGroupLayout(0),
-              entries: [{ binding: 0, resource: { buffer: uniformBuffer } }]
-            });
-            this.device = device;
-            this.context = context;
-            this.pipeline = pipeline;
-            this.uniformBuffer = uniformBuffer;
-            this.bindGroup = bindGroup;
-            this.canvas.dataset.hdrRenderer = "webgpu";
-            void device.lost.then(() => {
-              this.device = null;
-              this.canvas.classList.remove("is-visible");
-              this.canvas.dataset.hdrRenderer = "lost";
-            });
-            this.scheduleDraw();
-            this.syncVisibility();
-          } catch {
-            this.canvas.dataset.hdrRenderer = "unavailable";
-          } finally {
-            this.initializing = false;
-          }
-        }
-        syncVisibility() {
-          const enabled = this.wantsVisible && Boolean(this.device) && this.hdrMedia.matches && document.body.classList.contains("hdr-highlights");
-          this.canvas.classList.toggle("is-visible", enabled);
-        }
-        draw() {
-          if (!this.device || !this.context || !this.pipeline || !this.uniformBuffer || !this.bindGroup || !this.geometry) return;
-          const values = new Float32Array([
-            this.geometry.width,
-            this.geometry.height,
-            this.geometry.radius,
-            this.bridge,
-            this.canvas.width,
-            this.canvas.height,
-            0,
-            0
-          ]);
-          this.device.queue.writeBuffer(this.uniformBuffer, 0, values);
-          const encoder = this.device.createCommandEncoder();
-          const pass = encoder.beginRenderPass({
-            colorAttachments: [{
-              view: this.context.getCurrentTexture().createView(),
-              clearValue: { r: 0, g: 0, b: 0, a: 0 },
-              loadOp: "clear",
-              storeOp: "store"
-            }]
-          });
-          pass.setPipeline(this.pipeline);
-          pass.setBindGroup(0, this.bindGroup);
-          pass.draw(3);
-          pass.end();
-          this.device.queue.submit([encoder.finish()]);
-        }
-        scheduleDraw() {
-          if (this.drawFrame) return;
-          this.drawFrame = requestAnimationFrame(() => {
-            this.drawFrame = 0;
-            this.draw();
-          });
-        }
-        resizeRenderTarget(geometry) {
-          const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
-          const longestEdge = Math.max(geometry.width, geometry.height) * pixelRatio;
-          const scale = Math.min(1, HDR_MAX_EDGE / Math.max(1, longestEdge));
-          const width = quantizeResolution(geometry.width * pixelRatio * scale);
-          const height = quantizeResolution(geometry.height * pixelRatio * scale);
-          if (this.canvas.width === width && this.canvas.height === height) return;
-          this.canvas.width = width;
-          this.canvas.height = height;
-        }
-      };
+  // src/components/glass.ts
+  function measure(element, glint) {
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1 || rect.bottom < 0 || rect.top > innerHeight) return null;
+    let opacity = 1;
+    for (let node = element; node && opacity > 0.02; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.visibility === "hidden" || style.display === "none") return null;
+      opacity *= Number(style.opacity);
     }
-  });
-
-  // src/components/liquid-glass.ts
-  function findControl(target) {
-    const control = target instanceof Element ? target.closest(CONTROL_SELECTOR) : null;
-    return control instanceof HTMLElement && control.getClientRects().length ? control : null;
+    if (opacity <= 0.02) return null;
+    const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    if (!top || !(element.contains(top) || top.contains(element))) return null;
+    const scale = rect.width / Math.max(1, element.offsetWidth);
+    const radius = cornerRadius(getComputedStyle(element).borderTopLeftRadius, element.offsetWidth, element.offsetHeight) * scale;
+    return { x: rect.left, y: rect.top, width: rect.width, height: rect.height, radius, opacity, glint };
   }
-  function findItem(target) {
-    const item = target instanceof Element ? target.closest(ITEM_SELECTOR) : null;
-    return item instanceof HTMLElement && item.getClientRects().length ? item : null;
+  function cornerRadius(value, width, height) {
+    const radius = value.endsWith("%") ? Math.min(width, height) * Number.parseFloat(value) / 100 : Number.parseFloat(value) || 0;
+    return Math.min(radius, width / 2, height / 2);
   }
-  function geometryFor(item) {
-    const rect = item.getBoundingClientRect();
-    const padding = Math.min(14, Math.max(LENS_PADDING, Math.min(rect.width, rect.height) * 0.08));
-    const radius = resolveRadius(getComputedStyle(item).borderTopLeftRadius, rect.width, rect.height);
-    return normalizeGeometry({
-      x: rect.left - padding,
-      y: rect.top - padding,
-      width: rect.width + padding * 2,
-      height: rect.height + padding * 2,
-      radius: radius + padding
-    });
-  }
-  function controlGeometry(control) {
-    const surface = control.querySelector(
-      control.matches("liquid-range") ? ".liquid-range-thumb" : ".liquid-toggle-thumb"
-    );
-    if (!surface) return null;
-    const rect = surface.getBoundingClientRect();
-    if (!rect.width || !rect.height) return null;
-    const padding = 2;
-    return normalizeGeometry({
-      x: rect.left - padding,
-      y: rect.top - padding,
-      width: rect.width + padding * 2,
-      height: rect.height + padding * 2,
-      radius: Math.min(rect.width, rect.height) / 2 + padding
-    });
-  }
-  function normalizeGeometry(geometry) {
-    const width = Math.max(24, geometry.width);
-    const height = Math.max(24, geometry.height);
-    return {
-      x: geometry.x,
-      y: geometry.y,
-      width,
-      height,
-      radius: clamp2(geometry.radius, 8, Math.min(width, height) / 2)
-    };
-  }
-  function normalizeShape(geometry) {
-    const normalized = normalizeGeometry({ ...geometry, x: 0, y: 0 });
-    return {
-      width: Math.max(24, Math.round(normalized.width)),
-      height: Math.max(24, Math.round(normalized.height)),
-      radius: Math.max(8, Math.round(normalized.radius))
-    };
-  }
-  function centerOf(geometry) {
-    return { x: geometry.x + geometry.width / 2, y: geometry.y + geometry.height / 2 };
-  }
-  function directionalItem(source, items, point) {
-    const sourceRect = source.getBoundingClientRect();
-    const sourceCenter = { x: sourceRect.left + sourceRect.width / 2, y: sourceRect.top + sourceRect.height / 2 };
-    const pointerDelta = { x: point.x - sourceCenter.x, y: point.y - sourceCenter.y };
-    const horizontal = Math.abs(pointerDelta.x) >= Math.abs(pointerDelta.y);
-    let nearest = null;
-    let distance = Number.POSITIVE_INFINITY;
-    items.forEach((item) => {
-      const rect = item.getBoundingClientRect();
-      const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-      const candidateDelta = { x: center.x - sourceCenter.x, y: center.y - sourceCenter.y };
-      const sameLane = horizontal ? Math.abs(candidateDelta.y) <= (sourceRect.height + rect.height) * 0.35 : Math.abs(candidateDelta.x) <= (sourceRect.width + rect.width) * 0.35;
-      const forward = horizontal ? candidateDelta.x * pointerDelta.x > 0 : candidateDelta.y * pointerDelta.y > 0;
-      if (!sameLane || !forward) return;
-      const candidateDistance = Math.hypot(point.x - center.x, point.y - center.y);
-      if (candidateDistance < distance) {
-        nearest = item;
-        distance = candidateDistance;
-      }
-    });
-    return nearest;
-  }
-  function groupBounds(items) {
-    if (!items.length) return new DOMRect();
-    const rects = items.map((item) => item.getBoundingClientRect());
-    const left = Math.min(...rects.map((rect) => rect.left));
-    const top = Math.min(...rects.map((rect) => rect.top));
-    const right = Math.max(...rects.map((rect) => rect.right));
-    const bottom = Math.max(...rects.map((rect) => rect.bottom));
-    return new DOMRect(left, top, right - left, bottom - top);
-  }
-  function containsPoint(rect, point, margin) {
-    return point.x >= rect.left - margin && point.x <= rect.right + margin && point.y >= rect.top - margin && point.y <= rect.bottom + margin;
-  }
-  function targetName(item) {
-    return item.className || item.tagName.toLowerCase();
-  }
-  function resolveRadius(value, width, height) {
-    if (value.endsWith("%")) return Math.min(width, height) * Number.parseFloat(value) / 100;
-    return Number.parseFloat(value) || Math.min(width, height) / 2;
-  }
-  async function decodeOpticalMaps(maps) {
-    await Promise.all([maps.magnifying, maps.displacement, maps.specular].map((source) => new Promise((resolve) => {
-      const image = new Image();
-      image.onload = () => resolve();
-      image.onerror = () => resolve();
-      image.src = source;
-      if (image.complete) resolve();
-    })));
-  }
-  function clamp2(value, minimum, maximum) {
-    return Math.max(minimum, Math.min(maximum, value));
-  }
-  function lerp(from, to, progress) {
-    return from + (to - from) * progress;
-  }
-  var ITEM_SELECTOR, CONTROL_SELECTOR, LENS_PADDING, GROUP_MARGIN, MAGNIFICATION_SCALE, REFRACTION_LEVEL, MAP_CACHE, MAP_READY_CACHE, nextFilterId, LiquidGlassSystem;
-  var init_liquid_glass = __esm({
-    "src/components/liquid-glass.ts"() {
+  var GLASS_SELECTOR, REFRACTION, FROST, SATURATION, SETTLE_MS, GlassSystem;
+  var init_glass = __esm({
+    "src/components/glass.ts"() {
       "use strict";
-      init_liquid_optics();
       init_hdr_glass();
-      ITEM_SELECTOR = "[data-liquid-item]";
-      CONTROL_SELECTOR = "liquid-toggle, liquid-range";
-      LENS_PADDING = 8;
-      GROUP_MARGIN = 20;
-      MAGNIFICATION_SCALE = 24;
-      REFRACTION_LEVEL = 1;
-      MAP_CACHE = /* @__PURE__ */ new Map();
-      MAP_READY_CACHE = /* @__PURE__ */ new Map();
-      nextFilterId = 0;
-      LiquidGlassSystem = class extends HTMLElement {
-        lens = document.createElement("span");
-        defs = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        filterContainer = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-        hdrGlass = new HdrGlassRenderer();
-        activeItem = null;
-        activeGroup = null;
-        activeControl = null;
-        filter = null;
-        filterImages = [];
-        filterVersion = 0;
-        mapShapeKey = "";
-        hideTimer = 0;
-        controlFrame = 0;
-        controlTrackUntil = 0;
-        pointerFrame = 0;
-        pendingPointer = null;
-        connectedCallback() {
-          this.lens.className = "liquid-glass-lens";
-          this.lens.setAttribute("aria-hidden", "true");
-          this.defs.classList.add("liquid-filter-defs");
-          this.defs.setAttribute("aria-hidden", "true");
-          this.defs.append(this.filterContainer);
-          this.append(this.defs, this.lens, this.hdrGlass.canvas);
-          this.hdrGlass.connect();
-          document.addEventListener("pointerover", this.onPointerOver, true);
-          document.addEventListener("pointermove", this.onPointerMove, { passive: true, capture: true });
-          document.addEventListener("pointerdown", this.onPointerDown, true);
-          document.addEventListener("input", this.onControlInput, true);
-          document.addEventListener("focusin", this.onFocusIn, true);
-          document.addEventListener("focusout", this.onFocusOut, true);
-          window.addEventListener("resize", this.onViewportChange);
-          window.addEventListener("scroll", this.onViewportChange, true);
-        }
-        disconnectedCallback() {
-          document.removeEventListener("pointerover", this.onPointerOver, true);
-          document.removeEventListener("pointermove", this.onPointerMove, true);
-          document.removeEventListener("pointerdown", this.onPointerDown, true);
-          document.removeEventListener("input", this.onControlInput, true);
-          document.removeEventListener("focusin", this.onFocusIn, true);
-          document.removeEventListener("focusout", this.onFocusOut, true);
-          window.removeEventListener("resize", this.onViewportChange);
-          window.removeEventListener("scroll", this.onViewportChange, true);
-          window.clearTimeout(this.hideTimer);
-          cancelAnimationFrame(this.controlFrame);
-          cancelAnimationFrame(this.pointerFrame);
-          this.hdrGlass.disconnect();
-        }
-        onPointerOver = (event) => {
-          const control = findControl(event.target);
-          if (control) {
-            this.activateControl(control);
-            return;
-          }
-          const item = findItem(event.target);
-          if (item) this.activate(item);
-        };
-        onPointerMove = (event) => {
-          const control = findControl(event.target);
-          if (control) {
-            this.pendingPointer = null;
-            if (control !== this.activeControl) this.activateControl(control);
-            else this.trackControl(control, 220);
-            return;
-          }
-          if (this.activeControl) this.deactivateControl();
-          const item = findItem(event.target);
-          if (item) {
-            if (item !== this.activeItem) this.activate(item);
-            else this.pendingPointer = null;
-            return;
-          }
-          if (!this.activeItem || !this.activeGroup) return;
-          this.pendingPointer = { x: event.clientX, y: event.clientY };
-          this.schedulePointerRender();
-        };
-        onPointerDown = (event) => {
-          const control = findControl(event.target);
-          if (control) {
-            this.activateControl(control, 320);
-            return;
-          }
-          const item = findItem(event.target);
-          if (!item) return;
-          this.activate(item);
-          this.lens.classList.add("is-pressed");
-          window.addEventListener("pointerup", this.releasePress, { once: true });
-          window.addEventListener("pointercancel", this.releasePress, { once: true });
-        };
-        releasePress = () => this.lens.classList.remove("is-pressed");
-        onFocusIn = (event) => {
-          const control = findControl(event.target);
-          if (control) {
-            this.activateControl(control);
-            return;
-          }
-          const item = findItem(event.target);
-          if (item) this.activate(item);
-        };
-        onFocusOut = (event) => {
-          if (this.activeControl && !findControl(event.relatedTarget)) {
-            this.deactivateControl();
-            return;
-          }
-          if (!findItem(event.relatedTarget)) this.scheduleHide(80);
-        };
-        onControlInput = (event) => {
-          const control = findControl(event.target);
-          if (control && control === this.activeControl) this.trackControl(control, 220);
-        };
-        onViewportChange = () => {
-          if (this.activeControl?.isConnected) this.renderControl(this.activeControl);
-          else if (this.activeItem?.isConnected) this.render(geometryFor(this.activeItem));
-          else this.hide();
-        };
-        activate(item) {
-          this.cancelHide();
-          this.pendingPointer = null;
-          this.activeControl = null;
-          this.controlTrackUntil = 0;
-          delete this.hdrGlass.canvas.dataset.hdrTarget;
-          this.activeItem = item;
-          this.activeGroup = item.parentElement;
-          this.lens.dataset.liquidTarget = targetName(item);
-          this.lens.classList.add("is-visible");
-          this.hdrGlass.show();
-          this.render(geometryFor(item));
-        }
-        activateControl(control, duration = 180) {
-          this.cancelHide();
-          this.activeItem = null;
-          this.activeGroup = null;
-          this.activeControl = control;
-          this.lens.classList.remove("is-visible", "is-bridging", "is-pressed");
-          this.hdrGlass.canvas.dataset.hdrTarget = control.tagName.toLowerCase();
-          this.hdrGlass.show();
-          this.trackControl(control, duration);
-        }
-        deactivateControl() {
-          this.activeControl = null;
-          this.controlTrackUntil = 0;
-          cancelAnimationFrame(this.controlFrame);
-          this.controlFrame = 0;
-          delete this.hdrGlass.canvas.dataset.hdrTarget;
-          this.hdrGlass.hide();
-        }
-        schedulePointerRender() {
-          if (this.pointerFrame) return;
-          this.pointerFrame = requestAnimationFrame(() => {
-            this.pointerFrame = 0;
-            const point = this.pendingPointer;
-            this.pendingPointer = null;
-            if (!point || !this.activeItem || !this.activeGroup) return;
-            if (!containsPoint(groupBounds(this.groupItems()), point, GROUP_MARGIN)) {
-              this.scheduleHide();
-              return;
-            }
-            this.cancelHide();
-            this.renderBetween(point);
-          });
-        }
-        trackControl(control, duration) {
-          this.controlTrackUntil = Math.max(this.controlTrackUntil, performance.now() + duration);
-          if (this.controlFrame) return;
-          const tick = (time) => {
-            this.controlFrame = 0;
-            if (this.activeControl !== control || !control.isConnected) return;
-            this.renderControl(control);
-            if (time < this.controlTrackUntil) this.controlFrame = requestAnimationFrame(tick);
-          };
-          this.controlFrame = requestAnimationFrame(tick);
-        }
-        renderControl(control) {
-          const geometry = controlGeometry(control);
-          if (!geometry) return;
-          this.hdrGlass.render(geometry, control.classList.contains("is-active") ? 0.55 : 0.12);
-        }
-        renderBetween(pointer) {
-          const source = this.activeItem;
-          if (!source) return;
-          const candidates = this.groupItems().filter((item) => item !== source);
-          const destination = directionalItem(source, candidates, pointer);
-          if (!destination) {
-            this.scheduleHide(120);
-            return;
-          }
-          const from = geometryFor(source);
-          const to = geometryFor(destination);
-          const fromCenter = centerOf(from);
-          const toCenter = centerOf(to);
-          const deltaX = toCenter.x - fromCenter.x;
-          const deltaY = toCenter.y - fromCenter.y;
-          const distanceSquared = deltaX ** 2 + deltaY ** 2;
-          if (!distanceSquared) return;
-          const progress = clamp2(
-            ((pointer.x - fromCenter.x) * deltaX + (pointer.y - fromCenter.y) * deltaY) / distanceSquared,
-            0,
-            1
-          );
-          const bridge = Math.sin(Math.PI * progress);
-          const horizontal = Math.abs(deltaX) >= Math.abs(deltaY);
-          const travel = Math.sqrt(distanceSquared);
-          let width = lerp(from.width, to.width, progress);
-          let height = lerp(from.height, to.height, progress);
-          const stretch = Math.min(72, travel * 0.27) * bridge;
-          if (horizontal) {
-            width += stretch;
-            height *= 1 - bridge * 0.11;
-          } else {
-            height += stretch;
-            width *= 1 - bridge * 0.11;
-          }
-          const centerX = lerp(fromCenter.x, toCenter.x, progress);
-          const centerY = lerp(fromCenter.y, toCenter.y, progress);
-          this.lens.dataset.liquidProgress = progress.toFixed(3);
-          this.lens.classList.toggle("is-bridging", progress > 0.01 && progress < 0.99);
-          this.render({
-            x: centerX - width / 2,
-            y: centerY - height / 2,
-            width,
-            height,
-            radius: lerp(from.radius, to.radius, progress) + bridge * 8
-          }, false);
-        }
-        render(geometry, refreshMaps = true) {
-          this.lens.style.setProperty("--liquid-x", `${geometry.x}px`);
-          this.lens.style.setProperty("--liquid-y", `${geometry.y}px`);
-          this.lens.style.setProperty("--liquid-width", `${geometry.width}px`);
-          this.lens.style.setProperty("--liquid-height", `${geometry.height}px`);
-          this.lens.style.setProperty("--liquid-radius", `${geometry.radius}px`);
-          const progress = Number(this.lens.dataset.liquidProgress ?? 0);
-          this.hdrGlass.render(geometry, this.lens.classList.contains("is-bridging") ? Math.sin(Math.PI * progress) : 0);
-          this.sizeFilter(geometry);
-          if (refreshMaps) void this.ensureFilter(geometry);
-        }
-        async ensureFilter(geometry) {
-          const shape = normalizeShape(geometry);
-          const key = opticalShapeKey(shape);
-          if (key === this.mapShapeKey && this.filter) return;
-          this.mapShapeKey = key;
-          const version = ++this.filterVersion;
-          const maps = MAP_CACHE.get(key) ?? createOpticalMaps(shape);
-          MAP_CACHE.set(key, maps);
-          const ready = MAP_READY_CACHE.get(key) ?? decodeOpticalMaps(maps);
-          MAP_READY_CACHE.set(key, ready);
-          await ready;
-          if (version !== this.filterVersion || !this.isConnected) return;
-          this.installFilter(shape, maps);
-        }
-        installFilter(shape, maps) {
-          this.filter?.remove();
-          const id = `infinity-liquid-lens-${++nextFilterId}`;
-          const template = document.createElement("template");
-          template.innerHTML = `
-            <filter id="${id}" color-interpolation-filters="sRGB">
-                <feImage href="${maps.magnifying}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="magnifying_displacement_map" data-optical-map="magnifying"></feImage>
-                <feDisplacementMap in="SourceGraphic" in2="magnifying_displacement_map" scale="${MAGNIFICATION_SCALE}" xChannelSelector="R" yChannelSelector="G" result="magnified_source"></feDisplacementMap>
-                <feGaussianBlur in="magnified_source" stdDeviation="0" result="blurred_source"></feGaussianBlur>
-                <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="displacement_map" data-optical-map="displacement"></feImage>
-                <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${maps.maximumDisplacement * REFRACTION_LEVEL}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
-                <feColorMatrix in="displaced" type="saturate" values="9" result="displaced_saturated"></feColorMatrix>
-                <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="specular_layer" data-optical-map="specular"></feImage>
-                <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
-                <feComponentTransfer in="specular_layer" result="specular_faded"><feFuncA type="linear" slope="0.5"></feFuncA></feComponentTransfer>
-                <feBlend in="specular_saturated" in2="displaced" mode="normal" result="withSaturation"></feBlend>
-                <feBlend in="specular_faded" in2="withSaturation" mode="normal"></feBlend>
-            </filter>`;
-          const filter = template.content.firstElementChild;
-          filter.dataset.maximumDisplacement = String(maps.maximumDisplacement);
-          filter.dataset.liquidShape = opticalShapeKey(shape);
-          this.filterContainer.append(filter);
-          this.filter = filter;
-          this.filterImages = Array.from(filter.querySelectorAll("feImage"));
-          this.lens.style.setProperty("--liquid-filter", `url("#${id}")`);
-          this.lens.dataset.liquidFilterId = id;
-          this.sizeFilter(shape);
-        }
-        sizeFilter(geometry) {
-          this.filterImages.forEach((image) => {
-            image.setAttribute("width", String(Math.round(geometry.width)));
-            image.setAttribute("height", String(Math.round(geometry.height)));
-          });
-        }
-        groupItems() {
-          if (!this.activeGroup) return [];
-          return Array.from(this.activeGroup.children).filter(
-            (child) => child instanceof HTMLElement && child.matches(ITEM_SELECTOR)
-          );
-        }
-        scheduleHide(delay = 150) {
-          if (this.hideTimer) return;
-          this.hideTimer = window.setTimeout(() => {
-            this.hideTimer = 0;
-            this.hide();
-          }, delay);
-        }
-        cancelHide() {
-          if (!this.hideTimer) return;
-          window.clearTimeout(this.hideTimer);
-          this.hideTimer = 0;
-        }
-        hide() {
-          this.activeItem = null;
-          this.activeGroup = null;
-          this.activeControl = null;
-          this.controlTrackUntil = 0;
-          cancelAnimationFrame(this.controlFrame);
-          this.controlFrame = 0;
-          cancelAnimationFrame(this.pointerFrame);
-          this.pointerFrame = 0;
-          this.pendingPointer = null;
-          this.lens.classList.remove("is-visible", "is-bridging", "is-pressed");
-          delete this.hdrGlass.canvas.dataset.hdrTarget;
-          this.hdrGlass.hide();
-          delete this.lens.dataset.liquidProgress;
-          delete this.lens.dataset.liquidTarget;
-        }
-      };
-    }
-  });
-
-  // src/components/liquid-controls.ts
-  var nextControlFilterId, controlMapCache, LiquidControlElement, LiquidRange, LiquidToggle;
-  var init_liquid_controls = __esm({
-    "src/components/liquid-controls.ts"() {
-      "use strict";
       init_liquid_optics();
-      nextControlFilterId = 0;
-      controlMapCache = /* @__PURE__ */ new Map();
-      LiquidControlElement = class extends HTMLElement {
-        input = null;
-        filterDefs = null;
-        displacement = null;
-        tuning = null;
+      GLASS_SELECTOR = "[data-glass]";
+      REFRACTION = 0.5;
+      FROST = 1.2;
+      SATURATION = 1.6;
+      SETTLE_MS = 700;
+      GlassSystem = class extends HTMLElement {
+        defs = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        filters = /* @__PURE__ */ new Map();
+        tracked = /* @__PURE__ */ new Map();
+        hdr = new HdrRimLayer();
+        resizeObserver = new ResizeObserver((entries) => {
+          entries.forEach((entry) => this.refract(entry.target));
+          this.wake();
+        });
+        mutationObserver = new MutationObserver(() => {
+          this.scan();
+          this.wake();
+        });
+        hovered = null;
+        pointer = { x: -1e4, y: -1e4 };
+        smoothPointer = { x: -1e4, y: -1e4 };
+        settleUntil = 0;
+        frame = 0;
+        connectedCallback() {
+          this.defs.classList.add("glass-filters");
+          this.defs.setAttribute("aria-hidden", "true");
+          this.defs.innerHTML = "<defs></defs>";
+          this.append(this.defs, this.hdr.canvas);
+          this.hdr.connect();
+          this.scan();
+          this.mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "hidden"] });
+          document.addEventListener("pointermove", this.onPointerMove, { passive: true, capture: true });
+          document.addEventListener("pointerleave", this.onPointerLeave);
+          window.addEventListener("scroll", this.wake, { passive: true, capture: true });
+          window.addEventListener("resize", this.wake);
+          this.wake();
+        }
         disconnectedCallback() {
-          this.input?.removeEventListener("input", this.onValueChange);
-          this.input?.removeEventListener("change", this.onValueChange);
-          this.input?.removeEventListener("focus", this.onFocus);
-          this.input?.removeEventListener("blur", this.onBlur);
-          this.input?.removeEventListener("pointerdown", this.onPointerDown);
-          window.removeEventListener("pointerup", this.onPointerUp);
-          window.removeEventListener("pointercancel", this.onPointerUp);
+          this.resizeObserver.disconnect();
+          this.mutationObserver.disconnect();
+          document.removeEventListener("pointermove", this.onPointerMove, true);
+          document.removeEventListener("pointerleave", this.onPointerLeave);
+          window.removeEventListener("scroll", this.wake, true);
+          window.removeEventListener("resize", this.wake);
+          cancelAnimationFrame(this.frame);
+          this.frame = 0;
+          this.hdr.disconnect();
         }
-        connectInput(selector) {
-          this.input = this.querySelector(selector);
-          this.input?.addEventListener("input", this.onValueChange);
-          this.input?.addEventListener("change", this.onValueChange);
-          this.input?.addEventListener("focus", this.onFocus);
-          this.input?.addEventListener("blur", this.onBlur);
-          this.input?.addEventListener("pointerdown", this.onPointerDown);
-          this.update();
-        }
-        installFilter(target, shape, tuning) {
-          this.filterDefs?.remove();
-          const cacheKey = `${tuning.profile}:${opticalShapeKey(shape)}`;
-          const maps = controlMapCache.get(cacheKey) ?? createOpticalMaps(shape, tuning.profile);
-          controlMapCache.set(cacheKey, maps);
-          const id = `infinity-liquid-control-${++nextControlFilterId}`;
-          const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-          svg.classList.add("liquid-control-defs");
-          svg.setAttribute("aria-hidden", "true");
-          svg.innerHTML = `
-            <defs>
-                <filter id="${id}" color-interpolation-filters="sRGB">
-                    <feGaussianBlur in="SourceGraphic" stdDeviation="${tuning.blur}" result="blurred_source"></feGaussianBlur>
-                    <feImage href="${maps.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="displacement_map"></feImage>
-                    <feDisplacementMap in="blurred_source" in2="displacement_map" scale="${tuning.maximumDisplacement * tuning.restingRefraction}" xChannelSelector="R" yChannelSelector="G" result="displaced"></feDisplacementMap>
-                    <feColorMatrix in="displaced" type="saturate" values="${tuning.saturation}" result="displaced_saturated"></feColorMatrix>
-                    <feImage href="${maps.specular}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="specular_layer"></feImage>
-                    <feComposite in="displaced_saturated" in2="specular_layer" operator="in" result="specular_saturated"></feComposite>
-                    <feComponentTransfer in="specular_layer" result="specular_faded"><feFuncA type="linear" slope="${tuning.specularOpacity}"></feFuncA></feComponentTransfer>
-                    <feBlend in="specular_saturated" in2="displaced" mode="normal" result="with_saturation"></feBlend>
-                    <feBlend in="specular_faded" in2="with_saturation" mode="normal"></feBlend>
-                </filter>
-            </defs>`;
-          this.prepend(svg);
-          this.filterDefs = svg;
-          this.displacement = svg.querySelector("feDisplacementMap");
-          this.tuning = tuning;
-          target.style.setProperty("--liquid-control-filter", `url("#${id}")`);
-          target.dataset.liquidProfile = tuning.profile;
-        }
-        onValueChange = () => this.update();
-        onFocus = () => this.classList.add("is-focused");
-        onBlur = () => {
-          this.classList.remove("is-focused");
-          this.setActive(false);
-        };
-        onPointerDown = () => {
-          this.setActive(true);
-          window.addEventListener("pointerup", this.onPointerUp, { once: true });
-          window.addEventListener("pointercancel", this.onPointerUp, { once: true });
-        };
-        onPointerUp = () => this.setActive(false);
-        setActive(active) {
-          this.classList.toggle("is-active", active);
-          if (!this.displacement || !this.tuning) return;
-          const ratio = active ? this.tuning.activeRefraction : this.tuning.restingRefraction;
-          this.displacement.setAttribute("scale", String(this.tuning.maximumDisplacement * ratio));
-        }
-      };
-      LiquidRange = class extends LiquidControlElement {
-        connectedCallback() {
-          this.connectInput('input[type="range"]');
-          const thumb = this.querySelector(".liquid-range-thumb");
-          if (thumb) this.installFilter(thumb, { width: 90, height: 60, radius: 30 }, {
-            profile: "convex",
-            blur: 0,
-            maximumDisplacement: 83.88118841653394,
-            restingRefraction: 0.4,
-            activeRefraction: 0.9,
-            saturation: 7,
-            specularOpacity: 0.4
+        /** Picks up glass controls added since the last look and forgets removed ones. */
+        scan() {
+          document.querySelectorAll(GLASS_SELECTOR).forEach((element) => {
+            if (this.tracked.has(element)) return;
+            this.tracked.set(element, { shapeKey: "", glint: 0 });
+            this.resizeObserver.observe(element);
+          });
+          this.tracked.forEach((_state, element) => {
+            if (element.isConnected) return;
+            this.tracked.delete(element);
+            this.resizeObserver.unobserve(element);
           });
         }
-        update() {
-          if (!this.input) return;
-          const minimum = Number(this.input.min) || 0;
-          const maximum = Number(this.input.max) || 100;
-          const progress = maximum === minimum ? 0 : (Number(this.input.value) - minimum) / (maximum - minimum);
-          const clamped = Math.max(0, Math.min(1, progress));
-          this.style.setProperty("--liquid-progress", `${clamped * 100}%`);
-          this.style.setProperty("--liquid-thumb-left", `calc(${clamped * 100}% - ${clamped * 54}px - 18px)`);
+        /** Points the control's backdrop at a filter built for its exact size and corner radius. */
+        refract(element) {
+          const state = this.tracked.get(element);
+          const width = element.offsetWidth;
+          const height = element.offsetHeight;
+          if (!state || !width || !height) return;
+          const radius = cornerRadius(getComputedStyle(element).borderTopLeftRadius, width, height);
+          const shape = { width, height, radius };
+          const key = opticalShapeKey(shape);
+          if (state.shapeKey === key) return;
+          state.shapeKey = key;
+          const id = this.filters.get(key) ?? this.createFilter(shape, key);
+          element.style.setProperty("--glass-backdrop", `url("#${id}") saturate(${SATURATION}) brightness(1.04)`);
+          element.dataset.glassFilter = id;
         }
-      };
-      LiquidToggle = class extends LiquidControlElement {
-        connectedCallback() {
-          this.connectInput('input[type="checkbox"]');
-          const thumb = this.querySelector(".liquid-toggle-thumb");
-          if (thumb) this.installFilter(thumb, { width: 146, height: 92, radius: 46 }, {
-            profile: "lip",
-            blur: 0.2,
-            maximumDisplacement: 55.65161904498752,
-            restingRefraction: 0.4,
-            activeRefraction: 0.9,
-            saturation: 6,
-            specularOpacity: 0.5
+        createFilter(shape, key) {
+          const map = createRefractionMap(shape);
+          const id = `glass-refraction-${this.filters.size + 1}`;
+          const bend = Math.min(map.maximumDisplacement, shape.radius * 3) * REFRACTION;
+          this.defs.firstElementChild.insertAdjacentHTML("beforeend", `
+            <filter id="${id}" color-interpolation-filters="sRGB" data-shape="${key}">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="${FROST}" result="frost"></feGaussianBlur>
+                <feImage href="${map.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="bend"></feImage>
+                <feDisplacementMap in="frost" in2="bend" scale="${bend.toFixed(2)}" xChannelSelector="R" yChannelSelector="G"></feDisplacementMap>
+            </filter>`);
+          this.filters.set(key, id);
+          return id;
+        }
+        onPointerMove = (event) => {
+          this.pointer = { x: event.clientX, y: event.clientY };
+          const element = event.target instanceof Element ? event.target.closest(GLASS_SELECTOR) : null;
+          if (element !== this.hovered) {
+            this.hovered = element;
+            if (this.smoothPointer.x < -1e3) this.smoothPointer = { ...this.pointer };
+          }
+          if (element) {
+            const rect = element.getBoundingClientRect();
+            element.style.setProperty("--glint-x", `${event.clientX - rect.left}px`);
+            element.style.setProperty("--glint-y", `${event.clientY - rect.top}px`);
+          }
+          this.wake();
+        };
+        onPointerLeave = () => {
+          this.hovered = null;
+          this.wake();
+        };
+        /** Re-measures for a moment; the loop stops by itself once nothing moves. */
+        wake = () => {
+          this.settleUntil = performance.now() + SETTLE_MS;
+          if (!this.frame) this.frame = requestAnimationFrame(this.tick);
+        };
+        tick = (time) => {
+          this.frame = 0;
+          if (!this.hdr.active) return;
+          this.smoothPointer.x += (this.pointer.x - this.smoothPointer.x) * 0.35;
+          this.smoothPointer.y += (this.pointer.y - this.smoothPointer.y) * 0.35;
+          let moving = Math.abs(this.pointer.x - this.smoothPointer.x) + Math.abs(this.pointer.y - this.smoothPointer.y) > 0.5;
+          const rims = [];
+          this.tracked.forEach((state, element) => {
+            const target = element === this.hovered ? 1 : 0;
+            state.glint += (target - state.glint) * 0.2;
+            if (Math.abs(target - state.glint) > 0.01) moving = true;
+            if (rims.length >= MAX_RIMS) return;
+            const rim = measure(element, state.glint);
+            if (rim) rims.push(rim);
           });
-        }
-        update() {
-          this.classList.toggle("is-checked", Boolean(this.input?.checked));
-        }
+          this.hdr.update(rims, this.smoothPointer);
+          if (moving || time < this.settleUntil) this.frame = requestAnimationFrame(this.tick);
+        };
       };
     }
   });
 
-  // src/components/spotlight-search.ts
+  // src/components/search-box.ts
   function siteRow(site) {
     return { kind: "site", title: site.title, subtitle: `${site.host} \xB7 \u8FD1 30 \u5929 ${site.count} \u6B21`, url: site.url, site };
   }
@@ -3186,17 +2567,17 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     if (/\s/.test(value)) return false;
     return /^[a-z][a-z\d+.-]*:\/\//i.test(value) || /^localhost(:\d+)?(\/|$)/i.test(value) || /^[\w-]+(\.[\w-]+)*\.[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(value);
   }
-  var ENGINES, SHORTCUT_LABEL, ENGINE_ORDER, GROUP_TITLES, SpotlightSearch;
-  var init_spotlight_search = __esm({
-    "src/components/spotlight-search.ts"() {
+  var ENGINES, SHORTCUT_LABEL, ENGINE_ORDER, GROUP_TITLES, SearchBox;
+  var init_search_box = __esm({
+    "src/components/search-box.ts"() {
       "use strict";
       init_history();
       init_store();
       init_utils();
       init_bookmark_actions();
+      init_base();
       init_icons();
       init_site_icon();
-      init_ui_layer();
       ENGINES = {
         google: { label: "Google", url: "https://www.google.com/search?q=" },
         bing: { label: "Bing", url: "https://www.bing.com/search?q=" },
@@ -3206,48 +2587,70 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       SHORTCUT_LABEL = /Mac|iPhone|iPad/.test(navigator.platform) ? "\u2318K" : "Ctrl K";
       ENGINE_ORDER = Object.keys(ENGINES);
       GROUP_TITLES = { url: "\u7F51\u5740", bookmark: "\u4E66\u7B7E", site: "\u5E38\u8BBF\u95EE", web: "\u641C\u7D22\u7F51\u7EDC", recent: "\u6700\u8FD1\u641C\u7D22" };
-      SpotlightSearch = class extends HTMLElement {
+      SearchBox = class extends StoreElement {
+        observedChanges = ["settings.layout"];
         engine = "google";
         rows = [];
         selected = 0;
         sites = [];
-        releaseLayer = null;
-        connectedCallback() {
-          this.hidden = true;
+        /** Shown by the keyboard shortcut while the setting keeps the field hidden. */
+        summoned = false;
+        render() {
+          const { showSearch } = appStore.state.settings.layout;
+          this.hidden = !showSearch && !this.summoned;
+          if (this.querySelector(".search-field")) return;
           this.innerHTML = `
-            <div class="spotlight-backdrop" aria-hidden="true"></div>
-            <section class="glass glass-thick spotlight" role="dialog" aria-modal="true" aria-label="\u641C\u7D22">
-                <div class="spotlight-field">
+            <div class="search-box" role="search">
+                <label class="glass search-field" data-glass>
                     ${ICONS.search}
-                    <div class="spotlight-input">
-                        <span class="spotlight-ghost" aria-hidden="true"><span class="ghost-typed"></span><span class="ghost-rest"></span></span>
+                    <span class="search-input">
+                        <span class="search-ghost" aria-hidden="true"><span class="ghost-typed"></span><span class="ghost-rest"></span></span>
                         <input type="text" autocomplete="off" spellcheck="false" placeholder="\u641C\u7D22\u6216\u8F93\u5165\u7F51\u5740" aria-label="\u641C\u7D22\u6216\u8F93\u5165\u7F51\u5740"
-                            role="combobox" aria-expanded="true" aria-controls="spotlight-results" aria-autocomplete="list">
-                    </div>
-                    <span class="spotlight-scope"></span>
-                </div>
-                <div class="spotlight-results" id="spotlight-results" role="listbox" aria-label="\u641C\u7D22\u7ED3\u679C"></div>
-                <footer class="spotlight-footer">
-                    <div class="segmented spotlight-engines" role="radiogroup" aria-label="\u641C\u7D22\u5F15\u64CE">
-                        ${ENGINE_ORDER.map((key) => `<button type="button" role="radio" data-engine="${key}" data-liquid-item>${ENGINES[key].label}</button>`).join("")}
-                    </div>
-                    <div class="spotlight-hints" aria-hidden="true">
-                        <span><kbd>\u2191</kbd><kbd>\u2193</kbd> \u9009\u62E9</span>
-                        <span><kbd>\u21E5</kbd> \u5207\u6362\u5F15\u64CE</span>
-                        <span><kbd>esc</kbd> \u5173\u95ED</span>
-                    </div>
-                </footer>
-            </section>`;
+                            role="combobox" aria-expanded="false" aria-controls="search-results" aria-autocomplete="list"
+                            aria-keyshortcuts="${SHORTCUT_LABEL === "\u2318K" ? "Meta+K" : "Control+K"} /">
+                    </span>
+                    <button class="search-engine" type="button" tabindex="-1" title="\u5207\u6362\u641C\u7D22\u5F15\u64CE\uFF08Tab\uFF09"></button>
+                    <kbd class="search-shortcut">${SHORTCUT_LABEL}</kbd>
+                </label>
+                <div class="glass-panel search-results" id="search-results" role="listbox" aria-label="\u641C\u7D22\u5EFA\u8BAE" hidden></div>
+            </div>`;
+          this.bind();
+        }
+        /** Puts the caret in the field, showing it first when the setting hides it. */
+        focusField() {
+          if (this.hidden) {
+            this.summoned = true;
+            this.hidden = false;
+          }
+          this.input.focus();
+        }
+        get hasFocus() {
+          return this.contains(document.activeElement);
+        }
+        get input() {
+          return this.querySelector(".search-field input");
+        }
+        get results() {
+          return this.querySelector(".search-results");
+        }
+        bind() {
           const input = this.input;
+          input.addEventListener("focus", this.onFocus);
           input.addEventListener("input", () => {
             this.selected = 0;
             this.renderResults();
           });
           input.addEventListener("keydown", this.onKeyDown);
-          this.querySelector(".spotlight-backdrop")?.addEventListener("pointerdown", () => this.close());
-          const results = this.querySelector(".spotlight-results");
-          results.addEventListener("pointerdown", (event) => event.preventDefault());
-          results.addEventListener("click", (event) => {
+          this.addEventListener("focusout", (event) => {
+            if (this.contains(event.relatedTarget)) return;
+            this.closeResults();
+            if (this.summoned && !input.value) {
+              this.summoned = false;
+              this.render();
+            }
+          });
+          this.results.addEventListener("pointerdown", (event) => event.preventDefault());
+          this.results.addEventListener("click", (event) => {
             const target = event.target;
             const row = target.closest("[data-index]");
             if (!row) return;
@@ -3258,75 +2661,50 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             }
             this.activate(Number(row.dataset.index), event.metaKey || event.ctrlKey);
           });
-          results.addEventListener("pointermove", (event) => {
+          this.results.addEventListener("pointermove", (event) => {
             const row = event.target.closest("[data-index]");
             const index = row ? Number(row.dataset.index) : -1;
             if (index >= 0 && index !== this.selected) this.select(index);
           });
-          const engines = this.querySelector(".spotlight-engines");
-          engines.addEventListener("pointerdown", (event) => event.preventDefault());
-          engines.addEventListener("click", (event) => {
-            const button = event.target.closest("[data-engine]");
-            if (button) this.setEngine(button.dataset.engine);
-          });
-          engines.addEventListener("keydown", (event) => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            event.preventDefault();
-            this.cycleEngine(event.key === "ArrowRight" ? 1 : -1);
-            this.querySelector(`[data-engine="${this.engine}"]`)?.focus();
-          });
+          const engine = this.querySelector(".search-engine");
+          engine.addEventListener("pointerdown", (event) => event.preventDefault());
+          engine.addEventListener("click", () => this.cycleEngine(1));
         }
-        disconnectedCallback() {
-          this.close();
-        }
-        get isOpen() {
-          return !this.hidden;
-        }
-        open() {
-          if (this.isOpen) return;
+        onFocus = () => {
           this.engine = appStore.state.settings.layout.searchEngine;
-          this.input.value = "";
           this.selected = 0;
-          this.hidden = false;
-          document.body.classList.add("spotlight-open");
-          this.releaseLayer = pushLayer(this.querySelector(".spotlight"), () => this.close());
-          this.syncEngines();
           this.renderResults();
-          requestAnimationFrame(() => this.input.focus());
-          this.sites = [];
-          if (!appStore.state.settings.layout.showRecent) return;
+          if (!appStore.state.settings.layout.showRecent || this.sites.length) return;
           void loadRecentSites().then((sites) => {
             this.sites = sites;
-            if (this.isOpen) this.renderResults();
+            if (this.hasFocus) this.renderResults();
           }).catch(() => void 0);
-        }
-        close() {
-          if (!this.isOpen) return;
-          this.hidden = true;
-          document.body.classList.remove("spotlight-open");
-          const release = this.releaseLayer;
-          this.releaseLayer = null;
-          release?.();
-        }
-        get input() {
-          return this.querySelector(".spotlight-field input");
-        }
+        };
         onKeyDown = (event) => {
           if (event.isComposing) return;
+          const input = this.input;
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
             event.preventDefault();
             if (this.rows.length) this.select((this.selected + (event.key === "ArrowDown" ? 1 : -1) + this.rows.length) % this.rows.length);
           } else if (event.key === "Enter") {
             event.preventDefault();
             this.activate(this.selected, event.metaKey || event.ctrlKey);
-          } else if (event.key === "Tab" && !event.shiftKey) {
+          } else if (event.key === "Tab" && !event.shiftKey && input.value.trim()) {
             event.preventDefault();
             this.cycleEngine(1);
-          } else if (event.key === "ArrowRight" && this.ghostRest() && this.input.selectionStart === this.input.value.length) {
+          } else if (event.key === "ArrowRight" && this.ghostRest() && input.selectionStart === input.value.length) {
             event.preventDefault();
-            this.input.value += this.ghostRest();
+            input.value += this.ghostRest();
             this.selected = 0;
             this.renderResults();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            if (input.value) {
+              input.value = "";
+              this.renderResults();
+            } else {
+              input.blur();
+            }
           }
         };
         buildRows() {
@@ -3334,8 +2712,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const query = raw.toLowerCase();
           const rows = [];
           const engine = ENGINES[this.engine].label;
+          const showSites = appStore.state.settings.layout.showRecent;
           if (!query) {
-            this.sites.slice(0, 4).forEach((site) => rows.push(siteRow(site)));
+            if (showSites) this.sites.slice(0, 4).forEach((site) => rows.push(siteRow(site)));
             appStore.state.recentSearches.slice(0, 5).forEach((item) => rows.push({ kind: "recent", title: item, subtitle: "", query: item }));
             return rows;
           }
@@ -3347,53 +2726,60 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           bookmarks.forEach(({ bookmark }) => rows.push({
             kind: "bookmark",
             title: bookmarkName(bookmark),
-            subtitle: `${hostOf(bookmark.url)}${bookmark.folder !== "\u5168\u90E8" ? ` \xB7 ${bookmark.folder} \u6587\u4EF6\u5939` : ""}`,
+            subtitle: `${hostOf(bookmark.url)}${bookmark.folder !== ROOT_FOLDER ? ` \xB7 ${folderLabel(bookmark.folder)}` : ""}`,
             url: bookmark.url,
             bookmark
           }));
-          const bookmarkedHosts = new Set(bookmarks.map(({ bookmark }) => hostOf(bookmark.url)));
-          this.sites.filter((site) => !bookmarkedHosts.has(site.host) && matchScore(query, site.title, site.url) > 0).slice(0, 3).forEach((site) => rows.push(siteRow(site)));
+          if (showSites) {
+            const bookmarkedHosts = new Set(bookmarks.map(({ bookmark }) => hostOf(bookmark.url)));
+            this.sites.filter((site) => !bookmarkedHosts.has(site.host) && matchScore(query, site.title, site.url) > 0).slice(0, 3).forEach((site) => rows.push(siteRow(site)));
+          }
           rows.push({ kind: "web", title: raw, subtitle: `\u5728 ${engine} \u4E2D\u641C\u7D22`, query: raw });
           appStore.state.recentSearches.filter((item) => item.toLowerCase().includes(query) && item.toLowerCase() !== query).slice(0, 4).forEach((item) => rows.push({ kind: "recent", title: item, subtitle: "", query: item }));
           return rows;
         }
         renderResults() {
+          if (!this.hasFocus) return;
           this.rows = this.buildRows();
           this.selected = Math.min(this.selected, Math.max(0, this.rows.length - 1));
-          const results = this.querySelector(".spotlight-results");
           let previous = "";
-          results.innerHTML = this.rows.map((row, index) => {
-            const heading = row.kind !== previous ? `<h3 class="spotlight-heading" role="presentation">${GROUP_TITLES[row.kind]}</h3>` : "";
+          this.results.innerHTML = this.rows.map((row, index) => {
+            const heading = row.kind !== previous ? `<h3 class="search-heading" role="presentation">${GROUP_TITLES[row.kind]}</h3>` : "";
             previous = row.kind;
             return `${heading}
-                <div class="spotlight-row" role="option" id="spotlight-option-${index}" data-index="${index}" aria-selected="false">
+                <div class="search-row" role="option" id="search-option-${index}" data-index="${index}" aria-selected="false">
                     ${rowIcon(row)}
                     <span class="row-text"><strong>${escapeHtml(row.title)}</strong>${row.subtitle ? `<small>${escapeHtml(row.subtitle)}</small>` : ""}</span>
-                    <span class="row-hint">${row.kind === "web" || row.kind === "recent" ? "\u641C\u7D22" : "\u6253\u5F00"} <kbd>\u21B5</kbd></span>
                     ${row.kind === "recent" ? '<button class="row-remove" type="button" tabindex="-1" aria-label="\u5220\u9664\u8FD9\u6761\u8BB0\u5F55">\u5220\u9664</button>' : ""}
                 </div>`;
-          }).join("") || '<p class="spotlight-empty">\u8F93\u5165\u5173\u952E\u8BCD\u641C\u7D22\u4E66\u7B7E\u4E0E\u7F51\u9875</p>';
-          results.hidden = false;
-          bindSiteIcons(results);
+          }).join("");
+          this.results.hidden = !this.rows.length;
+          this.input.setAttribute("aria-expanded", String(!this.results.hidden));
+          this.classList.toggle("is-open", !this.results.hidden);
+          bindSiteIcons(this.results);
+          this.syncEngine();
           this.select(this.selected);
+        }
+        closeResults() {
+          this.results.hidden = true;
+          this.classList.remove("is-open");
+          this.input.setAttribute("aria-expanded", "false");
+          this.input.removeAttribute("aria-activedescendant");
+          this.querySelector(".ghost-typed").textContent = "";
+          this.querySelector(".ghost-rest").textContent = "";
         }
         select(index) {
           this.selected = index;
-          this.querySelectorAll(".spotlight-row").forEach((row2) => {
-            const active = Number(row2.dataset.index) === index;
-            row2.classList.toggle("is-selected", active);
-            row2.setAttribute("aria-selected", String(active));
-            if (active) row2.scrollIntoView({ block: "nearest" });
+          this.results.querySelectorAll(".search-row").forEach((row) => {
+            const active = Number(row.dataset.index) === index;
+            row.classList.toggle("is-selected", active);
+            row.setAttribute("aria-selected", String(active));
+            if (active) row.scrollIntoView({ block: "nearest" });
           });
-          const row = this.rows[index];
-          if (row) this.input.setAttribute("aria-activedescendant", `spotlight-option-${index}`);
+          if (this.rows[index]) this.input.setAttribute("aria-activedescendant", `search-option-${index}`);
           else this.input.removeAttribute("aria-activedescendant");
-          const scope = this.querySelector(".spotlight-scope");
-          scope.textContent = row && this.input.value.trim() ? GROUP_TITLES[row.kind] : "";
-          scope.hidden = !scope.textContent;
-          const typed = this.input.value;
           const rest = this.ghostRest();
-          this.querySelector(".ghost-typed").textContent = rest ? typed : "";
+          this.querySelector(".ghost-typed").textContent = rest ? this.input.value : "";
           this.querySelector(".ghost-rest").textContent = rest;
         }
         /** Inline completion of the top hit's host name, accepted with →. */
@@ -3415,10 +2801,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.search(row.query);
             return;
           }
-          const { openInNewTab: newTab } = appStore.state.settings.layout;
-          if (background || newTab || new URL(row.url).protocol === "chrome-extension:") {
+          if (background || appStore.state.settings.layout.openInNewTab || new URL(row.url).protocol === "chrome-extension:") {
             openInNewTab(row.url);
-            this.close();
+            this.input.value = "";
+            this.input.blur();
           } else {
             window.location.href = row.url;
           }
@@ -3430,51 +2816,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             window.location.href = target;
           });
         }
-        setEngine(engine) {
-          this.engine = engine;
-          this.syncEngines();
-          this.renderResults();
-        }
         cycleEngine(step) {
           const index = ENGINE_ORDER.indexOf(this.engine);
-          this.setEngine(ENGINE_ORDER[(index + step + ENGINE_ORDER.length) % ENGINE_ORDER.length]);
+          this.engine = ENGINE_ORDER[(index + step + ENGINE_ORDER.length) % ENGINE_ORDER.length];
+          this.renderResults();
         }
-        syncEngines() {
-          this.querySelectorAll("[data-engine]").forEach((button) => {
-            const checked = button.dataset.engine === this.engine;
-            button.classList.toggle("is-active", checked);
-            button.setAttribute("aria-checked", String(checked));
-            button.tabIndex = checked ? 0 : -1;
-          });
-        }
-      };
-    }
-  });
-
-  // src/components/search-pill.ts
-  var SearchPill;
-  var init_search_pill = __esm({
-    "src/components/search-pill.ts"() {
-      "use strict";
-      init_store();
-      init_base();
-      init_icons();
-      init_spotlight_search();
-      SearchPill = class extends StoreElement {
-        observedChanges = ["settings.layout"];
-        render() {
-          const { showSearch, searchEngine } = appStore.state.settings.layout;
-          this.hidden = !showSearch;
-          this.innerHTML = `
-            <button class="glass search-pill" type="button" data-liquid-item aria-label="\u641C\u7D22\u6216\u8F93\u5165\u7F51\u5740" aria-keyshortcuts="${SHORTCUT_LABEL === "\u2318K" ? "Meta+K" : "Control+K"} /">
-                ${ICONS.search}
-                <span class="search-pill-text">\u641C\u7D22\u6216\u8F93\u5165\u7F51\u5740</span>
-                <span class="pill-chip">${ENGINES[searchEngine].label}</span>
-                <span class="pill-chip">${SHORTCUT_LABEL}</span>
-            </button>`;
-          this.querySelector("button")?.addEventListener("click", () => {
-            this.dispatchEvent(new CustomEvent("open-spotlight", { bubbles: true, composed: true }));
-          });
+        syncEngine() {
+          const button = this.querySelector(".search-engine");
+          button.textContent = ENGINES[this.engine].label;
+          button.dataset.engine = this.engine;
+          button.setAttribute("aria-label", `\u641C\u7D22\u5F15\u64CE\uFF1A${ENGINES[this.engine].label}\uFF0C\u70B9\u6309\u6216\u6309 Tab \u5207\u6362`);
         }
       };
     }
@@ -3503,23 +2854,29 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             <div class="segmented" role="radiogroup" aria-labelledby="segment-${name}" data-segment="${name}">
                 ${options.map(([optionValue, optionLabel]) => {
       const checked = optionValue === value;
-      return `<button type="button" role="radio" aria-checked="${checked}" tabindex="${checked ? 0 : -1}" class="${checked ? "is-active" : ""}" data-value="${optionValue}" data-liquid-item>${escapeHtml(optionLabel)}</button>`;
+      return `<button type="button" role="radio" aria-checked="${checked}" tabindex="${checked ? 0 : -1}" class="${checked ? "is-active" : ""}" data-value="${optionValue}">${escapeHtml(optionLabel)}</button>`;
     }).join("")}
             </div>
         </div>`;
   }
   function toggleRow(name, label, sub = "", dependsOn = "") {
-    return `<label class="setting-row toggle-row" ${depends(dependsOn)}>${rowLabel(label, sub)}<liquid-toggle><input type="checkbox" role="switch" data-toggle="${name}"><span class="liquid-toggle-track" aria-hidden="true"><span class="liquid-toggle-thumb"></span></span></liquid-toggle></label>`;
+    return `<label class="setting-row toggle-row" ${depends(dependsOn)}>${rowLabel(label, sub)}<span class="switch"><input type="checkbox" role="switch" data-toggle="${name}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></span></label>`;
   }
   function rangeRow(name, label, value, min, max, unit, dependsOn = "", sub = "") {
     return `
         <div class="setting-row" ${depends(dependsOn)}>
             ${rowLabel(label, sub)}
             <span class="range-control">
-                <span class="range-row"><liquid-range><span class="liquid-range-track" aria-hidden="true"><span class="liquid-range-fill"></span></span><span class="liquid-range-thumb" aria-hidden="true"></span><input type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}"></liquid-range></span>
+                <input class="slider" type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}">
                 <output>${value}${unit}</output>
             </span>
         </div>`;
+  }
+  function syncSlider(input) {
+    const minimum = Number(input.min) || 0;
+    const maximum = Number(input.max) || 100;
+    const progress = maximum === minimum ? 0 : (Number(input.value) - minimum) / (maximum - minimum);
+    input.style.setProperty("--progress", `${Math.max(0, Math.min(1, progress)) * 100}%`);
   }
   function wallpaperKind({ type, value }) {
     if (type === "video") return "video";
@@ -3552,13 +2909,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_base();
       init_dashboard_header();
       init_icons();
-      init_spotlight_search();
+      init_search_box();
       init_ui_layer();
       PANES = [
-        ["appearance", "\u5916\u89C2", ICONS.look, "#0a84ff"],
-        ["widgets", "\u7EC4\u4EF6", ICONS.widgets, "#ff9f0a"],
-        ["wallpaper", "\u58C1\u7EB8", ICONS.wallpaper, "#30b0c7"],
-        ["data", "\u6570\u636E", ICONS.database, "#8e8e93"]
+        ["appearance", "\u5916\u89C2"],
+        ["widgets", "\u7EC4\u4EF6"],
+        ["wallpaper", "\u58C1\u7EB8"],
+        ["data", "\u6570\u636E"]
       ];
       SettingsPanel = class extends StoreElement {
         observedChanges = ["settings.appearance", "settings.wallpaper", "settings.layout", "bookmarks", "folders"];
@@ -3572,6 +2929,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (this.openState) return;
           this.openState = true;
           this.syncOpenState();
+          this.placeSegmentThumbs();
           this.releaseLayer = pushLayer(this.querySelector(".settings-window"), () => this.close());
           void this.refreshPreview();
           void this.refreshData();
@@ -3600,20 +2958,19 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const settings = appStore.state.settings;
           this.innerHTML = `
             <div class="settings-scrim" aria-hidden="true"></div>
-            <section class="glass glass-window settings-window" role="dialog" aria-modal="true" aria-label="\u8BBE\u7F6E" aria-hidden="true" inert>
+            <section class="glass-panel settings-window" role="dialog" aria-modal="true" aria-label="\u8BBE\u7F6E" aria-hidden="true" inert>
                 <aside class="settings-sidebar">
                     <div class="settings-title">
-                        <button class="settings-close" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E">${ICONS.close}</button>
-                        <h2>\u8BBE\u7F6E</h2>
+                        <button class="settings-close" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E" title="\u5173\u95ED">${ICONS.close}</button>
                     </div>
                     <label class="settings-search">
                         ${ICONS.search}
                         <input type="search" placeholder="\u641C\u7D22" aria-label="\u641C\u7D22\u8BBE\u7F6E" autocomplete="off">
                     </label>
                     <nav class="settings-nav" aria-label="\u8BBE\u7F6E\u5206\u7C7B">
-                        ${PANES.map(([pane2, label, icon2, color]) => `
-                            <button class="settings-nav-item" type="button" data-pane="${pane2}" data-liquid-item>
-                                <span class="nav-glyph" style="background:${color}">${icon2}</span><span>${label}</span>
+                        ${PANES.map(([pane2, label]) => `
+                            <button class="settings-nav-item" type="button" data-pane="${pane2}">
+                                <span class="nav-tile" data-tile="${pane2}">${SETTINGS_GLYPHS[pane2]}</span><span>${label}</span>
                             </button>`).join("")}
                     </nav>
                     <span class="settings-version">Infinity New Tab ${escapeHtml(chrome.runtime?.getManifest?.().version ?? "")}</span>
@@ -3652,14 +3009,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             ${group("", `
                 ${toggleRow("showClock", "\u65F6\u95F4\u4E0E\u65E5\u671F")}
                 ${toggleRow("showSearch", "\u641C\u7D22\u680F", `\u5173\u95ED\u540E\u4ECD\u53EF\u7528 ${SHORTCUT_LABEL} \u547C\u51FA`)}
-                ${toggleRow("showBookmarks", "Dock")}
+                ${toggleRow("showBookmarks", "\u4E66\u7B7E")}
                 ${toggleRow("showStatus", "\u72B6\u6001\u80F6\u56CA", "\u53EA\u5728\u64AD\u653E\u5A92\u4F53\u3001\u4E0B\u8F7D\u6216\u4F7F\u7528\u7535\u6C60\u65F6\u51FA\u73B0")}
-                ${toggleRow("showRecent", "\u5E38\u8BBF\u95EE\u7F51\u7AD9", "\u6839\u636E\u672C\u673A\u6700\u8FD1 30 \u5929\u7684\u6D4F\u89C8\u8BB0\u5F55\u751F\u6210\uFF0C\u51FA\u73B0\u5728 Dock\u3001\u542F\u52A8\u53F0\u548C\u641C\u7D22\u4E2D")}
             `)}
-            ${group("Dock", `
-                ${segmentRow("dockSource", "\u663E\u793A\u7684\u4E66\u7B7E", layout.dockSource, [["bookmarks", "\u56FA\u5B9A\u7684\u4E66\u7B7E"], ["recent", "\u5E38\u8BBF\u95EE"]], "\u56FA\u5B9A\u7684\u4E66\u7B7E\u5C31\u662F\u201C\u5168\u90E8\u201D\u91CC\u7684\u4E66\u7B7E\uFF0C\u53EF\u5728\u542F\u52A8\u53F0\u4E2D\u62D6\u52A8\u6392\u5E8F", "showBookmarks showRecent")}
-                ${rangeRow("dockSize", "\u56FE\u6807\u5927\u5C0F", layout.dockSize, 40, 72, "", "showBookmarks")}
-                ${toggleRow("dockMagnify", "\u60AC\u505C\u653E\u5927", "", "showBookmarks")}
+            ${group("\u4E66\u7B7E", `
+                ${toggleRow("showRecent", "\u5E38\u8BBF\u95EE\u7F51\u7AD9", "\u6839\u636E\u672C\u673A\u6700\u8FD1 30 \u5929\u7684\u6D4F\u89C8\u8BB0\u5F55\u751F\u6210\uFF0C\u6392\u5728\u4E66\u7B7E\u6700\u540E\uFF0C\u4E5F\u51FA\u73B0\u5728\u641C\u7D22\u4E2D")}
                 ${toggleRow("openInNewTab", "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00\u4E66\u7B7E")}
             `)}
             ${group("\u641C\u7D22", `
@@ -3676,9 +3030,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                     <strong class="wallpaper-name"></strong>
                     <span class="row-sub wallpaper-meta"></span>
                     <div class="wallpaper-actions">
-                        <label class="pill-button primary upload-wallpaper" data-liquid-item>\u9009\u62E9\u89C6\u9891\u6216\u56FE\u7247\u2026<input type="file" accept="image/*,video/*" hidden></label>
-                        <button class="pill-button random-wallpaper" type="button" data-liquid-item>\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8</button>
-                        <button class="pill-button reset-wallpaper" type="button" data-liquid-item>\u6062\u590D\u9ED8\u8BA4</button>
+                        <label class="pill-button primary upload-wallpaper">\u9009\u62E9\u89C6\u9891\u6216\u56FE\u7247\u2026<input type="file" accept="image/*,video/*" hidden></label>
+                        <button class="pill-button random-wallpaper" type="button">\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8</button>
+                        <button class="pill-button reset-wallpaper" type="button">\u6062\u590D\u9ED8\u8BA4</button>
                     </div>
                 </div>
             </div>
@@ -3702,12 +3056,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                 ${infoRow("\u672C\u5730\u5A92\u4F53", "\u89C6\u9891\u4E0E\u56FE\u7247\u58C1\u7EB8\u4FDD\u5B58\u5728\u672C\u673A\uFF0C\u4E0D\u5360\u7528\u540C\u6B65\u7A7A\u95F4", '<span class="row-value media-usage"></span>')}
             `)}
             ${group("\u5907\u4EFD", `
-                ${infoRow("\u5BFC\u51FA\u5907\u4EFD", "\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\uFF0C\u4E00\u4E2A JSON \u6587\u4EF6", '<button class="pill-button export-data" type="button" data-liquid-item>\u5BFC\u51FA\u2026</button>')}
-                ${infoRow("\u4ECE\u5907\u4EFD\u6062\u590D", "\u652F\u6301 1.0 / 2.0 \u5907\u4EFD\uFF0C\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E", '<label class="pill-button import-data" data-liquid-item>\u5BFC\u5165\u2026<input type="file" accept="application/json,.json" hidden></label>')}
+                ${infoRow("\u5BFC\u51FA\u5907\u4EFD", "\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\uFF0C\u4E00\u4E2A JSON \u6587\u4EF6", '<button class="pill-button export-data" type="button">\u5BFC\u51FA\u2026</button>')}
+                ${infoRow("\u4ECE\u5907\u4EFD\u6062\u590D", "\u652F\u6301 1.0 / 2.0 \u5907\u4EFD\uFF0C\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E", '<label class="pill-button import-data">\u5BFC\u5165\u2026<input type="file" accept="application/json,.json" hidden></label>')}
                 ${toggleRow("backupReminder", "\u6BCF\u6708\u63D0\u9192\u6211\u5907\u4EFD")}
             `)}
             ${group("", `
-                ${infoRow("\u6E05\u7A7A\u6240\u6709\u6570\u636E", "\u5220\u9664\u4E66\u7B7E\u3001\u8BBE\u7F6E\u4E0E\u672C\u5730\u58C1\u7EB8\uFF0C\u65E0\u6CD5\u64A4\u9500", '<button class="pill-button danger reset-data" type="button" data-liquid-item>\u6E05\u7A7A\u2026</button>')}
+                ${infoRow("\u6E05\u7A7A\u6240\u6709\u6570\u636E", "\u5220\u9664\u4E66\u7B7E\u3001\u8BBE\u7F6E\u4E0E\u672C\u5730\u58C1\u7EB8\uFF0C\u65E0\u6CD5\u64A4\u9500", '<button class="pill-button danger reset-data" type="button">\u6E05\u7A7A\u2026</button>')}
             `)}
         `);
         }
@@ -3756,12 +3110,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             input.addEventListener("input", () => {
               const output = input.closest(".setting-row")?.querySelector("output");
               if (output) output.textContent = `${input.value}${input.dataset.unit ?? ""}`;
-              const [selector, property, value] = input.name === "dockSize" ? ["home-dock", "--dock-size", `${input.value}px`] : input.name === "blur" ? ["wallpaper-surface", "--wallpaper-blur", `${input.value}px`] : ["wallpaper-surface", "--wallpaper-overlay", String(Number(input.value) / 100)];
-              document.querySelector(selector)?.style.setProperty(property, value);
+              syncSlider(input);
+              const [property, value] = input.name === "blur" ? ["--wallpaper-blur", `${input.value}px`] : ["--wallpaper-overlay", String(Number(input.value) / 100)];
+              document.querySelector("wallpaper-surface")?.style.setProperty(property, value);
             });
             input.addEventListener("change", () => {
-              const section = input.name === "dockSize" ? "layout" : "wallpaper";
-              void appStore.updateSettings(section, { [input.name]: Number(input.value) }).catch(notifyError);
+              void appStore.updateSettings("wallpaper", { [input.name]: Number(input.value) }).catch(notifyError);
             });
           });
           const upload = this.querySelector(".upload-wallpaper input");
@@ -3794,7 +3148,19 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           });
           const content = this.querySelector(".settings-content");
           if (content) content.scrollTop = 0;
+          this.placeSegmentThumbs();
           if (target === "wallpaper") void this.refreshPreview();
+        }
+        /** Slides each visible segmented control's thumb under its selected option. */
+        placeSegmentThumbs() {
+          this.querySelectorAll("[data-segment]").forEach((groupElement) => {
+            const active = groupElement.querySelector(".is-active");
+            if (!active || !groupElement.offsetWidth) return;
+            groupElement.style.setProperty("--thumb-x", `${active.offsetLeft}px`);
+            groupElement.style.setProperty("--thumb-width", `${active.offsetWidth}px`);
+            groupElement.classList.toggle("has-thumb", true);
+            if (!groupElement.classList.contains("is-placed")) requestAnimationFrame(() => groupElement.classList.add("is-placed"));
+          });
         }
         /** Searching shows matching rows from every pane at once. */
         filter(value) {
@@ -3853,7 +3219,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             glass: appearance.glass,
             clockFormat: appearance.clockFormat,
             dateFormat: appearance.dateFormat,
-            dockSource: layout.dockSource,
             searchEngine: layout.searchEngine,
             wallpaperKind: wallpaperKind(wallpaper)
           };
@@ -3876,7 +3241,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             showBookmarks: layout.showBookmarks,
             showStatus: layout.showStatus,
             showRecent: layout.showRecent,
-            dockMagnify: layout.dockMagnify,
             openInNewTab: layout.openInNewTab,
             saveSearches: layout.saveSearches,
             backupReminder: layout.backupReminder,
@@ -3887,18 +3251,19 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           };
           this.querySelectorAll("input[data-toggle]").forEach((input) => {
             input.checked = toggles[input.dataset.toggle ?? ""] ?? input.checked;
-            input.closest("liquid-toggle")?.classList.toggle("is-checked", input.checked);
           });
           this.querySelectorAll("[data-depends]").forEach((row) => {
             row.classList.toggle("is-disabled", (row.dataset.depends ?? "").split(" ").some((name) => !toggles[name]));
           });
-          const ranges = { blur: wallpaper.blur, overlay: wallpaper.overlay, dockSize: layout.dockSize };
+          const ranges = { blur: wallpaper.blur, overlay: wallpaper.overlay };
           this.querySelectorAll('input[type="range"]').forEach((input) => {
             const value = ranges[input.name];
+            syncSlider(input);
             if (!Number.isFinite(value) || Number(input.value) === value) return;
             input.value = String(value);
             input.dispatchEvent(new Event("input", { bubbles: false }));
           });
+          this.placeSegmentThumbs();
           const reset = this.querySelector(".reset-wallpaper");
           if (reset) reset.hidden = wallpaper.type === "gradient";
           if (this.openState) void this.refreshPreview();
@@ -3922,7 +3287,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             else if (name === "glass") await appStore.updateSettings("appearance", { glass: value });
             else if (name === "clockFormat") await appStore.updateSettings("appearance", { clockFormat: value });
             else if (name === "dateFormat") await appStore.updateSettings("appearance", { dateFormat: value });
-            else if (name === "dockSource") await appStore.updateSettings("layout", { dockSource: value });
             else if (name === "searchEngine") await appStore.updateSettings("layout", { searchEngine: value });
             else if (name === "wallpaperKind") this.pickWallpaper(value);
           } catch (error) {
@@ -4111,7 +3475,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const muteLabel = media?.muted ? "\u53D6\u6D88\u9759\u97F3" : "\u9759\u97F3";
           this.innerHTML = [
             media ? `
-                <div class="glass glass-dark capsule media-capsule">
+                <div class="glass glass-dark capsule media-capsule" data-glass>
                     <button class="media-open" type="button" title="\u5207\u6362\u5230\u6B63\u5728\u64AD\u653E\u7684\u6807\u7B7E\u9875">
                         <img class="media-art" src="${escapeHtml(media.icon)}" alt="" draggable="false">
                         <span class="capsule-text">
@@ -4120,10 +3484,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                         </span>
                         ${media.muted ? "" : '<span class="equalizer" aria-hidden="true"><span></span><span></span><span></span><span></span></span>'}
                     </button>
-                    <button class="media-mute" type="button" data-liquid-item aria-label="${muteLabel}" title="${muteLabel}">${media.muted ? ICONS.muted : ICONS.speaker}</button>
+                    <button class="media-mute" type="button" aria-label="${muteLabel}" title="${muteLabel}">${media.muted ? ICONS.muted : ICONS.speaker}</button>
                 </div>` : "",
-            downloads.length ? `<button class="glass glass-dark capsule download-capsule" type="button" data-liquid-item title="\u5728\u6587\u4EF6\u5939\u4E2D\u663E\u793A">${ICONS.download}<span>${downloads.length} \u9879\u4E0B\u8F7D\u4E2D</span></button>` : "",
-            battery ? `<span class="glass glass-dark capsule battery-capsule ${battery.level <= 0.2 && !battery.charging ? "is-low" : ""}" title="${battery.charging ? "\u6B63\u5728\u5145\u7535" : "\u6B63\u5728\u4F7F\u7528\u7535\u6C60"}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ""
+            downloads.length ? `<button class="glass glass-dark capsule download-capsule" type="button" data-glass title="\u5728\u6587\u4EF6\u5939\u4E2D\u663E\u793A">${ICONS.download}<span>${downloads.length} \u9879\u4E0B\u8F7D\u4E2D</span></button>` : "",
+            battery ? `<span data-glass class="glass glass-dark capsule battery-capsule ${battery.level <= 0.2 && !battery.charging ? "is-low" : ""}" title="${battery.charging ? "\u6B63\u5728\u5145\u7535" : "\u6B63\u5728\u4F7F\u7528\u7535\u6C60"}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ""
           ].join("");
           this.querySelector(".media-open")?.addEventListener("click", () => {
             if (media) chrome.tabs.update(media.id, { active: true });
@@ -4186,14 +3550,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           document.querySelector("wallpaper-surface")?.togglePaused();
         };
         /** Updates in place so a keyboard user keeps focus on the pause button. */
-        update({ label, animated, paused }) {
-          if (!this.querySelector(".wallpaper-label")) {
-            this.innerHTML = `<span class="wallpaper-label"></span><button class="glass round-button wallpaper-pause" type="button" data-liquid-item></button>`;
+        update({ animated, paused }) {
+          if (!this.querySelector(".wallpaper-pause")) {
+            this.innerHTML = '<button class="glass round-button wallpaper-pause" type="button" data-glass></button>';
           }
           const action = paused ? "\u64AD\u653E\u52A8\u6001\u58C1\u7EB8" : "\u6682\u505C\u52A8\u6001\u58C1\u7EB8";
           const button = this.querySelector(".wallpaper-pause");
-          this.querySelector(".wallpaper-label").textContent = label;
-          button.hidden = !animated;
+          this.hidden = !animated;
           button.setAttribute("aria-label", action);
           button.title = action;
           button.setAttribute("aria-pressed", String(paused));
@@ -4260,9 +3623,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.releaseObjectUrl();
         }
         get state() {
-          const { type, value } = appStore.state.settings.wallpaper;
-          const label = type === "gradient" ? "Twilight Bay \xB7 \u52A8\u6001" : type === "video" ? "\u672C\u5730\u89C6\u9891 \xB7 \u52A8\u6001" : type === "local" ? value.startsWith("online") ? "\u5728\u7EBF\u58C1\u7EB8" : "\u672C\u5730\u56FE\u7247" : "\u5728\u7EBF\u56FE\u7247";
-          return { label, animated: type === "gradient" || type === "video", paused: this.userPaused };
+          const { type } = appStore.state.settings.wallpaper;
+          return { animated: type === "gradient" || type === "video", paused: this.userPaused };
         }
         togglePaused() {
           this.userPaused = !this.userPaused;
@@ -4462,15 +3824,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_wallpaper_service();
       init_backup_toast();
       init_bookmark_dialog();
-      init_bookmark_launchpad();
+      init_bookmark_index();
       init_dashboard_header();
-      init_home_dock();
       init_icons();
-      init_liquid_glass();
-      init_liquid_controls();
-      init_search_pill();
+      init_glass();
+      init_search_box();
       init_settings_panel();
-      init_spotlight_search();
       init_status_strip();
       init_ui_layer();
       init_wallpaper_badge();
@@ -4502,7 +3861,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (!changes || changes.includes("settings.wallpaper")) this.wake();
         };
         async connectedCallback() {
-          this.innerHTML = '<div class="app-loading" role="status"><span></span><p>\u6B63\u5728\u6574\u7406\u4F60\u7684\u542F\u52A8\u53F0\u2026</p></div>';
+          this.innerHTML = '<div class="app-loading" role="status"><span></span><p>\u6B63\u5728\u8F7D\u5165\u4E66\u7B7E\u2026</p></div>';
           try {
             await appStore.init();
             this.updateClasses();
@@ -4516,7 +3875,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.wake();
             void migrateLegacyWallpaper();
           } catch (error) {
-            this.innerHTML = `<div class="app-error"><h1>\u542F\u52A8\u53F0\u52A0\u8F7D\u5931\u8D25</h1><p>${escapeHtml(error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF")}</p></div>`;
+            this.innerHTML = `<div class="app-error"><h1>\u65B0\u6807\u7B7E\u9875\u52A0\u8F7D\u5931\u8D25</h1><p>${escapeHtml(error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF")}</p></div>`;
           }
         }
         disconnectedCallback() {
@@ -4537,39 +3896,30 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             <div class="home">
                 <header class="top-bar">
                     <status-strip></status-strip>
-                    <div class="top-actions">
-                        <button class="glass round-button shuffle-wallpaper" type="button" data-liquid-item aria-label="\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8" title="\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8">${ICONS.sparkle}</button>
-                        <button class="glass round-button settings-trigger" type="button" data-liquid-item aria-label="\u8BBE\u7F6E" title="\u8BBE\u7F6E">${ICONS.settings}</button>
-                    </div>
+                    <button class="glass round-button shuffle-wallpaper" type="button" data-glass aria-label="\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8" title="\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8">${ICONS.shuffle}</button>
+                    <button class="glass round-button settings-trigger" type="button" data-glass aria-label="\u8BBE\u7F6E" title="\u8BBE\u7F6E">${ICONS.settings}</button>
                 </header>
                 <main class="hero">
                     <dashboard-header></dashboard-header>
-                    <search-pill></search-pill>
+                    <search-box></search-box>
                 </main>
-                <home-dock></home-dock>
-                <wallpaper-badge></wallpaper-badge>
+                <footer class="home-footer">
+                    <bookmark-index></bookmark-index>
+                    <wallpaper-badge></wallpaper-badge>
+                </footer>
             </div>
-            <spotlight-search></spotlight-search>
-            <bookmark-launchpad></bookmark-launchpad>
             <settings-panel></settings-panel>
             <bookmark-dialog></bookmark-dialog>
             <backup-toast></backup-toast>
-            <liquid-glass-system></liquid-glass-system>
+            <glass-system></glass-system>
         `;
           this.querySelector(".settings-trigger")?.addEventListener("click", () => this.settings?.open());
           this.querySelector(".shuffle-wallpaper")?.addEventListener("click", (event) => void this.shuffleWallpaper(event.currentTarget));
           this.addEventListener("wallpaper-error", this.onWallpaperError);
           this.addEventListener("wallpaper-tone", this.onWallpaperTone);
-          this.addEventListener("open-spotlight", () => this.spotlight?.open());
-          this.addEventListener("open-launchpad", ((event) => {
-            this.launchpad?.open(event.detail?.view ?? "bookmarks");
-          }));
         }
-        get spotlight() {
-          return this.querySelector("spotlight-search");
-        }
-        get launchpad() {
-          return this.querySelector("bookmark-launchpad");
+        get search() {
+          return this.querySelector("search-box");
         }
         get settings() {
           return this.querySelector("settings-panel");
@@ -4595,7 +3945,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.idleTimer = window.setTimeout(this.goIdle, IDLE_DELAY);
         };
         goIdle = () => {
-          if (hasOpenLayer() || isTypingTarget(document.activeElement) || document.querySelector(".liquid-glass-lens.is-visible, .context-menu, .modal-backdrop")) {
+          if (hasOpenLayer() || isTypingTarget(document.activeElement) || document.querySelector(".context-menu, .modal-backdrop")) {
             this.wake();
             return;
           }
@@ -4610,15 +3960,15 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         };
         onKeyDown = (event) => {
           const commandK = event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey;
-          if (commandK && this.spotlight?.isOpen) {
+          if (commandK && this.search?.hasFocus) {
             event.preventDefault();
-            this.spotlight.close();
+            document.activeElement?.blur();
             return;
           }
           if (hasOpenLayer()) return;
           if (commandK || event.key === "/" && !isTypingTarget(event.target)) {
             event.preventDefault();
-            this.spotlight?.open();
+            this.search?.focusField();
           }
         };
       };
@@ -4626,17 +3976,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target instanceof HTMLElement && target.isContentEditable;
       }
       var elements = [
-        ["liquid-glass-system", LiquidGlassSystem],
-        ["liquid-range", LiquidRange],
-        ["liquid-toggle", LiquidToggle],
+        ["glass-system", GlassSystem],
         ["wallpaper-surface", WallpaperSurface],
         ["wallpaper-badge", WallpaperBadge],
         ["status-strip", StatusStrip],
         ["dashboard-header", DashboardHeader],
-        ["search-pill", SearchPill],
-        ["home-dock", HomeDock],
-        ["spotlight-search", SpotlightSearch],
-        ["bookmark-launchpad", BookmarkLaunchpad],
+        ["search-box", SearchBox],
+        ["bookmark-index", BookmarkIndex],
         ["settings-panel", SettingsPanel],
         ["bookmark-dialog", BookmarkDialog],
         ["backup-toast", BackupToast],

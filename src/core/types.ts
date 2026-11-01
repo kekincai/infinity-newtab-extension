@@ -4,21 +4,17 @@ export type WallpaperType = 'gradient' | 'preset' | 'local' | 'video';
 export type Theme = 'auto' | 'light' | 'dark';
 export type ResolvedTheme = Exclude<Theme, 'auto'>;
 
-export type DockSource = 'bookmarks' | 'recent';
 export type GlassMaterial = 'clear' | 'tinted';
 
 export interface LayoutSettings {
     showClock: boolean;
     showSearch: boolean;
-    /** Shows the Dock; the key predates the Dock and is kept for old backups. */
+    /** Shows the bookmark index along the bottom of the home screen. */
     showBookmarks: boolean;
     showStatus: boolean;
     showRecent: boolean;
     openInNewTab: boolean;
     searchEngine: SearchEngineKey;
-    dockSource: DockSource;
-    dockSize: number;
-    dockMagnify: boolean;
     saveSearches: boolean;
     backupReminder: boolean;
 }

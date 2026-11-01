@@ -1,10 +1,15 @@
 import { appStore } from '../core/store';
 import type { Bookmark, RecentSite } from '../core/types';
-import { cleanDisplayName } from '../core/utils';
+import { cleanText, isAddressLike, siteLabel } from '../core/utils';
 import { ICONS } from './icons';
 import { confirmAction, notifyError, openMenu, promptText } from './ui-layer';
 
 export const ROOT_FOLDER = '全部';
+
+/** Bookmarks outside any folder are stored under “全部” for old backups but shown as their own group. */
+export function folderLabel(folder: string): string {
+    return folder === ROOT_FOLDER ? '书签' : folder;
+}
 
 type MenuAnchor = { x: number; y: number } | HTMLElement;
 
@@ -20,8 +25,10 @@ export function bookmarksIn(folder: string): Bookmark[] {
     return appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks);
 }
 
+/** A bookmark saved under its bare address shows the site's name instead. */
 export function bookmarkName(bookmark: Bookmark): string {
-    return cleanDisplayName(bookmark.name) || cleanDisplayName(new URL(bookmark.url).hostname);
+    const name = cleanText(bookmark.name, 160);
+    return name && !isAddressLike(name) ? name : siteLabel(new URL(bookmark.url).hostname);
 }
 
 /** Extension pages cannot be opened through a plain link from another extension, so they go through the tabs API. */
@@ -47,7 +54,7 @@ export function bookmarkMenu(source: HTMLElement, bookmark: Bookmark, at: MenuAn
         ...(destinations.length ? [
             { separator: true } as const,
             { heading: '移动到文件夹' } as const,
-            ...destinations.map((folder) => ({ label: folder, icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder) }))
+            ...destinations.map((folder) => ({ label: folderLabel(folder), icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder) }))
         ] : []),
         { separator: true },
         { label: '删除书签', icon: ICONS.trash, danger: true, action: () => void deleteBookmark(bookmark) }
@@ -103,7 +110,7 @@ export async function deleteFolder(folder: string): Promise<boolean> {
     const count = bookmarksIn(folder).length;
     const confirmed = await confirmAction({
         title: `删除文件夹“${folder}”？`,
-        body: count ? `其中的 ${count} 个书签会移回“${ROOT_FOLDER}”，不会被删除。` : '这个文件夹是空的。',
+        body: count ? `其中的 ${count} 个书签会移到“${folderLabel(ROOT_FOLDER)}”，不会被删除。` : '这个文件夹是空的。',
         confirmText: '删除',
         danger: true
     });

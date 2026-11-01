@@ -1,4 +1,5 @@
 import type { RecentSite } from './types';
+import { isAddressLike, siteLabel } from './utils';
 
 type HostStats = RecentSite & { hostnames: Map<string, number>; rootTitle: string };
 
@@ -43,13 +44,13 @@ export function rankSites(items: Array<Record<string, unknown>>): RecentSite[] {
 
 function siteName(host: string, rootTitle: string): string {
     const cleaned = rootTitle.replace(/^\(\d+\+?\)\s*/, '').split(/\s+[-|–—·]\s+/)[0].trim();
-    if (cleaned && cleaned.length <= 18) return cleaned;
-    return host;
+    if (cleaned && cleaned.length <= 18 && !isAddressLike(cleaned)) return cleaned;
+    return siteLabel(host);
 }
 
 let recentSites: Promise<RecentSite[]> | null = null;
 
-/** One history scan per page load, shared by the Dock, the launchpad and Spotlight. */
+/** One history scan per page load, shared by the bookmark grid and Spotlight. */
 export function loadRecentSites(refresh = false): Promise<RecentSite[]> {
     if (!recentSites || refresh) {
         recentSites = new Promise<RecentSite[]>((resolve, reject) => {
