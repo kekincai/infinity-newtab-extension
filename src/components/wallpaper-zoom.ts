@@ -1,8 +1,8 @@
 import { hasOpenLayer } from './ui-layer';
 
 const MAX_SCALE = 5;
-/** Below this on release the picture springs back to fit instead of staying barely zoomed. */
-const SNAP_TO_FIT = 1.05;
+/** Released this close to the resting size (filling the window) or to the whole picture, it settles there. */
+const SNAP = 0.05;
 const DOUBLE_CLICK_SCALE = 2.5;
 /** Chrome turns a trackpad pinch into ctrl+wheel with deltaY ≈ −100 × ln(scale change). */
 const PINCH_UNITS = 100;
@@ -10,21 +10,24 @@ const PINCH_UNITS = 100;
 const MAX_PINCH_STEP = 30;
 /** No pinch or scroll for this long ends the gesture and the picture settles. */
 const GESTURE_END_MS = 120;
-/** How far past the limits a pinch can stretch, as log-scale headroom (35% over the top, down to 60% of fit). */
+/** How far past the limits a pinch can stretch, as log-scale headroom: 35% over the top, 25% under the whole picture. */
 const STRETCH_OVER = Math.log(1.35);
-const STRETCH_UNDER = Math.log(1 / 0.6);
+const STRETCH_UNDER = Math.log(1 / 0.75);
 /** A slightly underdamped spring, so a settle ends with a hint of bounce. */
 const STIFFNESS = 260;
 const DAMPING = 30;
 
 type View = { scale: number; x: number; y: number };
+type Box = { left: number; top: number; width: number; height: number };
 
 /**
- * Zooms the wallpaper the way Photos does: a trackpad pinch scales the picture
- * around the fingers, two-finger scrolling pans it, pushing past the edges or
- * the zoom limits meets growing resistance, and on release everything springs
- * back into range. The home screen fades out while the picture is zoomed;
- * double-click toggles zoom, and Esc, typing or a resize restores it.
+ * Zooms the wallpaper the way Photos does. At rest (scale 1) the picture fills
+ * the window and its overflow is cropped; pinching out shrinks it down to the
+ * whole picture, pinching in enlarges it up to 5×, always around the fingers.
+ * Two-finger scrolling pans, pushing past the edges or the limits meets growing
+ * resistance, and on release everything springs back into range. The home
+ * screen steps aside while the view is off its resting size; double-click
+ * toggles zoom, and Esc, typing or a resize restores it.
  */
 export class WallpaperZoom {
     private view: View = { scale: 1, x: 0, y: 0 };
@@ -58,8 +61,9 @@ export class WallpaperZoom {
         cancelAnimationFrame(this.frame);
     }
 
+    /** Off the resting size, zoomed in or out. */
     get zoomed(): boolean {
-        return this.view.scale > 1.001;
+        return Math.abs(this.view.scale - 1) > 0.001;
     }
 
     /** Back to fit at once, e.g. when the wallpaper itself changes. */
@@ -96,7 +100,7 @@ export class WallpaperZoom {
             const step = Math.max(-MAX_PINCH_STEP, Math.min(MAX_PINCH_STEP, event.deltaY));
             this.focus = { x: event.clientX, y: event.clientY };
             this.requestedScale *= Math.exp(-step / PINCH_UNITS);
-            this.view = this.zoomedAbout(this.view, rubberBand(this.requestedScale), this.focus);
+            this.view = this.zoomedAbout(this.view, rubberBand(this.requestedScale, this.minScale()), this.focus);
         } else {
             this.panBy(-event.deltaX, -event.deltaY);
         }
@@ -131,65 +135,80 @@ export class WallpaperZoom {
         this.frame = 0;
         this.target = null;
         this.velocity = { scale: 0, x: 0, y: 0 };
-        this.requestedScale = unstretch(this.view.scale);
+        this.requestedScale = unstretch(this.view.scale, this.minScale());
         this.surface.classList.add('is-zooming');
     }
 
     private readonly endGesture = (): void => {
-        const scale = this.view.scale < SNAP_TO_FIT ? 1 : Math.min(MAX_SCALE, this.view.scale);
-        this.settleTo(this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
+        const minimum = this.minScale();
+        let scale = Math.max(minimum, Math.min(MAX_SCALE, this.view.scale));
+        if (Math.abs(scale - 1) < SNAP) scale = 1;
+        else if (scale / minimum - 1 < SNAP) scale = minimum;
+        // At its resting size the picture is centred again, exactly as before the gesture.
+        this.settleTo(scale === 1 ? { scale: 1, x: 0, y: 0 } : this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
     };
 
     /** The view scaled to `scale` with the point under `at` staying put. */
     private zoomedAbout(view: View, scale: number, at: { x: number; y: number }): View {
-        const origin = this.origin();
+        const box = this.box();
         const ratio = scale / view.scale;
         return {
             scale,
-            x: at.x - origin - (at.x - origin - view.x) * ratio,
-            y: at.y - origin - (at.y - origin - view.y) * ratio
+            x: at.x - box.left - (at.x - box.left - view.x) * ratio,
+            y: at.y - box.top - (at.y - box.top - view.y) * ratio
         };
     }
 
     /** Panning past an edge moves less and less, so the picture resists being dragged out of view. */
     private panBy(dx: number, dy: number): void {
-        const bounds = this.bounds(this.view.scale);
-        const resist = (value: number, delta: number, min: number, max: number, size: number) => {
-            const overshoot = value > max ? value - max : value < min ? min - value : 0;
-            const outward = (value >= max && delta > 0) || (value <= min && delta < 0);
-            return outward ? delta * 0.5 * Math.max(0, 1 - overshoot / (size * 0.3)) : delta;
-        };
+        const [rangeX, rangeY] = this.ranges(this.view.scale);
         this.view = {
             scale: this.view.scale,
-            x: this.view.x + resist(this.view.x, dx, bounds.minX, 0, innerWidth),
-            y: this.view.y + resist(this.view.y, dy, bounds.minY, 0, innerHeight)
+            x: this.view.x + resist(this.view.x, dx, rangeX, innerWidth),
+            y: this.view.y + resist(this.view.y, dy, rangeY, innerHeight)
         };
+    }
+
+    /** The media layer's untransformed box in window coordinates. */
+    private box(): Box {
+        const media = this.media;
+        return media
+            ? { left: media.offsetLeft, top: media.offsetTop, width: media.offsetWidth, height: media.offsetHeight }
+            : { left: 0, top: 0, width: innerWidth, height: innerHeight };
+    }
+
+    /** The scale at which the whole picture fits in the window. */
+    private minScale(): number {
+        const box = this.box();
+        return Math.min(1, innerWidth / box.width, innerHeight / box.height);
     }
 
     /**
-     * The media layer reaches past the window by `bleed` on every side so a
-     * blurred edge never shows; panning keeps that margin out of view too.
+     * Allowed offsets on each axis at `scale`. A picture larger than the window
+     * (plus the blur margin, which must stay out of view) can pan until an edge
+     * meets the window; a smaller one stays centred.
      */
-    private bounds(scale: number): { minX: number; minY: number } {
-        const media = this.media;
-        const width = media?.offsetWidth || innerWidth;
-        const height = media?.offsetHeight || innerHeight;
-        return { minX: (1 - scale) * width, minY: (1 - scale) * height };
-    }
-
-    /** Where the untransformed media layer starts, in window coordinates (equal on both axes). */
-    private origin(): number {
-        const media = this.media;
-        return media ? -(media.offsetWidth - innerWidth) / 2 : 0;
+    private ranges(scale: number): [Range, Range] {
+        const box = this.box();
+        const bleed = Number(this.surface.dataset.bleed) || 0;
+        const axis = (start: number, length: number, window: number): Range => {
+            const size = length * scale;
+            if (size < window + bleed * 2) {
+                const centred = (window - size) / 2 - start;
+                return { min: centred, max: centred };
+            }
+            return { min: window + bleed - size - start, max: -bleed - start };
+        };
+        return [axis(box.left, box.width, innerWidth), axis(box.top, box.height, innerHeight)];
     }
 
     private clamped(view: View): View {
-        const scale = Math.max(1, Math.min(MAX_SCALE, view.scale));
-        const bounds = this.bounds(scale);
+        const scale = Math.max(this.minScale(), Math.min(MAX_SCALE, view.scale));
+        const [rangeX, rangeY] = this.ranges(scale);
         return {
             scale,
-            x: Math.min(0, Math.max(bounds.minX, view.x)),
-            y: Math.min(0, Math.max(bounds.minY, view.y))
+            x: Math.min(rangeX.max, Math.max(rangeX.min, view.x)),
+            y: Math.min(rangeY.max, Math.max(rangeY.min, view.y))
         };
     }
 
@@ -249,24 +268,34 @@ export class WallpaperZoom {
         const { scale, x, y } = this.view;
         if (media) media.style.transform = scale === 1 && x === 0 && y === 0 ? '' : `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
         this.surface.dataset.zoom = scale.toFixed(3);
-        document.body.classList.toggle('is-zoomed', this.zoomed || this.target !== null && this.target.scale > 1);
+        document.body.classList.toggle('is-zoomed', this.zoomed || (this.target !== null && Math.abs(this.target.scale - 1) > 0.001));
     }
+}
+
+type Range = { min: number; max: number };
+
+/** Movement away from the allowed range is damped more the further out it already is. */
+function resist(value: number, delta: number, range: Range, size: number): number {
+    const outward = (value >= range.max && delta > 0) || (value <= range.min && delta < 0);
+    if (!outward) return delta;
+    const overshoot = value > range.max ? value - range.max : value < range.min ? range.min - value : 0;
+    return delta * 0.5 * Math.max(0, 1 - overshoot / (size * 0.3));
 }
 
 /**
  * Past the limits the shown scale approaches a ceiling (or floor) however far
  * the fingers keep going: the further the stretch, the less it gives.
  */
-function rubberBand(requested: number): number {
+function rubberBand(requested: number, minimum: number): number {
     if (requested > MAX_SCALE) return MAX_SCALE * Math.exp(stretch(Math.log(requested / MAX_SCALE), STRETCH_OVER));
-    if (requested < 1) return Math.exp(-stretch(Math.log(1 / requested), STRETCH_UNDER));
+    if (requested < minimum) return minimum * Math.exp(-stretch(Math.log(minimum / requested), STRETCH_UNDER));
     return requested;
 }
 
 /** The requested scale that `rubberBand` would show as `scale`, to pick a gesture up mid-bounce. */
-function unstretch(scale: number): number {
+function unstretch(scale: number, minimum: number): number {
     if (scale > MAX_SCALE) return MAX_SCALE * Math.exp(release(Math.log(scale / MAX_SCALE), STRETCH_OVER));
-    if (scale < 1) return Math.exp(-release(Math.log(1 / scale), STRETCH_UNDER));
+    if (scale < minimum) return minimum * Math.exp(-release(Math.log(minimum / scale), STRETCH_UNDER));
     return scale;
 }
 
