@@ -1175,14 +1175,14 @@
       document.body.append(backdrop);
       const form = backdrop.querySelector("form");
       const input = form.querySelector('input[name="value"]');
-      let release = () => {
+      let release2 = () => {
       };
       const finish = (value) => {
-        release();
+        release2();
         backdrop.remove();
         resolve(value);
       };
-      release = pushLayer(form, () => finish(null));
+      release2 = pushLayer(form, () => finish(null));
       form.querySelectorAll('[data-action="cancel"]').forEach((button) => button.addEventListener("click", () => finish(null)));
       backdrop.addEventListener("pointerdown", (event) => {
         if (event.target === backdrop) finish(null);
@@ -1245,19 +1245,19 @@
     const { width, height } = menu.getBoundingClientRect();
     menu.style.left = `${Math.max(8, Math.min(point.x, innerWidth - width - 8))}px`;
     menu.style.top = `${point.y + height > innerHeight - 8 ? Math.max(8, point.y - height - (anchor ? anchor.height + 12 : 0)) : point.y}px`;
-    let release = () => {
+    let release2 = () => {
     };
     const close = () => {
       document.removeEventListener("pointerdown", onOutside, true);
       window.removeEventListener("blur", close);
       window.removeEventListener("resize", close);
-      release();
+      release2();
       menu.remove();
     };
     const onOutside = (event) => {
       if (!menu.contains(event.target)) close();
     };
-    release = pushLayer(menu, close);
+    release2 = pushLayer(menu, close);
     menu.addEventListener("menu-close", close);
     document.addEventListener("pointerdown", onOutside, true);
     window.addEventListener("blur", close);
@@ -1625,9 +1625,9 @@
         close() {
           this.editing = void 0;
           this.innerHTML = "";
-          const release = this.releaseLayer;
+          const release2 = this.releaseLayer;
           this.releaseLayer = null;
-          release?.();
+          release2?.();
         }
       };
     }
@@ -3043,9 +3043,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (!this.openState) return;
           this.openState = false;
           this.syncOpenState();
-          const release = this.releaseLayer;
+          const release2 = this.releaseLayer;
           this.releaseLayer = null;
-          release?.();
+          release2?.();
         }
         disconnectedCallback() {
           super.disconnectedCallback();
@@ -3723,6 +3723,249 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
   });
 
+  // src/components/wallpaper-zoom.ts
+  function rubberBand(requested) {
+    if (requested > MAX_SCALE) return MAX_SCALE * Math.exp(stretch(Math.log(requested / MAX_SCALE), STRETCH_OVER));
+    if (requested < 1) return Math.exp(-stretch(Math.log(1 / requested), STRETCH_UNDER));
+    return requested;
+  }
+  function unstretch(scale) {
+    if (scale > MAX_SCALE) return MAX_SCALE * Math.exp(release(Math.log(scale / MAX_SCALE), STRETCH_OVER));
+    if (scale < 1) return Math.exp(-release(Math.log(1 / scale), STRETCH_UNDER));
+    return scale;
+  }
+  function stretch(overshoot, limit) {
+    return limit * (1 - 1 / (overshoot / limit + 1));
+  }
+  function release(shown, limit) {
+    const ratio = Math.min(shown / limit, 0.999);
+    return limit * (1 / (1 - ratio) - 1);
+  }
+  function isTypingTarget(target) {
+    return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLElement && target.isContentEditable;
+  }
+  function isControl(target) {
+    return target instanceof Element && Boolean(target.closest("a, button, input, label, select, textarea, [data-glass], bookmark-index, search-box, status-strip, dashboard-header, backup-toast, settings-panel, bookmark-dialog, .context-menu, .modal-backdrop"));
+  }
+  var MAX_SCALE, SNAP_TO_FIT, DOUBLE_CLICK_SCALE, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperZoom;
+  var init_wallpaper_zoom = __esm({
+    "src/components/wallpaper-zoom.ts"() {
+      "use strict";
+      init_ui_layer();
+      MAX_SCALE = 5;
+      SNAP_TO_FIT = 1.05;
+      DOUBLE_CLICK_SCALE = 2.5;
+      PINCH_UNITS = 100;
+      MAX_PINCH_STEP = 30;
+      GESTURE_END_MS = 120;
+      STRETCH_OVER = Math.log(1.35);
+      STRETCH_UNDER = Math.log(1 / 0.6);
+      STIFFNESS = 260;
+      DAMPING = 30;
+      WallpaperZoom = class {
+        constructor(surface) {
+          this.surface = surface;
+        }
+        surface;
+        view = { scale: 1, x: 0, y: 0 };
+        /** The scale the fingers ask for; the view shows it stretched by `rubberBand` past the limits. */
+        requestedScale = 1;
+        velocity = { scale: 0, x: 0, y: 0 };
+        target = null;
+        focus = { x: innerWidth / 2, y: innerHeight / 2 };
+        gestureTimer = 0;
+        frame = 0;
+        lastTime = 0;
+        reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+        connect() {
+          window.addEventListener("wheel", this.onWheel, { passive: false, capture: true });
+          document.addEventListener("dblclick", this.onDoubleClick);
+          document.addEventListener("keydown", this.onKeyDown);
+          document.addEventListener("focusin", this.onFocusIn);
+          window.addEventListener("resize", this.reset);
+        }
+        disconnect() {
+          window.removeEventListener("wheel", this.onWheel, true);
+          document.removeEventListener("dblclick", this.onDoubleClick);
+          document.removeEventListener("keydown", this.onKeyDown);
+          document.removeEventListener("focusin", this.onFocusIn);
+          window.removeEventListener("resize", this.reset);
+          window.clearTimeout(this.gestureTimer);
+          cancelAnimationFrame(this.frame);
+        }
+        get zoomed() {
+          return this.view.scale > 1.001;
+        }
+        /** Back to fit at once, e.g. when the wallpaper itself changes. */
+        reset = () => {
+          window.clearTimeout(this.gestureTimer);
+          cancelAnimationFrame(this.frame);
+          this.frame = 0;
+          this.target = null;
+          this.velocity = { scale: 0, x: 0, y: 0 };
+          this.view = { scale: 1, x: 0, y: 0 };
+          this.apply();
+          this.surface.classList.remove("is-zooming");
+        };
+        /** Animated back to fit. */
+        restore() {
+          if (!this.zoomed && !this.frame) return;
+          this.settleTo({ scale: 1, x: 0, y: 0 });
+        }
+        get media() {
+          return this.surface.querySelector(".wallpaper-media");
+        }
+        onWheel = (event) => {
+          if (hasOpenLayer()) return;
+          const pinch = event.ctrlKey;
+          if (!pinch && !this.zoomed) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (pinch && isTypingTarget(document.activeElement)) document.activeElement.blur();
+          this.beginGesture();
+          if (pinch) {
+            const step = Math.max(-MAX_PINCH_STEP, Math.min(MAX_PINCH_STEP, event.deltaY));
+            this.focus = { x: event.clientX, y: event.clientY };
+            this.requestedScale *= Math.exp(-step / PINCH_UNITS);
+            this.view = this.zoomedAbout(this.view, rubberBand(this.requestedScale), this.focus);
+          } else {
+            this.panBy(-event.deltaX, -event.deltaY);
+          }
+          this.apply();
+          this.gestureTimer = window.setTimeout(this.endGesture, GESTURE_END_MS);
+        };
+        onDoubleClick = (event) => {
+          if (hasOpenLayer() || isControl(event.target)) return;
+          if (this.zoomed) {
+            this.restore();
+            return;
+          }
+          this.focus = { x: event.clientX, y: event.clientY };
+          this.settleTo(this.clamped(this.zoomedAbout(this.view, DOUBLE_CLICK_SCALE, this.focus)));
+        };
+        onKeyDown = (event) => {
+          if (event.key !== "Escape" || !this.zoomed || hasOpenLayer()) return;
+          event.preventDefault();
+          this.restore();
+        };
+        /** Anything taking focus (⌘K, /, Tab) needs the home screen back. */
+        onFocusIn = () => {
+          if (this.zoomed) this.restore();
+        };
+        beginGesture() {
+          window.clearTimeout(this.gestureTimer);
+          cancelAnimationFrame(this.frame);
+          this.frame = 0;
+          this.target = null;
+          this.velocity = { scale: 0, x: 0, y: 0 };
+          this.requestedScale = unstretch(this.view.scale);
+          this.surface.classList.add("is-zooming");
+        }
+        endGesture = () => {
+          const scale = this.view.scale < SNAP_TO_FIT ? 1 : Math.min(MAX_SCALE, this.view.scale);
+          this.settleTo(this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
+        };
+        /** The view scaled to `scale` with the point under `at` staying put. */
+        zoomedAbout(view, scale, at) {
+          const origin = this.origin();
+          const ratio = scale / view.scale;
+          return {
+            scale,
+            x: at.x - origin - (at.x - origin - view.x) * ratio,
+            y: at.y - origin - (at.y - origin - view.y) * ratio
+          };
+        }
+        /** Panning past an edge moves less and less, so the picture resists being dragged out of view. */
+        panBy(dx, dy) {
+          const bounds = this.bounds(this.view.scale);
+          const resist = (value, delta, min, max, size) => {
+            const overshoot = value > max ? value - max : value < min ? min - value : 0;
+            const outward = value >= max && delta > 0 || value <= min && delta < 0;
+            return outward ? delta * 0.5 * Math.max(0, 1 - overshoot / (size * 0.3)) : delta;
+          };
+          this.view = {
+            scale: this.view.scale,
+            x: this.view.x + resist(this.view.x, dx, bounds.minX, 0, innerWidth),
+            y: this.view.y + resist(this.view.y, dy, bounds.minY, 0, innerHeight)
+          };
+        }
+        /**
+         * The media layer reaches past the window by `bleed` on every side so a
+         * blurred edge never shows; panning keeps that margin out of view too.
+         */
+        bounds(scale) {
+          const media = this.media;
+          const width = media?.offsetWidth || innerWidth;
+          const height = media?.offsetHeight || innerHeight;
+          return { minX: (1 - scale) * width, minY: (1 - scale) * height };
+        }
+        /** Where the untransformed media layer starts, in window coordinates (equal on both axes). */
+        origin() {
+          const media = this.media;
+          return media ? -(media.offsetWidth - innerWidth) / 2 : 0;
+        }
+        clamped(view) {
+          const scale = Math.max(1, Math.min(MAX_SCALE, view.scale));
+          const bounds = this.bounds(scale);
+          return {
+            scale,
+            x: Math.min(0, Math.max(bounds.minX, view.x)),
+            y: Math.min(0, Math.max(bounds.minY, view.y))
+          };
+        }
+        settleTo(target) {
+          window.clearTimeout(this.gestureTimer);
+          this.target = target;
+          this.surface.classList.add("is-zooming");
+          if (this.reducedMotion.matches) {
+            this.view = target;
+            this.finish();
+            return;
+          }
+          this.lastTime = performance.now();
+          if (!this.frame) this.frame = requestAnimationFrame(this.step);
+        }
+        step = (time) => {
+          this.frame = 0;
+          const target = this.target;
+          if (!target) return;
+          let remaining = Math.min(0.064, (time - this.lastTime) / 1e3);
+          this.lastTime = time;
+          while (remaining > 0) {
+            const dt = Math.min(remaining, 1 / 240);
+            remaining -= dt;
+            for (const key of ["scale", "x", "y"]) {
+              const force = -STIFFNESS * (this.view[key] - target[key]) - DAMPING * this.velocity[key];
+              this.velocity[key] += force * dt;
+              this.view[key] += this.velocity[key] * dt;
+            }
+          }
+          const settled = Math.abs(this.view.scale - target.scale) < 5e-4 && Math.abs(this.view.x - target.x) < 0.25 && Math.abs(this.view.y - target.y) < 0.25 && Math.abs(this.velocity.scale) < 5e-3 && Math.abs(this.velocity.x) + Math.abs(this.velocity.y) < 2;
+          if (settled) {
+            this.view = { ...target };
+            this.finish();
+            return;
+          }
+          this.apply();
+          this.frame = requestAnimationFrame(this.step);
+        };
+        finish() {
+          this.target = null;
+          this.velocity = { scale: 0, x: 0, y: 0 };
+          this.apply();
+          this.surface.classList.remove("is-zooming");
+        }
+        apply() {
+          const media = this.media;
+          const { scale, x, y } = this.view;
+          if (media) media.style.transform = scale === 1 && x === 0 && y === 0 ? "" : `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+          this.surface.dataset.zoom = scale.toFixed(3);
+          document.body.classList.toggle("is-zoomed", this.zoomed || this.target !== null && this.target.scale > 1);
+        }
+      };
+    }
+  });
+
   // src/components/wallpaper-surface.ts
   function applySound(video, sound) {
     if (!sound) {
@@ -3762,6 +4005,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_store();
       init_wallpaper_service();
       init_base();
+      init_wallpaper_zoom();
       WallpaperSurface = class extends StoreElement {
         observedChanges = ["settings.wallpaper"];
         objectUrl = "";
@@ -3772,8 +4016,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         failedMediaKey = "";
         userPaused = false;
         battery = null;
+        zoom = new WallpaperZoom(this);
+        /** Blur changes how far the media reaches past the window, so a zoomed view has to start over. */
+        zoomLayout = "";
         connectedCallback() {
           super.connectedCallback();
+          this.zoom.connect();
           document.addEventListener("visibilitychange", this.syncPlayback);
           void navigator.getBattery?.().then((battery) => {
             this.battery = battery;
@@ -3783,6 +4031,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         disconnectedCallback() {
           super.disconnectedCallback();
+          this.zoom.disconnect();
           document.removeEventListener("visibilitychange", this.syncPlayback);
           this.battery?.removeEventListener?.("chargingchange", this.syncPlayback);
           this.releaseObjectUrl();
@@ -3805,6 +4054,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.style.setProperty("--wallpaper-overlay", String(wallpaper.overlay / 100));
           this.syncPlayback();
           const mediaKey = `${wallpaper.type}:${wallpaper.value}`;
+          const zoomLayout = `${mediaKey}|${wallpaper.blur}`;
+          if (zoomLayout !== this.zoomLayout) {
+            this.zoomLayout = zoomLayout;
+            this.zoom.reset();
+          }
           if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey || mediaKey === this.failedMediaKey) return;
           this.pendingMediaKey = mediaKey;
           void this.applyMedia(++this.renderToken, mediaKey);
@@ -4115,7 +4369,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.idleTimer = window.setTimeout(this.goIdle, remaining);
             return;
           }
-          if (hasOpenLayer() || isTypingTarget(document.activeElement)) {
+          if (hasOpenLayer() || isTypingTarget2(document.activeElement)) {
             this.wake();
             return;
           }
@@ -4136,13 +4390,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             return;
           }
           if (hasOpenLayer()) return;
-          if (commandK || event.key === "/" && !isTypingTarget(event.target)) {
+          if (commandK || event.key === "/" && !isTypingTarget2(event.target)) {
             event.preventDefault();
             this.search?.focusField();
           }
         };
       };
-      function isTypingTarget(target) {
+      function isTypingTarget2(target) {
         return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target instanceof HTMLElement && target.isContentEditable;
       }
       var elements = [

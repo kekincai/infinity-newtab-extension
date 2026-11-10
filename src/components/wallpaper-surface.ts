@@ -3,6 +3,7 @@ import { appStore } from '../core/store';
 import type { ResolvedTheme } from '../core/types';
 import { toneOf, toneOfBlob } from '../core/wallpaper-service';
 import { StoreElement } from './base';
+import { WallpaperZoom } from './wallpaper-zoom';
 
 export type WallpaperState = { animated: boolean; paused: boolean };
 
@@ -22,9 +23,13 @@ export class WallpaperSurface extends StoreElement {
     private failedMediaKey = '';
     private userPaused = false;
     private battery: BatteryManager | null = null;
+    private readonly zoom = new WallpaperZoom(this);
+    /** Blur changes how far the media reaches past the window, so a zoomed view has to start over. */
+    private zoomLayout = '';
 
     connectedCallback(): void {
         super.connectedCallback();
+        this.zoom.connect();
         document.addEventListener('visibilitychange', this.syncPlayback);
         void navigator.getBattery?.().then((battery) => {
             this.battery = battery as unknown as BatteryManager;
@@ -35,6 +40,7 @@ export class WallpaperSurface extends StoreElement {
 
     disconnectedCallback(): void {
         super.disconnectedCallback();
+        this.zoom.disconnect();
         document.removeEventListener('visibilitychange', this.syncPlayback);
         this.battery?.removeEventListener?.('chargingchange', this.syncPlayback);
         this.releaseObjectUrl();
@@ -60,6 +66,11 @@ export class WallpaperSurface extends StoreElement {
         this.style.setProperty('--wallpaper-overlay', String(wallpaper.overlay / 100));
         this.syncPlayback();
         const mediaKey = `${wallpaper.type}:${wallpaper.value}`;
+        const zoomLayout = `${mediaKey}|${wallpaper.blur}`;
+        if (zoomLayout !== this.zoomLayout) {
+            this.zoomLayout = zoomLayout;
+            this.zoom.reset();
+        }
         if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey || mediaKey === this.failedMediaKey) return;
         this.pendingMediaKey = mediaKey;
         void this.applyMedia(++this.renderToken, mediaKey);

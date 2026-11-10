@@ -764,6 +764,77 @@ test('summons a hidden search field with the shortcut', async ({ page }) => {
     expect(errors).toEqual([]);
 });
 
+/** A trackpad pinch: Chrome reports it as wheel events with ctrl held. */
+async function pinch(page, steps, deltaY) {
+    await page.keyboard.down('Control');
+    for (let index = 0; index < steps; index += 1) {
+        await page.mouse.wheel(0, deltaY);
+        await page.waitForTimeout(16);
+    }
+    await page.keyboard.up('Control');
+}
+
+const zoomOf = (page) => page.locator('wallpaper-surface').evaluate((element) => Number(element.dataset.zoom ?? 1));
+
+test('zooms the wallpaper like a photo instead of the page', async ({ page }) => {
+    const errors = await openExtension(page);
+    await settleEntrance(page);
+    await page.mouse.move(900, 450);
+
+    // Pinching in scales the picture around the pointer; Chrome's own page zoom stays out.
+    await pinch(page, 20, -6);
+    expect(await zoomOf(page)).toBeGreaterThan(1.5);
+    await expect(page.locator('body')).toHaveClass(/is-zoomed/);
+    expect(await page.evaluate(() => visualViewport.scale)).toBe(1);
+    await expect(page.locator('.top-bar')).toHaveCSS('opacity', '0');
+    const anchored = await page.locator('.wallpaper-media').evaluate((media) => {
+        const matrix = new DOMMatrix(getComputedStyle(media).transform);
+        const origin = -(media.offsetWidth - innerWidth) / 2;
+        // The picture point under the pointer before the pinch is still under it.
+        return { x: (900 - origin - matrix.m41) / matrix.a + origin, y: (450 - origin - matrix.m42) / matrix.a + origin };
+    });
+    expect(anchored.x).toBeCloseTo(900, -1);
+    expect(anchored.y).toBeCloseTo(450, -1);
+
+    // Past the limit it stretches a little, then springs back to 5×.
+    await pinch(page, 60, -12);
+    const stretched = await zoomOf(page);
+    expect(stretched).toBeGreaterThan(5);
+    expect(stretched).toBeLessThan(6.8);
+    await expect.poll(() => zoomOf(page)).toBe(5);
+
+    // Two-finger scrolling pans, and springs back inside the picture's edges.
+    await page.mouse.wheel(-4000, 0);
+    await expect.poll(() => page.locator('.wallpaper-media').evaluate((media) => new DOMMatrix(getComputedStyle(media).transform).m41)).toBe(0);
+
+    // Pinching back out below fit springs to fit and brings the home screen back.
+    await pinch(page, 40, 12);
+    await expect.poll(() => zoomOf(page)).toBe(1);
+    await expect(page.locator('body')).not.toHaveClass(/is-zoomed/);
+    await expect(page.locator('.top-bar')).toHaveCSS('opacity', '1');
+
+    // Double-click on an empty part of the picture zooms in; Esc restores it.
+    await page.mouse.dblclick(900, 450);
+    await expect.poll(() => zoomOf(page)).toBe(2.5);
+    await page.keyboard.press('Escape');
+    await expect.poll(() => zoomOf(page)).toBe(1);
+
+    // The search shortcut brings the home screen back too.
+    await page.mouse.dblclick(900, 450);
+    await expect.poll(() => zoomOf(page)).toBe(2.5);
+    await page.keyboard.press('/');
+    await expect(page.locator('.search-field input')).toBeFocused();
+    await expect.poll(() => zoomOf(page)).toBe(1);
+    await page.keyboard.press('Escape');
+
+    // With settings open a pinch leaves the wallpaper alone.
+    await page.locator('.settings-trigger').click();
+    await expect(page.locator('.settings-window')).toHaveClass(/is-open/);
+    await pinch(page, 10, -6);
+    expect(await zoomOf(page)).toBe(1);
+    expect(errors).toEqual([]);
+});
+
 test('fades to the clock alone when idle', async ({ page }) => {
     const seed = structuredClone(initialData);
     seed.settings.wallpaper.idleHide = true;
