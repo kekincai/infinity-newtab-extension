@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
-import { sanitizeImportedData, sanitizeSettings } from '../src/core/backup';
+import { DEFAULT_SETTINGS, sanitizeImportedData, sanitizeSettings } from '../src/core/backup';
 import { BOOKMARK_CHUNKS_KEY, bookmarkChunkKey } from '../src/core/bookmark-storage';
 import { rankSites } from '../src/core/history';
 import { AppStore } from '../src/core/store';
 import { convexSquircle, precalculateDisplacements } from '../src/components/liquid-optics';
-import { bookmarkIcon, bookmarkIconCanUpgrade, bookmarkIconFallback, bookmarkIconIsRaster, bookmarkIconSrcSet, faviconUrl, isAddressLike, normalizeUrl, siteLabel } from '../src/core/utils';
+import { bookmarkIcon, bookmarkIconCanUpgrade, bookmarkIconFallback, bookmarkIconSrcSet, faviconUrl, isAddressLike, normalizeUrl, siteLabel } from '../src/core/utils';
 
 const syncData: Record<string, unknown> = {};
-const localData: Record<string, unknown> = {};
 let failWrites = false;
+type ChangeListener = (changes: Record<string, unknown>, areaName: string) => void;
+const changeListeners: ChangeListener[] = [];
+/** Like Chrome, change events reach every page after the write, this one included. */
+function announceChange(keys: string[]): void {
+    setTimeout(() => changeListeners.forEach((listener) => listener(Object.fromEntries(keys.map((key) => [key, {}])), 'sync')), 0);
+}
 
 const runtime = {
     lastError: null as { message: string } | null,
@@ -23,22 +28,35 @@ function area(data: Record<string, unknown>) {
         },
         set(values: Record<string, unknown>, callback: () => void) {
             runtime.lastError = failWrites ? { message: 'quota exceeded' } : null;
-            if (!failWrites) Object.assign(data, structuredClone(values));
+            if (!failWrites) {
+                Object.assign(data, structuredClone(values));
+                announceChange(Object.keys(values));
+            }
             callback();
             runtime.lastError = null;
         },
         remove(keys: string[], callback: () => void) {
             keys.forEach((key) => delete data[key]);
+            announceChange(keys);
             callback();
         },
         clear(callback: () => void) {
-            Object.keys(data).forEach((key) => delete data[key]);
+            const keys = Object.keys(data);
+            keys.forEach((key) => delete data[key]);
+            announceChange(keys);
             callback();
         }
     };
 }
 
-(globalThis as any).chrome = { runtime, storage: { sync: area(syncData), local: area(localData) } };
+(globalThis as any).chrome = {
+    runtime,
+    storage: {
+        sync: area(syncData),
+        onChanged: { addListener: (listener: ChangeListener) => changeListeners.push(listener) }
+    }
+};
+const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 const oldBackup = sanitizeImportedData({
     bookmarks: [
@@ -50,13 +68,30 @@ const oldBackup = sanitizeImportedData({
     settings: {
         layout: { showClock: true, showSearch: true, showBookmarks: true, showTodo: true },
         wallpaper: { type: 'preset', value: 'https://images.unsplash.com/photo.jpg', blur: 0, overlay: 30 },
-        appearance: { clockFormat: '24h', dateFormat: 'long' }
+        appearance: { clockFormat: '24h', dateFormat: 'long', enhancedAnimations: false }
     },
     todos: []
 });
 
-assert.equal((oldBackup.bookmarks as any[]).length, 2, '旧备份中的重复书签必须合并');
-assert.equal((oldBackup.bookmarks as any[])[0].folder, '全部');
+assert.equal(oldBackup.bookmarks.length, 2, '旧备份中完全相同的书签必须合并');
+assert.equal(oldBackup.bookmarks[0].folder, '全部');
+assert.equal('todos' in oldBackup, false, '不再使用的 todos 不随导入保留');
+assert.equal(oldBackup.settings.wallpaper.type, 'gradient', '旧版远程 preset 壁纸回到默认场景');
+assert.equal(oldBackup.settings.wallpaper.value, '');
+assert.equal(oldBackup.settings.wallpaper.overlay, 30, '用户自己设的暗化保留');
+assert.equal('enhancedAnimations' in oldBackup.settings.appearance, false, '已删除的设置不再保留');
+assert.equal(sanitizeSettings({}).wallpaper.overlay, 12, '暗化默认值统一为 12');
+assert.deepEqual(sanitizeSettings({}), DEFAULT_SETTINGS, '缺省设置与 DEFAULT_SETTINGS 一致');
+
+const queryBackup = sanitizeImportedData({
+    bookmarks: [
+        { id: 1, url: 'https://www.youtube.com/watch?v=AAA' },
+        { id: 2, url: 'https://www.youtube.com/watch?v=BBB' },
+        { id: 3, url: 'https://docs.google.com/document/d/Abc' },
+        { id: 4, url: 'https://docs.google.com/document/d/abc' }
+    ]
+});
+assert.equal(queryBackup.bookmarks.length, 4, '查询串或路径大小写不同的书签是不同的页面，不能合并');
 assert.equal((oldBackup.settings as any).layout.showStatus, true);
 assert.equal((oldBackup.settings as any).layout.showRecent, true);
 assert.equal((oldBackup.settings as any).appearance.hdrHighlights, true);
@@ -77,7 +112,7 @@ const unsafe = sanitizeImportedData({
     },
     unknown: 'drop me'
 });
-assert.equal((unsafe.bookmarks as any[]).length, 0);
+assert.equal(unsafe.bookmarks.length, 0);
 assert.equal((unsafe.settings as any).wallpaper.type, 'gradient');
 assert.equal((unsafe.settings as any).wallpaper.value, '');
 assert.equal((unsafe.settings as any).wallpaper.blur, 40);
@@ -88,12 +123,19 @@ const extensionPage = 'chrome-extension://hjekpdhdabgkokjbklegnfkogcpjhhhg/index
 assert.equal(normalizeUrl(extensionPage), extensionPage, '其他扩展的页面应能作为书签地址');
 assert.equal(normalizeUrl('chrome-extension:///index.html'), '', '缺少扩展 ID 的地址必须拒绝');
 assert.equal(normalizeUrl('javascript:alert(1)'), '', '危险协议必须继续拒绝');
+assert.equal(normalizeUrl('example.com'), 'https://example.com/', '公网地址默认补 https');
+assert.equal(normalizeUrl('localhost:3000'), 'http://localhost:3000/', '本机服务默认补 http');
+assert.equal(normalizeUrl('192.168.1.1:8080/admin'), 'http://192.168.1.1:8080/admin', 'IP 地址默认补 http');
+assert.equal(normalizeUrl('nas.local'), 'http://nas.local/', '.local 地址默认补 http');
+assert.equal(normalizeUrl('app.localhost'), 'http://app.localhost/');
+assert.equal(normalizeUrl('[::1]:5173'), 'http://[::1]:5173/');
+assert.equal(normalizeUrl('https://localhost:8443'), 'https://localhost:8443/', '写明的协议保持不变');
 
 const extensionBackup = sanitizeImportedData({
     bookmarks: [{ id: 'extension-page', name: '扩展页面', url: extensionPage }],
     folders: ['全部']
 });
-assert.equal((extensionBackup.bookmarks as any[])[0].url, extensionPage, '导入备份时应保留扩展页面书签');
+assert.equal(extensionBackup.bookmarks[0].url, extensionPage, '导入备份时应保留扩展页面书签');
 
 const managedBookmark = { id: 10, name: 'Google', url: 'https://www.google.com/', icon: 'https://www.google.com/s2/favicons?domain=google.com&sz=64', folder: '全部', order: 0 };
 assert.ok(bookmarkIcon(managedBookmark).includes('size=128'), '旧 Google favicon 地址应切换到 Chrome 的高尺寸接口');
@@ -105,8 +147,6 @@ const customBookmark = { ...managedBookmark, icon: 'https://assets.example/icon.
 assert.equal(bookmarkIcon(customBookmark), customBookmark.icon, '自定义图标不能被导入流程覆盖');
 assert.equal(bookmarkIconCanUpgrade(customBookmark), true, '自定义图标应允许检查实际分辨率');
 assert.equal(bookmarkIconCanUpgrade(managedBookmark), false, 'Chrome 管理的 favicon 不需要重复升级');
-assert.equal(bookmarkIconIsRaster(managedBookmark), true, 'Chrome favicon 应按位图显示策略处理');
-assert.equal(bookmarkIconIsRaster({ ...managedBookmark, icon: 'data:image/svg+xml;base64,PHN2Zy' }), false, 'SVG 图标不应套用位图放大策略');
 assert.ok(bookmarkIconFallback(customBookmark).includes('size=128'), '自定义图标失败时应回退到本地 favicon');
 
 const ranked = rankSites([
@@ -201,7 +241,67 @@ async function testTransactions(): Promise<void> {
     assert.equal(store.state.bookmarks.length, countBeforeFailure, '写入失败时内存状态必须回滚');
 }
 
+/** B1: two pages that differ only in the query must both survive a reload and later saves. */
+async function testQueryBookmarksSurvive(): Promise<void> {
+    const store = new AppStore();
+    await store.init();
+    await store.addBookmark({ name: '', url: 'https://www.youtube.com/watch?v=AAA', icon: '', folder: 'POM' });
+    await store.addBookmark({ name: '', url: 'https://www.youtube.com/watch?v=BBB', icon: '', folder: 'POM' });
+    const reloaded = new AppStore();
+    await reloaded.init();
+    const urls = () => reloaded.state.bookmarks.filter((bookmark) => bookmark.folder === 'POM').map((bookmark) => bookmark.url);
+    assert.ok(urls().includes('https://www.youtube.com/watch?v=AAA') && urls().includes('https://www.youtube.com/watch?v=BBB'), '重新打开后两条都在');
+    await reloaded.addFolder('稍后');
+    await reloaded.renameFolder('POM', '收藏');
+    const again = new AppStore();
+    await again.init();
+    assert.equal(again.state.bookmarks.filter((bookmark) => bookmark.url.includes('watch?v=')).length, 2, '之后的写入不能把其中一条从存储里删掉');
+}
+
+/** B6: a tab opened earlier must not overwrite what another tab saved since. */
+async function testTabsDoNotOverwriteEachOther(): Promise<void> {
+    const first = new AppStore();
+    const second = new AppStore();
+    await first.init();
+    await second.init();
+    await first.addBookmark({ name: 'From A', url: 'https://tab-a.example/', icon: '', folder: '全部' });
+    await settle();
+    assert.ok(second.state.bookmarks.some((bookmark) => bookmark.url === 'https://tab-a.example/'), '另一个标签页的修改要同步到这里');
+    let changes: string[] = [];
+    second.addEventListener('change', (event) => { changes = (event as CustomEvent).detail.changes; });
+    await first.updateSettings('appearance', { glass: 'tinted' });
+    await settle();
+    assert.deepEqual(changes, ['settings.appearance'], '只通知实际变化的部分');
+    await second.addBookmark({ name: 'From B', url: 'https://tab-b.example/', icon: '', folder: '全部' });
+    await settle();
+    const stored = new AppStore();
+    await stored.init();
+    const urls = stored.state.bookmarks.map((bookmark) => bookmark.url);
+    assert.ok(urls.includes('https://tab-a.example/') && urls.includes('https://tab-b.example/'), '两个标签页的书签都要保留');
+    assert.equal(stored.state.settings.appearance.glass, 'tinted');
+
+    let otherTab = 0;
+    let ownTab = 0;
+    first.addEventListener('change', () => { otherTab += 1; });
+    second.addEventListener('change', () => { ownTab += 1; });
+    await second.saveRecentSearch('only once');
+    await settle();
+    assert.equal(otherTab, 1, '别的标签页的写入会通知这里');
+    assert.equal(ownTab, 1, '自己写入的回声不会再次通知');
+}
+
+async function testImportClearsRetiredKeys(): Promise<void> {
+    syncData.todos = [{ text: 'old' }];
+    const store = new AppStore();
+    await store.init();
+    await store.replaceImportedData(sanitizeImportedData({ bookmarks: [], todos: [{ text: 'new' }] }));
+    assert.equal('todos' in syncData, false, '导入时清掉旧的 todos 键');
+}
+
 testTransactions()
+    .then(testQueryBookmarksSurvive)
+    .then(testTabsDoNotOverwriteEachOther)
+    .then(testImportClearsRetiredKeys)
     .then(() => console.log('TypeScript core tests passed.'))
     .catch((error) => {
         console.error(error);

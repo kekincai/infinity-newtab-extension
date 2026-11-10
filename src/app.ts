@@ -22,24 +22,18 @@ installChromeFallback();
 const IDLE_DELAY = 8000;
 
 class InfinityNewTabApp extends HTMLElement {
-    private readonly hdrMedia = window.matchMedia('(dynamic-range: high)');
     private wallpaperTone: ResolvedTheme = 'dark';
     private idleTimer = 0;
+    private lastActivity = 0;
 
     private readonly updateClasses = () => {
         const { appearance } = appStore.state.settings;
-        const hdrDisplay = this.hasHdrDisplay();
-        const hdrCapable = hdrDisplay && 'gpu' in navigator;
         const theme = appearance.theme === 'auto' ? this.wallpaperTone : appearance.theme;
         document.body.classList.toggle('theme-light', theme === 'light');
         document.body.classList.toggle('theme-dark', theme === 'dark');
         document.body.classList.toggle('glass-tinted', appearance.glass === 'tinted');
         document.body.classList.toggle('reduce-transparency', appearance.reduceTransparency);
-        document.body.classList.toggle('enhanced-animations', appearance.enhancedAnimations);
         document.body.classList.toggle('hdr-highlights', appearance.hdrHighlights);
-        document.body.classList.toggle('hdr-display', hdrDisplay);
-        document.body.classList.toggle('hdr-capable', hdrCapable);
-        document.body.dataset.hdrOutput = hdrDisplay ? 'high' : 'standard';
     };
 
     private readonly onStoreChange = (event: Event) => {
@@ -54,7 +48,6 @@ class InfinityNewTabApp extends HTMLElement {
             await appStore.init();
             this.updateClasses();
             appStore.addEventListener('change', this.onStoreChange);
-            this.hdrMedia.addEventListener('change', this.updateClasses);
             this.render();
             window.addEventListener('keydown', this.onKeyDown);
             ['pointermove', 'pointerdown', 'keydown', 'wheel', 'focusin'].forEach((type) => {
@@ -69,16 +62,11 @@ class InfinityNewTabApp extends HTMLElement {
 
     disconnectedCallback(): void {
         appStore.removeEventListener('change', this.onStoreChange);
-        this.hdrMedia.removeEventListener('change', this.updateClasses);
         window.removeEventListener('keydown', this.onKeyDown);
         ['pointermove', 'pointerdown', 'keydown', 'wheel', 'focusin'].forEach((type) => {
             window.removeEventListener(type, this.wake, true);
         });
         window.clearTimeout(this.idleTimer);
-    }
-
-    private hasHdrDisplay(): boolean {
-        return this.hdrMedia.matches && CSS.supports('dynamic-range-limit', 'no-limit');
     }
 
     private render(): void {
@@ -132,19 +120,30 @@ class InfinityNewTabApp extends HTMLElement {
         }
     }
 
-    /** Any input brings the interface back and restarts the idle countdown. */
+    /**
+     * Any input brings the interface back and restarts the idle countdown. Input
+     * only records its time; the one pending timer checks it when it fires.
+     */
     private readonly wake = (): void => {
         document.body.classList.remove('is-idle');
-        window.clearTimeout(this.idleTimer);
-        if (!appStore.state.settings.wallpaper.idleHide) return;
-        this.idleTimer = window.setTimeout(this.goIdle, IDLE_DELAY);
+        this.lastActivity = Date.now();
+        if (!appStore.state.settings.wallpaper.idleHide) {
+            window.clearTimeout(this.idleTimer);
+            this.idleTimer = 0;
+            return;
+        }
+        if (!this.idleTimer) this.idleTimer = window.setTimeout(this.goIdle, IDLE_DELAY);
     };
 
     private readonly goIdle = (): void => {
+        this.idleTimer = 0;
+        const remaining = this.lastActivity + IDLE_DELAY - Date.now();
+        if (remaining > 0) {
+            this.idleTimer = window.setTimeout(this.goIdle, remaining);
+            return;
+        }
         // Stay awake while something is open or being typed into.
-        if (hasOpenLayer()
-            || isTypingTarget(document.activeElement)
-            || document.querySelector('.context-menu, .modal-backdrop')) {
+        if (hasOpenLayer() || isTypingTarget(document.activeElement)) {
             this.wake();
             return;
         }

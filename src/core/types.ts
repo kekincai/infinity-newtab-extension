@@ -1,5 +1,6 @@
 export type SearchEngineKey = 'google' | 'bing' | 'baidu' | 'duckduckgo';
-export type WallpaperType = 'gradient' | 'preset' | 'local' | 'video';
+/** `gradient` is the built-in Twilight Bay scene; `local` is a cached picture, uploaded or downloaded. */
+export type WallpaperType = 'gradient' | 'local' | 'video';
 /** `light` renders dark text for bright wallpapers; `auto` follows the wallpaper brightness. */
 export type Theme = 'auto' | 'light' | 'dark';
 export type ResolvedTheme = Exclude<Theme, 'auto'>;
@@ -33,7 +34,6 @@ export interface WallpaperSettings {
 export interface AppearanceSettings {
     clockFormat: '12h' | '24h';
     dateFormat: 'short' | 'long';
-    enhancedAnimations: boolean;
     hdrHighlights: boolean;
     theme: Theme;
     glass: GlassMaterial;
@@ -67,10 +67,7 @@ export interface BackupData {
     version: string;
     exportDate?: string;
     data: Record<string, unknown>;
-    localMedia?: {
-        image?: string | null;
-        video?: string | null;
-    };
+    localMedia?: LocalMediaBackup;
 }
 
 export interface RecentSite {

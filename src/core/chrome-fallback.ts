@@ -1,6 +1,7 @@
 /** Keeps the page previewable outside an installed extension without changing extension behavior. */
 export function installChromeFallback(): void {
     if ((globalThis as any).chrome?.storage?.sync) return;
+    const syncKey = 'infinity-preview-sync';
     const makeArea = (name: string) => ({
         get(keys: unknown, callback: (value: Record<string, unknown>) => void) {
             const values = JSON.parse(localStorage.getItem(name) || '{}') as Record<string, unknown>;
@@ -27,7 +28,17 @@ export function installChromeFallback(): void {
     });
     (globalThis as any).chrome = {
         runtime: { id: 'preview', lastError: null, getURL: (path: string) => new URL(path, location.href).href },
-        storage: { sync: makeArea('infinity-preview-sync'), local: makeArea('infinity-preview-local') },
+        storage: {
+            sync: makeArea(syncKey),
+            // Other preview tabs writing to localStorage stand in for other tabs and devices.
+            onChanged: {
+                addListener(listener: (changes: Record<string, unknown>, areaName: string) => void) {
+                    window.addEventListener('storage', (event) => {
+                        if (event.key === syncKey) listener({}, 'sync');
+                    });
+                }
+            }
+        },
         tabs: {
             query: (_query: unknown, done: (value: unknown[]) => void) => done([]),
             update: () => undefined,

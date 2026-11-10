@@ -2,6 +2,11 @@ import type { Bookmark } from './types';
 
 export const DEFAULT_ICON = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI4IiBmaWxsPSIjNjM2NmYxIi8+PHBhdGggZD0iTTE2IDhWMjRNOCAxNkgyNCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=';
 const BOOKMARK_PROTOCOLS = new Set(['http:', 'https:', 'chrome-extension:']);
+/** Hosts that usually serve plain HTTP: this machine, IP addresses and the local network. */
+const LOCAL_HOST = /^(localhost|.+\.localhost|.+\.local|\d{1,3}(\.\d{1,3}){3}|\[[\da-f:.]+\])$/i;
+
+/** Bookmarks outside any folder are stored under this name, as they were in every earlier version. */
+export const ROOT_FOLDER = '全部';
 
 export function escapeHtml(value: unknown): string {
     return String(value ?? '')
@@ -12,13 +17,14 @@ export function escapeHtml(value: unknown): string {
         .replaceAll("'", '&#039;');
 }
 
+/** Adds a scheme when there is none: https for the web, http for local servers such as `localhost:3000`. */
 export function normalizeUrl(value: unknown): string {
     if (typeof value !== 'string' || !value.trim()) return '';
-    const candidate = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(value.trim())
-        ? value.trim()
-        : `https://${value.trim()}`;
+    const text = value.trim();
+    const hasScheme = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(text);
     try {
-        const url = new URL(candidate);
+        let url = new URL(hasScheme ? text : `https://${text}`);
+        if (!hasScheme && LOCAL_HOST.test(url.hostname)) url = new URL(`http://${text}`);
         return BOOKMARK_PROTOCOLS.has(url.protocol) && url.hostname ? url.href : '';
     } catch {
         return '';
@@ -152,25 +158,12 @@ export function bookmarkIconCanUpgrade(bookmark: Bookmark): boolean {
     return Boolean(bookmark.icon && !isManagedFavicon(bookmark.icon));
 }
 
-export function bookmarkIconIsRaster(bookmark: Bookmark): boolean {
-    const icon = bookmarkIcon(bookmark);
-    return !/^data:image\/svg\+xml/i.test(icon) && !/\.svg(?:$|[?#])/i.test(icon);
-}
-
 export function bookmarkIconFallback(bookmark: Bookmark): string {
     return bookmark.icon && !isManagedFavicon(bookmark.icon)
         ? faviconUrl(bookmark.url)
         : DEFAULT_ICON;
 }
 
-export function debounce<T extends (...args: any[]) => void>(callback: T, wait: number): T {
-    let timer = 0;
-    return ((...args: Parameters<T>) => {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(() => callback(...args), wait);
-    }) as T;
-}
-
-export function dispatch(name: string, detail?: unknown): CustomEvent {
-    return new CustomEvent(name, { detail, bubbles: true, composed: true });
+export function compareBookmarks(left: Bookmark, right: Bookmark): number {
+    return left.order - right.order || String(left.id).localeCompare(String(right.id));
 }

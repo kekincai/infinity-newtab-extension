@@ -82,6 +82,18 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     return vec4f(vec3f(radiance * frame.peak), coverage * 0.3);
 }`;
 
+const hdrMedia = window.matchMedia('(dynamic-range: high)');
+
+/** The one test for an HDR screen; the layer, the settings and its description all use it. */
+export function isHdrDisplay(): boolean {
+    return hdrMedia.matches;
+}
+
+export function onHdrDisplayChange(listener: () => void): () => void {
+    hdrMedia.addEventListener('change', listener);
+    return () => hdrMedia.removeEventListener('change', listener);
+}
+
 /**
  * A transparent full-window WebGPU layer that draws the rim light of every
  * glass control in extended range, so the highlights rise above SDR white on
@@ -99,22 +111,23 @@ export class HdrRimLayer {
     private pointer = { x: -1e4, y: -1e4 };
     private initializing = false;
     private drawFrame = 0;
-    private readonly hdrMedia = window.matchMedia('(dynamic-range: high)');
+    private stopWatchingDisplay: (() => void) | null = null;
     private readonly classObserver = new MutationObserver(() => this.syncVisibility());
 
-    constructor() {
+    /** `onActivate` runs whenever the layer starts drawing, so its owner can measure the rims for it. */
+    constructor(private readonly onActivate: () => void = () => undefined) {
         this.canvas.className = 'hdr-glass-layer';
         this.canvas.setAttribute('aria-hidden', 'true');
     }
 
     /** Ready to draw: HDR screen, the setting on and a WebGPU device. */
     get active(): boolean {
-        return Boolean(this.device) && this.hdrMedia.matches && document.body.classList.contains('hdr-highlights');
+        return Boolean(this.device) && isHdrDisplay() && document.body.classList.contains('hdr-highlights');
     }
 
     connect(): void {
         this.classObserver.observe(document.body, { attributeFilter: ['class'] });
-        this.hdrMedia.addEventListener('change', this.onDisplayChange);
+        this.stopWatchingDisplay = onHdrDisplayChange(this.onDisplayChange);
         window.addEventListener('resize', this.onResize);
         this.onResize();
         void this.initialize();
@@ -122,7 +135,8 @@ export class HdrRimLayer {
 
     disconnect(): void {
         this.classObserver.disconnect();
-        this.hdrMedia.removeEventListener('change', this.onDisplayChange);
+        this.stopWatchingDisplay?.();
+        this.stopWatchingDisplay = null;
         window.removeEventListener('resize', this.onResize);
         cancelAnimationFrame(this.drawFrame);
         this.drawFrame = 0;
@@ -139,7 +153,7 @@ export class HdrRimLayer {
     }
 
     private readonly onDisplayChange = (): void => {
-        if (this.hdrMedia.matches) void this.initialize();
+        if (isHdrDisplay()) void this.initialize();
         this.syncVisibility();
     };
 
@@ -152,15 +166,25 @@ export class HdrRimLayer {
     };
 
     private async initialize(): Promise<void> {
-        if (this.device || this.initializing || !this.hdrMedia.matches || !('gpu' in navigator)) return;
+        if (this.device || this.initializing || !isHdrDisplay()) return;
+        if (!('gpu' in navigator)) {
+            this.canvas.dataset.hdrRenderer = 'unavailable';
+            return;
+        }
         this.initializing = true;
         try {
             const gpu = (navigator as Navigator & { gpu?: any }).gpu;
             const adapter = await gpu?.requestAdapter();
-            if (!adapter) return;
+            if (!adapter) {
+                this.canvas.dataset.hdrRenderer = 'unavailable';
+                return;
+            }
             const device = await adapter.requestDevice();
             const context = this.canvas.getContext('webgpu') as any;
-            if (!context) return;
+            if (!context) {
+                this.canvas.dataset.hdrRenderer = 'unavailable';
+                return;
+            }
             context.configure({
                 device,
                 format: 'rgba16float',
@@ -200,7 +224,6 @@ export class HdrRimLayer {
                 this.syncVisibility();
             });
             this.syncVisibility();
-            this.scheduleDraw();
         } catch {
             this.canvas.dataset.hdrRenderer = 'unavailable';
         } finally {
@@ -209,8 +232,13 @@ export class HdrRimLayer {
     }
 
     private syncVisibility(): void {
-        this.canvas.classList.toggle('is-visible', this.active);
-        if (this.active) this.scheduleDraw();
+        const active = this.active;
+        const activated = active && !this.canvas.classList.contains('is-visible');
+        this.canvas.classList.toggle('is-visible', active);
+        if (!active) return;
+        this.scheduleDraw();
+        // Nothing may move on the page after the device arrives; ask for the rims now.
+        if (activated) this.onActivate();
     }
 
     private scheduleDraw(): void {

@@ -1,24 +1,21 @@
 import { appStore } from '../core/store';
 import type { Bookmark, RecentSite } from '../core/types';
-import { cleanText, isAddressLike, siteLabel } from '../core/utils';
+import { ROOT_FOLDER, cleanText, compareBookmarks, isAddressLike, siteLabel } from '../core/utils';
 import { ICONS } from './icons';
-import { confirmAction, notifyError, openMenu, promptText } from './ui-layer';
+import { type MenuAnchor, confirmAction, notifyError, openMenu, promptText } from './ui-layer';
 
-export const ROOT_FOLDER = '全部';
+export { ROOT_FOLDER };
+
+/** What the bookmark dialog opens with: a bookmark to edit, or a folder and draft to add to. */
+export type BookmarkDialogDetail = { bookmark?: Bookmark; folder?: string; draft?: { url: string; name: string } };
 
 /** Bookmarks outside any folder are stored under “全部” for old backups but shown as their own group. */
 export function folderLabel(folder: string): string {
     return folder === ROOT_FOLDER ? '书签' : folder;
 }
 
-type MenuAnchor = { x: number; y: number } | HTMLElement;
-
 export function findBookmark(id: string): Bookmark | undefined {
     return appStore.state.bookmarks.find((item) => String(item.id) === String(id));
-}
-
-export function compareBookmarks(left: Bookmark, right: Bookmark): number {
-    return left.order - right.order || String(left.id).localeCompare(String(right.id));
 }
 
 export function bookmarksIn(folder: string): Bookmark[] {
@@ -35,14 +32,14 @@ export function bookmarkName(bookmark: Bookmark): string {
 export function interceptExtensionLink(event: MouseEvent, url: string): void {
     if (event.defaultPrevented || new URL(url).protocol !== 'chrome-extension:') return;
     event.preventDefault();
-    void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
+    openInNewTab(url);
 }
 
 export function openInNewTab(url: string): void {
     void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
 }
 
-export function openBookmarkDialog(source: HTMLElement, detail: { bookmark?: Bookmark; folder?: string; draft?: { url: string; name: string } }): void {
+export function openBookmarkDialog(source: HTMLElement, detail: BookmarkDialogDetail): void {
     source.dispatchEvent(new CustomEvent('open-bookmark-dialog', { bubbles: true, composed: true, detail }));
 }
 

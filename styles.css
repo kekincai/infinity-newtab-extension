@@ -25,12 +25,10 @@ body.theme-dark {
     --panel-solid: rgb(40, 40, 46);
     --panel-edge: rgba(255, 255, 255, 0.14);
     --panel-shadow: 0 24px 64px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.22);
-    --fill-0: rgba(255, 255, 255, 0.05);
     --fill-1: rgba(255, 255, 255, 0.07);
     --fill-2: rgba(255, 255, 255, 0.1);
     --fill-3: rgba(255, 255, 255, 0.16);
     --fill-hover: rgba(255, 255, 255, 0.24);
-    --fill-select: rgba(255, 255, 255, 0.18);
     --fill-track: rgba(255, 255, 255, 0.2);
     --hairline: rgba(255, 255, 255, 0.12);
     --hairline-strong: rgba(255, 255, 255, 0.28);
@@ -41,15 +39,12 @@ body.theme-dark {
     --focus-ring: rgba(10, 132, 255, 0.45);
     --spring: cubic-bezier(0.34, 1.32, 0.64, 1);
     --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-    --green: #34c759;
     --danger: #ff453a;
     --danger-ink: #ff9d96;
     --focus: rgba(255, 255, 255, 0.9);
     --hero-shadow: 0 2px 40px rgba(30, 10, 60, 0.22);
     --label-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 12px rgba(0, 0, 0, 0.28);
     --scrim: rgba(6, 8, 20, 0.5);
-    --specular-line: rgba(255, 255, 255, 0.68);
-    --specular-bloom: rgba(255, 255, 255, 0.48);
     --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", "Microsoft YaHei", sans-serif;
 }
 
@@ -65,12 +60,10 @@ body.theme-light {
     --panel-solid: rgb(246, 246, 248);
     --panel-edge: rgba(0, 0, 0, 0.1);
     --panel-shadow: 0 24px 64px rgba(20, 20, 40, 0.2), 0 2px 8px rgba(0, 0, 0, 0.08);
-    --fill-0: rgba(20, 22, 40, 0.03);
     --fill-1: rgba(20, 22, 40, 0.045);
     --fill-2: rgba(20, 22, 40, 0.07);
     --fill-3: rgba(20, 22, 40, 0.09);
     --fill-hover: rgba(20, 22, 40, 0.14);
-    --fill-select: rgba(20, 22, 40, 0.09);
     --fill-track: rgba(20, 22, 40, 0.14);
     --hairline: rgba(20, 22, 40, 0.1);
     --hairline-strong: rgba(20, 22, 40, 0.2);
@@ -521,7 +514,7 @@ glass-system {
 
 /* ---- App icons ----------------------------------------------------------- */
 
-/* Favicons sit on a white plate like app icons; a coloured letter tile replaces any that fail. */
+/* A site's favicon, sized by the font size of where it is used; a coloured letter tile replaces any that fail to load. */
 .app-icon {
     position: relative;
     display: grid;
@@ -534,7 +527,6 @@ glass-system {
     background: #ffffff;
     box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.35), 0 0.08em 0.2em rgba(0, 0, 0, 0.2);
     color: #111;
-    font-size: 76px;
     line-height: 1;
 }
 
@@ -1502,11 +1494,6 @@ label.setting-row {
     cursor: pointer;
 }
 
-.setting-row.is-disabled {
-    opacity: 0.45;
-    pointer-events: none;
-}
-
 .row-label {
     display: flex;
     min-width: 0;
@@ -2044,11 +2031,11 @@ backup-toast {
 
 /* ---- Motion ------------------------------------------------------------- */
 
-.enhanced-animations .hero {
+.hero {
     animation: rise-in 480ms var(--ease-out) backwards;
 }
 
-.enhanced-animations .home-footer {
+.home-footer {
     animation: rise-in 480ms 60ms var(--ease-out) backwards;
 }
 

@@ -50,9 +50,9 @@ function siteName(host: string, rootTitle: string): string {
 
 let recentSites: Promise<RecentSite[]> | null = null;
 
-/** One history scan per page load, shared by the bookmark grid and Spotlight. */
-export function loadRecentSites(refresh = false): Promise<RecentSite[]> {
-    if (!recentSites || refresh) {
+/** One history scan per page load, shared by the bookmark index and the search field. */
+export function loadRecentSites(): Promise<RecentSite[]> {
+    if (!recentSites) {
         recentSites = new Promise<RecentSite[]>((resolve, reject) => {
             if (!chrome.history?.search) {
                 reject(new Error('浏览器未开放历史记录访问'));

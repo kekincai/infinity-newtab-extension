@@ -10,8 +10,8 @@ const initialData = {
     folders: ['全部', 'POM'],
     settings: {
         layout: { showClock: true, showSearch: true, showBookmarks: true, showStatus: true, showRecent: true, searchEngine: 'google' },
-        wallpaper: { type: 'gradient', value: '', blur: 0, overlay: 30, idleHide: false },
-        appearance: { clockFormat: '24h', dateFormat: 'long', enhancedAnimations: true, theme: 'light' }
+        wallpaper: { type: 'gradient', value: '', blur: 0, overlay: 12, idleHide: false },
+        appearance: { clockFormat: '24h', dateFormat: 'long', theme: 'light' }
     },
     recentSearches: ['二次元壁纸'],
     lastBackupPrompt: 4102444800000
@@ -52,8 +52,6 @@ async function installChromeMock(page, seed = initialData, options = {}) {
             },
             clear(callback = () => {}) { writeArea(key, {}); callback(); }
         });
-        Object.defineProperty(navigator, 'hardwareConcurrency', { configurable: true, value: 8 });
-        Object.defineProperty(navigator, 'deviceMemory', { configurable: true, value: 8 });
         navigator.getBattery = async () => ({ level: 0.82, charging: false });
         if (options.failIndexedDB) {
             Object.defineProperty(indexedDB, 'open', {
@@ -64,7 +62,15 @@ async function installChromeMock(page, seed = initialData, options = {}) {
         const openedTabs = [];
         window.chrome = {
             runtime: { id: 'e2e-infinity-newtab', lastError: null, getURL: () => `${location.origin}/icons/icon-48.png` },
-            storage: { sync: storageArea(syncKey), local: storageArea(localKey) },
+            storage: {
+                sync: storageArea(syncKey),
+                local: storageArea(localKey),
+                onChanged: {
+                    addListener(listener) {
+                        window.addEventListener('storage', (event) => { if (event.key === syncKey) listener({}, 'sync'); });
+                    }
+                }
+            },
             tabs: {
                 query(_query, callback) { callback([]); },
                 update() {},
@@ -95,6 +101,13 @@ async function openExtension(page, seed = initialData, options = {}) {
     await page.goto('/newtab.html');
     await expect(page.locator('.index-group[data-folder="全部"] [data-bookmark-id]')).toHaveCount(seed.bookmarks.filter((bookmark) => (bookmark.folder || '全部') === '全部').length);
     return errors;
+}
+
+/** Waits for the home screen's entrance animation, so measured boxes stop moving. */
+async function settleEntrance(page) {
+    await page.evaluate(() => Promise.all(document.getAnimations()
+        .filter((animation) => animation.animationName === 'rise-in')
+        .map((animation) => animation.finished)));
 }
 
 /** Reports an emulated HDR screen so the WebGPU rim layer starts on an SDR test display. */
@@ -218,13 +231,22 @@ test('gives every glass control a refraction filter sized to it', async ({ page 
     expect(settings.id).toBe(shuffle.id);
     expect(search.id).not.toBe(shuffle.id);
     expect(await page.locator('.glass-filters filter').count()).toBeLessThanOrEqual(await page.locator('[data-glass]').count());
+
+    // A control that changes size releases the filter of its old shape.
+    const field = page.locator('.search-field');
+    for (let width = 300; width < 400; width += 5) {
+        await field.evaluate((element, value) => { element.style.width = `${value}px`; }, width);
+        await expect.poll(() => field.evaluate((element) => element.offsetWidth)).toBe(width);
+    }
+    await field.evaluate((element) => element.style.removeProperty('width'));
+    await expect.poll(async () => page.locator('.glass-filters filter').count())
+        .toBeLessThanOrEqual(await page.locator('[data-glass]').count());
     expect(errors).toEqual([]);
 });
 
 test('bends the backdrop at the rim of the glass', async ({ page }) => {
-    const seed = structuredClone(initialData);
-    seed.settings.appearance.enhancedAnimations = false;
-    const errors = await openExtension(page, seed);
+    const errors = await openExtension(page);
+    await settleEntrance(page);
     await page.addStyleTag({ content: `
         body { background: repeating-linear-gradient(90deg, #101828 0 6px, #ff3f9f 6px 12px, #61d8ff 12px 18px) !important; }
         wallpaper-surface { display: none !important; }
@@ -246,6 +268,7 @@ test('bends the backdrop at the rim of the glass', async ({ page }) => {
 
 test('lights the glass under the pointer', async ({ page }) => {
     const errors = await openExtension(page);
+    await settleEntrance(page);
     const field = page.locator('.search-field');
     const box = await field.boundingBox();
     await page.mouse.move(box.x + 60, box.y + 12);
@@ -361,7 +384,7 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     });
     await expect.poll(() => page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('local');
     await expect(page.locator('.wallpaper-name')).toHaveText('本地图片');
-    await expect(page.locator('[data-segment="wallpaperKind"] [data-value="image"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('[data-segment="wallpaperKind"] [data-value="image"]')).toHaveAttribute('aria-pressed', 'true');
     await page.reload();
     await expect(page.locator('.wallpaper-media')).toHaveCSS('background-image', /blob:/);
     await expect(page.locator('.wallpaper-pause')).toBeHidden();
@@ -372,6 +395,28 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     expect(stored.appearance.clockFormat).toBe('12h');
     expect(stored.appearance.hdrHighlights).toBe(true);
     expect(stored.appearance.reduceTransparency).toBe(true);
+    expect(errors).toEqual([]);
+});
+
+test('moves through the wallpaper type buttons without opening anything', async ({ page }) => {
+    const errors = await openExtension(page);
+    await openSettings(page, 'wallpaper');
+    let chooserOpened = false;
+    page.on('filechooser', () => { chooserOpened = true; });
+    const kinds = page.locator('[data-segment="wallpaperKind"] button');
+    await kinds.first().focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(kinds.nth(1)).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(kinds.nth(2)).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForTimeout(300);
+    expect(chooserOpened).toBe(false);
+    expect(await page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('gradient');
+    // Enter is what starts the action.
+    const chooser = page.waitForEvent('filechooser');
+    await page.keyboard.press('Enter');
+    expect((await chooser).isMultiple()).toBe(false);
     expect(errors).toEqual([]);
 });
 
@@ -455,7 +500,7 @@ test('imports a version 1 backup and exports version 2', async ({ page }, testIn
             folders: ['全部'],
             settings: {
                 layout: { showClock: true, showSearch: true, showBookmarks: true },
-                wallpaper: { type: 'gradient', value: '', blur: 0, overlay: 30 },
+                wallpaper: { type: 'gradient', value: '', blur: 0, overlay: 12 },
                 appearance: { clockFormat: '24h', dateFormat: 'long' }
             },
             todos: []
@@ -475,6 +520,7 @@ test('imports a version 1 backup and exports version 2', async ({ page }, testIn
     expect(stored.bookmarks[0].folder).toBe('全部');
     expect(stored.settings.layout.showStatus).toBe(true);
     expect(stored.settings.layout).not.toHaveProperty('dockSize');
+    expect(stored).not.toHaveProperty('todos');
     const raw = await page.evaluate(() => window.__readRawSync());
     expect(raw).not.toHaveProperty('bookmarks');
     expect(raw.bookmarkChunks).toBe(1);
@@ -572,7 +618,7 @@ test('searches straight from the home field', async ({ page }) => {
     const input = page.locator('.search-field input');
     await expect(input).toBeFocused();
     // No separate window: the suggestions hang under the field itself.
-    await expect(page.locator('spotlight-search, .modal-backdrop')).toHaveCount(0);
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0);
     const results = page.locator('.search-results');
     await expect(results).toBeVisible();
     const fieldBox = await page.locator('.search-field').boundingBox();
@@ -597,13 +643,26 @@ test('searches straight from the home field', async ({ page }) => {
     await input.fill('youtube.com');
     await expect(page.locator('.search-row').first()).toContainText('youtube.com');
     await expect(page.locator('.search-heading').first()).toHaveText('网址');
+    // Local servers and IP addresses are addresses too, opened over plain http.
+    await input.fill('localhost:3000');
+    await expect(page.locator('.search-row').first()).toContainText('http://localhost:3000/');
+    await input.fill('192.168.1.1:8080');
+    await expect(page.locator('.search-heading').first()).toHaveText('网址');
+    await expect(page.locator('.search-row').first()).toContainText('http://192.168.1.1:8080/');
+
+    // ⌘/Ctrl+Enter on a web search opens it in a new tab and keeps this page.
+    await input.fill('liquid glass');
+    await page.locator('.search-row', { hasText: '在 Bing 中搜索' }).click({ modifiers: [process.platform === 'darwin' ? 'Meta' : 'Control'] });
+    await expect.poll(() => page.evaluate(() => window.__readOpenedTabs())).toEqual([{ url: 'https://www.bing.com/search?q=liquid%20glass' }]);
+    await expect(page).toHaveURL(/\/newtab\.html$/);
+    await page.keyboard.press('/');
 
     await input.fill('');
     const recent = page.locator('.search-row', { hasText: '二次元壁纸' });
     await recent.hover();
     await recent.locator('.row-remove').click();
     await expect(page.locator('.search-row', { hasText: '二次元壁纸' })).toHaveCount(0);
-    expect((await page.evaluate(() => window.__readMockSync())).recentSearches).toEqual(['typescript']);
+    expect((await page.evaluate(() => window.__readMockSync())).recentSearches).toEqual(['liquid glass', 'typescript']);
     expect((await page.evaluate(() => window.__readMockSync())).settings.layout.searchEngine).toBe('google');
 
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');

@@ -3,7 +3,6 @@ import {
     bookmarkIcon,
     bookmarkIconCanUpgrade,
     bookmarkIconFallback,
-    bookmarkIconIsRaster,
     bookmarkIconSrcSet,
     cleanDisplayName,
     escapeHtml,
@@ -26,13 +25,14 @@ const TILE_COLORS: Array<[string, string, string]> = [
 
 type IconSource = { url: string; name: string; bookmark?: Bookmark };
 
-export function siteIcon({ url, name, bookmark }: IconSource, className = ''): string {
+/** `size` is the icon's CSS size in px; the browser picks the favicon resolution from it. */
+export function siteIcon({ url, name, bookmark }: IconSource, className: string, size: number): string {
     const host = hostOf(url);
     const letter = Array.from(cleanDisplayName(name) || host || '?')[0]?.toUpperCase() ?? '?';
     const [from, to, ink] = TILE_COLORS[hash(host) % TILE_COLORS.length];
     const image = bookmark
-        ? `<img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="96px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" data-icon-raster="${bookmarkIconIsRaster(bookmark)}" alt="" decoding="async" draggable="false">`
-        : `<img src="${escapeHtml(faviconUrl(url))}" srcset="${escapeHtml(faviconSrcSet(url))}" sizes="96px" alt="" loading="lazy" decoding="async" draggable="false">`;
+        ? `<img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="${size}px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" alt="" decoding="async" draggable="false">`
+        : `<img src="${escapeHtml(faviconUrl(url))}" srcset="${escapeHtml(faviconSrcSet(url))}" sizes="${size}px" alt="" loading="lazy" decoding="async" draggable="false">`;
     return `<span class="app-icon ${className}" style="--tile-from:${from};--tile-to:${to};--tile-ink:${ink}">${image}<span class="app-letter" aria-hidden="true">${escapeHtml(letter)}</span></span>`;
 }
 

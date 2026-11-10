@@ -1,51 +1,48 @@
-export type StorageAreaName = 'sync' | 'local';
-
-function area(name: StorageAreaName): any {
-    return chrome.storage[name];
+/** Promise wrappers over `chrome.storage.sync`, where every synced value lives. */
+function sync(): any {
+    return chrome.storage.sync;
 }
 
-export function storageGet<T extends Record<string, unknown>>(
-    keys: string[] | string | null,
-    areaName: StorageAreaName = 'sync'
-): Promise<T> {
+export function storageGet<T extends Record<string, unknown>>(keys: string[] | string | null): Promise<T> {
     return new Promise((resolve, reject) => {
-        area(areaName).get(keys, (result: T) => {
+        sync().get(keys, (result: T) => {
             if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
             else resolve(result ?? {} as T);
         });
     });
 }
 
-export function storageSet(
-    values: Record<string, unknown>,
-    areaName: StorageAreaName = 'sync'
-): Promise<void> {
+export function storageSet(values: Record<string, unknown>): Promise<void> {
     return new Promise((resolve, reject) => {
-        area(areaName).set(values, () => {
+        sync().set(values, () => {
             if (chrome.runtime.lastError) reject(new Error(describeWriteError(chrome.runtime.lastError.message)));
             else resolve();
         });
     });
 }
 
-export function storageRemove(
-    keys: string[],
-    areaName: StorageAreaName = 'sync'
-): Promise<void> {
+export function storageRemove(keys: string[]): Promise<void> {
     return new Promise((resolve, reject) => {
-        area(areaName).remove(keys, () => {
+        sync().remove(keys, () => {
             if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
             else resolve();
         });
     });
 }
 
-export function storageClear(areaName: StorageAreaName = 'sync'): Promise<void> {
+export function storageClear(): Promise<void> {
     return new Promise((resolve, reject) => {
-        area(areaName).clear(() => {
+        sync().clear(() => {
             if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
             else resolve();
         });
+    });
+}
+
+/** Calls back whenever another tab, another device or this page changes synced data. */
+export function onSyncChanged(callback: () => void): void {
+    chrome.storage.onChanged?.addListener?.((_changes: unknown, areaName: string) => {
+        if (areaName === 'sync') callback();
     });
 }
 
