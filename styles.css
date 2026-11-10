@@ -572,6 +572,13 @@ wallpaper-surface {
     background-position: center;
     background-size: cover;
     filter: blur(var(--wallpaper-blur, 0px));
+    /* Zoom transforms are computed from the top-left corner (see wallpaper-zoom.ts). */
+    transform-origin: 0 0;
+}
+
+/* Only while a pinch or its spring runs: afterwards Chrome redraws the zoomed picture sharply. */
+wallpaper-surface.is-zooming .wallpaper-media {
+    will-change: transform;
 }
 
 .wallpaper-media video,
@@ -1254,6 +1261,18 @@ body.is-idle .home-footer {
 
 body.is-idle dashboard-header {
     opacity: 0.85;
+}
+
+/* A zoomed wallpaper is looked at, like a photo: the home screen steps aside until it is restored. */
+body.is-zoomed .top-bar,
+body.is-zoomed dashboard-header,
+body.is-zoomed search-box,
+body.is-zoomed .home-footer,
+body.is-zoomed backup-toast {
+    opacity: 0;
+    pointer-events: none;
+    /* Out of the way quickly; it fades back at the usual pace. */
+    transition-duration: 180ms;
 }
 
 /* ---- Settings window ----------------------------------------------------
