@@ -1,6 +1,6 @@
 {
   "name": "infinity-newtab-extension",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "TypeScript 与原生 Web Components 打造的二次元 Chrome 新标签页，书签目录、动态壁纸与 Liquid Glass HDR。",
   "scripts": {
     "build": "esbuild src/app.ts --bundle --format=iife --target=chrome120 --outfile=modules/app.js",

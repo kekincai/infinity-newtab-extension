@@ -940,22 +940,73 @@
     }
     await mediaStore.clear(kind === "video" ? "image" : "video").catch(() => void 0);
   }
-  async function toneOfBlob(blob) {
-    const bitmap = await createImageBitmap(blob, { resizeWidth: SAMPLE_SIZE, resizeHeight: SAMPLE_SIZE });
-    try {
-      return toneOf(bitmap);
-    } finally {
-      bitmap.close();
+  function backdropOf(source) {
+    const data = sample(source);
+    if (!data) return DEFAULT_BACKDROP;
+    const ring = 4;
+    const corners = Array.from({ length: 4 }, () => ({ l: 0, a: 0, b: 0, n: 0 }));
+    const all = { l: 0, a: 0, b: 0, n: 0 };
+    for (let y = 0; y < SAMPLE_SIZE; y += 1) {
+      for (let x = 0; x < SAMPLE_SIZE; x += 1) {
+        if (x >= ring && x < SAMPLE_SIZE - ring && y >= ring && y < SAMPLE_SIZE - ring) continue;
+        const index = (y * SAMPLE_SIZE + x) * 4;
+        const [l, a, b] = oklab(data[index], data[index + 1], data[index + 2]);
+        const corner = corners[(y < SAMPLE_SIZE / 2 ? 0 : 2) + (x < SAMPLE_SIZE / 2 ? 0 : 1)];
+        for (const total of [corner, all]) {
+          total.l += l;
+          total.a += a;
+          total.b += b;
+          total.n += 1;
+        }
+      }
     }
+    const [topLeft, topRight, bottomLeft, bottomRight] = corners.map((corner) => paleTint(corner, 0.9, 0.06));
+    const base = paleTint(all, 0.955, 0.025);
+    return [
+      `radial-gradient(70% 70% at 0% 0%, ${topLeft}, transparent)`,
+      `radial-gradient(70% 70% at 100% 0%, ${topRight}, transparent)`,
+      `radial-gradient(70% 70% at 0% 100%, ${bottomLeft}, transparent)`,
+      `radial-gradient(70% 70% at 100% 100%, ${bottomRight}, transparent)`,
+      `linear-gradient(${base}, ${base})`
+    ].join(", ");
   }
-  function toneOf(source) {
+  function paleTint(total, lightness, maxChroma) {
+    if (!total.n) return `oklch(${lightness} 0 0)`;
+    const a = total.a / total.n;
+    const b = total.b / total.n;
+    const chroma = Math.min(maxChroma, Math.hypot(a, b) * 0.6);
+    const hue = (Math.atan2(b, a) * 180 / Math.PI + 360) % 360;
+    return `oklch(${lightness} ${chroma.toFixed(3)} ${hue.toFixed(1)})`;
+  }
+  function oklab(red, green, blue) {
+    const linear = (value) => {
+      const channel = value / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    };
+    const r = linear(red);
+    const g = linear(green);
+    const b = linear(blue);
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return [
+      0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+      1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+      0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s
+    ];
+  }
+  function sample(source) {
     const canvas = document.createElement("canvas");
     canvas.width = SAMPLE_SIZE;
     canvas.height = SAMPLE_SIZE;
     const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) return "dark";
+    if (!context) return null;
     context.drawImage(source, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-    const { data } = context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+    return context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+  }
+  function toneOf(source) {
+    const data = sample(source);
+    if (!data) return "dark";
     let total = 0;
     for (let index = 0; index < data.length; index += 4) {
       total += (0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2]) / 255;
@@ -1013,7 +1064,7 @@
   function errorMessage(error) {
     return error instanceof Error ? error.message : "\u64CD\u4F5C\u5931\u8D25";
   }
-  var ONLINE_WALLPAPER, SAMPLE_SIZE, LIGHT_THRESHOLD, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, HEIC, HEIC_EXTENSIONS;
+  var ONLINE_WALLPAPER, SAMPLE_SIZE, LIGHT_THRESHOLD, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, HEIC, HEIC_EXTENSIONS, SCENE_BACKDROP, DEFAULT_BACKDROP;
   var init_wallpaper_service = __esm({
     "src/core/wallpaper-service.ts"() {
       "use strict";
@@ -1027,6 +1078,14 @@
       VIDEO_EXTENSIONS = /\.(mp4|m4v|mov|webm|ogv)$/i;
       HEIC = /^image\/hei[cf]/i;
       HEIC_EXTENSIONS = /\.hei[cf]$/i;
+      SCENE_BACKDROP = [
+        "radial-gradient(70% 70% at 0% 0%, oklch(0.9 0.045 275), transparent)",
+        "radial-gradient(70% 70% at 100% 0%, oklch(0.9 0.04 285), transparent)",
+        "radial-gradient(70% 70% at 0% 100%, oklch(0.9 0.05 320), transparent)",
+        "radial-gradient(70% 70% at 100% 100%, oklch(0.91 0.05 345), transparent)",
+        "linear-gradient(oklch(0.955 0.02 300), oklch(0.955 0.02 300))"
+      ].join(", ");
+      DEFAULT_BACKDROP = "linear-gradient(oklch(0.955 0.01 260), oklch(0.955 0.01 260))";
     }
   });
 
@@ -2406,8 +2465,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         if (!distance) continue;
         const antiAlias = distanceSquared < radiusSquared ? 1 : 1 - (distance - scaledRadius);
         const distanceFromBorder = scaledRadius - distance;
-        const sample = Math.floor(distanceFromBorder / scaledBezel * displacements.length);
-        const magnitude = displacements[sample] ?? 0;
+        const sample2 = Math.floor(distanceFromBorder / scaledBezel * displacements.length);
+        const magnitude = displacements[sample2] ?? 0;
         const normalizedX = -(offsetX / distance) * magnitude / maximumDisplacement;
         const normalizedY = -(offsetY / distance) * magnitude / maximumDisplacement;
         const index = (y * canvasWidth + x) * 4;
@@ -3724,14 +3783,20 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   });
 
   // src/components/wallpaper-zoom.ts
-  function rubberBand(requested) {
+  function resist(value, delta, range, size) {
+    const outward = value >= range.max && delta > 0 || value <= range.min && delta < 0;
+    if (!outward) return delta;
+    const overshoot = value > range.max ? value - range.max : value < range.min ? range.min - value : 0;
+    return delta * 0.5 * Math.max(0, 1 - overshoot / (size * 0.3));
+  }
+  function rubberBand(requested, minimum) {
     if (requested > MAX_SCALE) return MAX_SCALE * Math.exp(stretch(Math.log(requested / MAX_SCALE), STRETCH_OVER));
-    if (requested < 1) return Math.exp(-stretch(Math.log(1 / requested), STRETCH_UNDER));
+    if (requested < minimum) return minimum * Math.exp(-stretch(Math.log(minimum / requested), STRETCH_UNDER));
     return requested;
   }
-  function unstretch(scale) {
+  function unstretch(scale, minimum) {
     if (scale > MAX_SCALE) return MAX_SCALE * Math.exp(release(Math.log(scale / MAX_SCALE), STRETCH_OVER));
-    if (scale < 1) return Math.exp(-release(Math.log(1 / scale), STRETCH_UNDER));
+    if (scale < minimum) return minimum * Math.exp(-release(Math.log(minimum / scale), STRETCH_UNDER));
     return scale;
   }
   function stretch(overshoot, limit) {
@@ -3747,19 +3812,19 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   function isControl(target) {
     return target instanceof Element && Boolean(target.closest("a, button, input, label, select, textarea, [data-glass], bookmark-index, search-box, status-strip, dashboard-header, backup-toast, settings-panel, bookmark-dialog, .context-menu, .modal-backdrop"));
   }
-  var MAX_SCALE, SNAP_TO_FIT, DOUBLE_CLICK_SCALE, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperZoom;
+  var MAX_SCALE, SNAP, DOUBLE_CLICK_SCALE, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperZoom;
   var init_wallpaper_zoom = __esm({
     "src/components/wallpaper-zoom.ts"() {
       "use strict";
       init_ui_layer();
       MAX_SCALE = 5;
-      SNAP_TO_FIT = 1.05;
+      SNAP = 0.05;
       DOUBLE_CLICK_SCALE = 2.5;
       PINCH_UNITS = 100;
       MAX_PINCH_STEP = 30;
       GESTURE_END_MS = 120;
       STRETCH_OVER = Math.log(1.35);
-      STRETCH_UNDER = Math.log(1 / 0.6);
+      STRETCH_UNDER = Math.log(1 / 0.75);
       STIFFNESS = 260;
       DAMPING = 30;
       WallpaperZoom = class {
@@ -3793,8 +3858,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           window.clearTimeout(this.gestureTimer);
           cancelAnimationFrame(this.frame);
         }
+        /** Off the resting size, zoomed in or out. */
         get zoomed() {
-          return this.view.scale > 1.001;
+          return Math.abs(this.view.scale - 1) > 1e-3;
         }
         /** Back to fit at once, e.g. when the wallpaper itself changes. */
         reset = () => {
@@ -3827,7 +3893,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             const step = Math.max(-MAX_PINCH_STEP, Math.min(MAX_PINCH_STEP, event.deltaY));
             this.focus = { x: event.clientX, y: event.clientY };
             this.requestedScale *= Math.exp(-step / PINCH_UNITS);
-            this.view = this.zoomedAbout(this.view, rubberBand(this.requestedScale), this.focus);
+            this.view = this.zoomedAbout(this.view, rubberBand(this.requestedScale, this.minScale()), this.focus);
           } else {
             this.panBy(-event.deltaX, -event.deltaY);
           }
@@ -3858,59 +3924,70 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.frame = 0;
           this.target = null;
           this.velocity = { scale: 0, x: 0, y: 0 };
-          this.requestedScale = unstretch(this.view.scale);
+          this.requestedScale = unstretch(this.view.scale, this.minScale());
           this.surface.classList.add("is-zooming");
         }
         endGesture = () => {
-          const scale = this.view.scale < SNAP_TO_FIT ? 1 : Math.min(MAX_SCALE, this.view.scale);
-          this.settleTo(this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
+          const minimum = this.minScale();
+          let scale = Math.max(minimum, Math.min(MAX_SCALE, this.view.scale));
+          if (Math.abs(scale - 1) < SNAP) scale = 1;
+          else if (scale / minimum - 1 < SNAP) scale = minimum;
+          this.settleTo(scale === 1 ? { scale: 1, x: 0, y: 0 } : this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
         };
         /** The view scaled to `scale` with the point under `at` staying put. */
         zoomedAbout(view, scale, at) {
-          const origin = this.origin();
+          const box = this.box();
           const ratio = scale / view.scale;
           return {
             scale,
-            x: at.x - origin - (at.x - origin - view.x) * ratio,
-            y: at.y - origin - (at.y - origin - view.y) * ratio
+            x: at.x - box.left - (at.x - box.left - view.x) * ratio,
+            y: at.y - box.top - (at.y - box.top - view.y) * ratio
           };
         }
         /** Panning past an edge moves less and less, so the picture resists being dragged out of view. */
         panBy(dx, dy) {
-          const bounds = this.bounds(this.view.scale);
-          const resist = (value, delta, min, max, size) => {
-            const overshoot = value > max ? value - max : value < min ? min - value : 0;
-            const outward = value >= max && delta > 0 || value <= min && delta < 0;
-            return outward ? delta * 0.5 * Math.max(0, 1 - overshoot / (size * 0.3)) : delta;
-          };
+          const [rangeX, rangeY] = this.ranges(this.view.scale);
           this.view = {
             scale: this.view.scale,
-            x: this.view.x + resist(this.view.x, dx, bounds.minX, 0, innerWidth),
-            y: this.view.y + resist(this.view.y, dy, bounds.minY, 0, innerHeight)
+            x: this.view.x + resist(this.view.x, dx, rangeX, innerWidth),
+            y: this.view.y + resist(this.view.y, dy, rangeY, innerHeight)
           };
         }
-        /**
-         * The media layer reaches past the window by `bleed` on every side so a
-         * blurred edge never shows; panning keeps that margin out of view too.
-         */
-        bounds(scale) {
+        /** The media layer's untransformed box in window coordinates. */
+        box() {
           const media = this.media;
-          const width = media?.offsetWidth || innerWidth;
-          const height = media?.offsetHeight || innerHeight;
-          return { minX: (1 - scale) * width, minY: (1 - scale) * height };
+          return media ? { left: media.offsetLeft, top: media.offsetTop, width: media.offsetWidth, height: media.offsetHeight } : { left: 0, top: 0, width: innerWidth, height: innerHeight };
         }
-        /** Where the untransformed media layer starts, in window coordinates (equal on both axes). */
-        origin() {
-          const media = this.media;
-          return media ? -(media.offsetWidth - innerWidth) / 2 : 0;
+        /** The scale at which the whole picture fits in the window. */
+        minScale() {
+          const box = this.box();
+          return Math.min(1, innerWidth / box.width, innerHeight / box.height);
+        }
+        /**
+         * Allowed offsets on each axis at `scale`. A picture larger than the window
+         * (plus the blur margin, which must stay out of view) can pan until an edge
+         * meets the window; a smaller one stays centred.
+         */
+        ranges(scale) {
+          const box = this.box();
+          const bleed = Number(this.surface.dataset.bleed) || 0;
+          const axis = (start, length, window2) => {
+            const size = length * scale;
+            if (size < window2 + bleed * 2) {
+              const centred = (window2 - size) / 2 - start;
+              return { min: centred, max: centred };
+            }
+            return { min: window2 + bleed - size - start, max: -bleed - start };
+          };
+          return [axis(box.left, box.width, innerWidth), axis(box.top, box.height, innerHeight)];
         }
         clamped(view) {
-          const scale = Math.max(1, Math.min(MAX_SCALE, view.scale));
-          const bounds = this.bounds(scale);
+          const scale = Math.max(this.minScale(), Math.min(MAX_SCALE, view.scale));
+          const [rangeX, rangeY] = this.ranges(scale);
           return {
             scale,
-            x: Math.min(0, Math.max(bounds.minX, view.x)),
-            y: Math.min(0, Math.max(bounds.minY, view.y))
+            x: Math.min(rangeX.max, Math.max(rangeX.min, view.x)),
+            y: Math.min(rangeY.max, Math.max(rangeY.min, view.y))
           };
         }
         settleTo(target) {
@@ -3960,7 +4037,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const { scale, x, y } = this.view;
           if (media) media.style.transform = scale === 1 && x === 0 && y === 0 ? "" : `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
           this.surface.dataset.zoom = scale.toFixed(3);
-          document.body.classList.toggle("is-zoomed", this.zoomed || this.target !== null && this.target.scale > 1);
+          document.body.classList.toggle("is-zoomed", this.zoomed || this.target !== null && Math.abs(this.target.scale - 1) > 1e-3);
         }
       };
     }
@@ -3990,14 +4067,14 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     window.addEventListener("pointerdown", unmute, true);
     window.addEventListener("keydown", unmute, true);
   }
-  function safeTone(sample) {
+  function safely(sample2, fallback) {
     try {
-      return sample();
+      return sample2();
     } catch {
-      return "dark";
+      return fallback;
     }
   }
-  var WallpaperSurface, unmuteTarget, waitingForGesture, SCENE;
+  var SCENE_SIZE, BLEED, WallpaperSurface, unmuteTarget, waitingForGesture, SCENE;
   var init_wallpaper_surface = __esm({
     "src/components/wallpaper-surface.ts"() {
       "use strict";
@@ -4006,6 +4083,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_wallpaper_service();
       init_base();
       init_wallpaper_zoom();
+      SCENE_SIZE = { width: 1440, height: 900 };
+      BLEED = 10;
       WallpaperSurface = class extends StoreElement {
         observedChanges = ["settings.wallpaper"];
         objectUrl = "";
@@ -4019,9 +4098,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         zoom = new WallpaperZoom(this);
         /** Blur changes how far the media reaches past the window, so a zoomed view has to start over. */
         zoomLayout = "";
+        /** The picture's own size; the media layer keeps its proportions so nothing inside it is cropped. */
+        naturalSize = SCENE_SIZE;
         connectedCallback() {
           super.connectedCallback();
           this.zoom.connect();
+          window.addEventListener("resize", this.layoutMedia);
           document.addEventListener("visibilitychange", this.syncPlayback);
           void navigator.getBattery?.().then((battery) => {
             this.battery = battery;
@@ -4032,6 +4114,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         disconnectedCallback() {
           super.disconnectedCallback();
           this.zoom.disconnect();
+          window.removeEventListener("resize", this.layoutMedia);
           document.removeEventListener("visibilitychange", this.syncPlayback);
           this.battery?.removeEventListener?.("chargingchange", this.syncPlayback);
           this.releaseObjectUrl();
@@ -4052,6 +4135,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           }
           this.style.setProperty("--wallpaper-blur", `${wallpaper.blur}px`);
           this.style.setProperty("--wallpaper-overlay", String(wallpaper.overlay / 100));
+          this.layoutMedia();
           this.syncPlayback();
           const mediaKey = `${wallpaper.type}:${wallpaper.value}`;
           const zoomLayout = `${mediaKey}|${wallpaper.blur}`;
@@ -4062,6 +4146,31 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey || mediaKey === this.failedMediaKey) return;
           this.pendingMediaKey = mediaKey;
           void this.applyMedia(++this.renderToken, mediaKey);
+        }
+        /**
+         * Sizes the media layer to the picture's own proportions, just large enough
+         * to cover the window (and the blur margin), centred. What falls outside the
+         * window is cropped by the surface, not by the layer, so zooming out can
+         * bring it back.
+         */
+        layoutMedia = () => {
+          const media = this.querySelector(".wallpaper-media");
+          if (!media) return;
+          const bleed = appStore.state.settings.wallpaper.blur + BLEED;
+          const { width, height } = this.naturalSize;
+          const cover = Math.max((innerWidth + bleed * 2) / width, (innerHeight + bleed * 2) / height);
+          const w = width * cover;
+          const h = height * cover;
+          media.style.inset = `${(innerHeight - h) / 2}px auto auto ${(innerWidth - w) / 2}px`;
+          media.style.width = `${w}px`;
+          media.style.height = `${h}px`;
+          this.dataset.bleed = String(bleed);
+        };
+        setPicture(size, backdrop) {
+          if (size.width > 0 && size.height > 0) this.naturalSize = size;
+          this.style.setProperty("--wallpaper-backdrop", backdrop);
+          this.layoutMedia();
+          this.zoom.reset();
         }
         syncPlayback = () => {
           const { type, pauseOnBattery, pauseWhenHidden, sound } = appStore.state.settings.wallpaper;
@@ -4097,22 +4206,29 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               await candidateVideo.play();
               if (token !== this.renderToken) return;
               candidateVideo.style.removeProperty("visibility");
-              tone = Promise.resolve(safeTone(() => toneOf(candidateVideo)));
+              const video = candidateVideo;
+              tone = Promise.resolve(safely(() => toneOf(video), "dark"));
               this.commitMedia(host, candidateVideo, candidateUrl, "");
+              this.setPicture({ width: video.videoWidth, height: video.videoHeight }, safely(() => backdropOf(video), SCENE_BACKDROP));
               candidateUrl = "";
               candidateVideo = null;
             } else if (wallpaper.type === "local") {
               const blob = await mediaStore.get("image");
               if (!blob) throw new Error("\u627E\u4E0D\u5230\u5DF2\u4FDD\u5B58\u7684\u56FE\u7247\u80CC\u666F");
               candidateUrl = URL.createObjectURL(blob);
+              const image = new Image();
+              image.src = candidateUrl;
+              await image.decode();
               if (token !== this.renderToken) return;
-              tone = toneOfBlob(blob).catch(() => "dark");
+              tone = Promise.resolve(safely(() => toneOf(image), "dark"));
               this.commitMedia(host, null, candidateUrl, `url("${candidateUrl}")`);
+              this.setPicture({ width: image.naturalWidth, height: image.naturalHeight }, safely(() => backdropOf(image), SCENE_BACKDROP));
               candidateUrl = "";
             } else {
               if (token !== this.renderToken) return;
               this.commitMedia(host, null, "", "");
               host.innerHTML = SCENE;
+              this.setPicture(SCENE_SIZE, SCENE_BACKDROP);
             }
             this.appliedMediaKey = mediaKey;
             this.failedMediaKey = "";

@@ -87,23 +87,96 @@ async function storeWallpaper(blob: Blob, kind: MediaKind, source: 'local' | 'on
     await mediaStore.clear(kind === 'video' ? 'image' : 'video').catch(() => undefined);
 }
 
-export async function toneOfBlob(blob: Blob): Promise<ResolvedTheme> {
-    const bitmap = await createImageBitmap(blob, { resizeWidth: SAMPLE_SIZE, resizeHeight: SAMPLE_SIZE });
-    try {
-        return toneOf(bitmap);
-    } finally {
-        bitmap.close();
+/**
+ * A light, frosted backdrop for the space around a wallpaper shown whole:
+ * colours from a thin strip along each edge of the picture (so the subject's
+ * colours stay out), averaged per corner in OKLab and lifted to pale, muted
+ * tints, laid out as soft corner glows over a pale base.
+ */
+export function backdropOf(source: CanvasImageSource): string {
+    const data = sample(source);
+    if (!data) return DEFAULT_BACKDROP;
+    const ring = 4;
+    const corners = Array.from({ length: 4 }, () => ({ l: 0, a: 0, b: 0, n: 0 }));
+    const all = { l: 0, a: 0, b: 0, n: 0 };
+    for (let y = 0; y < SAMPLE_SIZE; y += 1) {
+        for (let x = 0; x < SAMPLE_SIZE; x += 1) {
+            if (x >= ring && x < SAMPLE_SIZE - ring && y >= ring && y < SAMPLE_SIZE - ring) continue;
+            const index = (y * SAMPLE_SIZE + x) * 4;
+            const [l, a, b] = oklab(data[index], data[index + 1], data[index + 2]);
+            const corner = corners[(y < SAMPLE_SIZE / 2 ? 0 : 2) + (x < SAMPLE_SIZE / 2 ? 0 : 1)];
+            for (const total of [corner, all]) {
+                total.l += l;
+                total.a += a;
+                total.b += b;
+                total.n += 1;
+            }
+        }
     }
+    const [topLeft, topRight, bottomLeft, bottomRight] = corners.map((corner) => paleTint(corner, 0.9, 0.06));
+    const base = paleTint(all, 0.955, 0.025);
+    return [
+        `radial-gradient(70% 70% at 0% 0%, ${topLeft}, transparent)`,
+        `radial-gradient(70% 70% at 100% 0%, ${topRight}, transparent)`,
+        `radial-gradient(70% 70% at 0% 100%, ${bottomLeft}, transparent)`,
+        `radial-gradient(70% 70% at 100% 100%, ${bottomRight}, transparent)`,
+        `linear-gradient(${base}, ${base})`
+    ].join(', ');
 }
 
-export function toneOf(source: CanvasImageSource): ResolvedTheme {
+/** Twilight Bay's own edges: a night-blue sky over violet water. */
+export const SCENE_BACKDROP = [
+    'radial-gradient(70% 70% at 0% 0%, oklch(0.9 0.045 275), transparent)',
+    'radial-gradient(70% 70% at 100% 0%, oklch(0.9 0.04 285), transparent)',
+    'radial-gradient(70% 70% at 0% 100%, oklch(0.9 0.05 320), transparent)',
+    'radial-gradient(70% 70% at 100% 100%, oklch(0.91 0.05 345), transparent)',
+    'linear-gradient(oklch(0.955 0.02 300), oklch(0.955 0.02 300))'
+].join(', ');
+
+const DEFAULT_BACKDROP = 'linear-gradient(oklch(0.955 0.01 260), oklch(0.955 0.01 260))';
+
+/** An average OKLab colour made pale: fixed high lightness, chroma capped, hue kept. */
+function paleTint(total: { l: number; a: number; b: number; n: number }, lightness: number, maxChroma: number): string {
+    if (!total.n) return `oklch(${lightness} 0 0)`;
+    const a = total.a / total.n;
+    const b = total.b / total.n;
+    const chroma = Math.min(maxChroma, Math.hypot(a, b) * 0.6);
+    const hue = (Math.atan2(b, a) * 180 / Math.PI + 360) % 360;
+    return `oklch(${lightness} ${chroma.toFixed(3)} ${hue.toFixed(1)})`;
+}
+
+/** sRGB bytes to OKLab (Björn Ottosson's definition). */
+function oklab(red: number, green: number, blue: number): [number, number, number] {
+    const linear = (value: number) => {
+        const channel = value / 255;
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    };
+    const r = linear(red);
+    const g = linear(green);
+    const b = linear(blue);
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return [
+        0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+        1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+        0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s
+    ];
+}
+
+function sample(source: CanvasImageSource): Uint8ClampedArray | null {
     const canvas = document.createElement('canvas');
     canvas.width = SAMPLE_SIZE;
     canvas.height = SAMPLE_SIZE;
     const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) return 'dark';
+    if (!context) return null;
     context.drawImage(source, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-    const { data } = context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+    return context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+}
+
+export function toneOf(source: CanvasImageSource): ResolvedTheme {
+    const data = sample(source);
+    if (!data) return 'dark';
     let total = 0;
     for (let index = 0; index < data.length; index += 4) {
         total += (0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2]) / 255;

@@ -557,20 +557,31 @@ glass-system {
 
 /* ---- Wallpaper ---------------------------------------------------------- */
 
+/* Behind the picture, seen only while it is zoomed out to show it whole: a pale
+   frosted wash in the picture's own edge colours (set by wallpaper-surface.ts),
+   with a white sheen and a fine grain so it reads as glass, not a flat fill. */
 wallpaper-surface {
+    --frost-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.05 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
     position: fixed;
     z-index: 0;
     inset: 0;
     display: block;
     overflow: hidden;
-    background: #141a33;
+    background-color: oklch(0.955 0.01 260);
+    background-image:
+        var(--frost-grain),
+        linear-gradient(160deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0.12)),
+        var(--wallpaper-backdrop, linear-gradient(oklch(0.955 0.01 260), oklch(0.955 0.01 260)));
 }
 
 .wallpaper-media {
+    /* wallpaper-surface.ts sizes this box to the picture's proportions; this inset is only the first-paint fallback. */
     position: absolute;
     inset: calc(-1 * var(--wallpaper-blur, 0px) - 10px);
     background-position: center;
     background-size: cover;
+    /* Off screen at rest; lifts the picture off the frosted backdrop once it is shown whole. */
+    box-shadow: 0 24px 70px rgba(30, 34, 60, 0.22), 0 4px 14px rgba(30, 34, 60, 0.12);
     filter: blur(var(--wallpaper-blur, 0px));
     /* Zoom transforms are computed from the top-left corner (see wallpaper-zoom.ts). */
     transform-origin: 0 0;
@@ -594,7 +605,12 @@ wallpaper-surface.is-zooming .wallpaper-media {
     position: absolute;
     inset: 0;
     background: rgba(8, 8, 24, var(--wallpaper-overlay, 0.12));
-    transition: background 300ms ease;
+    transition: background 300ms ease, opacity 240ms ease;
+}
+
+/* The dimming only helps the home screen's text; a zoomed picture is shown as it is. */
+body.is-zoomed .wallpaper-tint {
+    opacity: 0;
 }
 
 @keyframes scene-ken-burns { from { transform: scale(1) translate3d(0, 0, 0); } to { transform: scale(1.07) translate3d(-1.2%, -0.8%, 0); } }

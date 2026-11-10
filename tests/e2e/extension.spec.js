@@ -789,9 +789,11 @@ test('zooms the wallpaper like a photo instead of the page', async ({ page }) =>
     await expect(page.locator('.top-bar')).toHaveCSS('opacity', '0');
     const anchored = await page.locator('.wallpaper-media').evaluate((media) => {
         const matrix = new DOMMatrix(getComputedStyle(media).transform);
-        const origin = -(media.offsetWidth - innerWidth) / 2;
         // The picture point under the pointer before the pinch is still under it.
-        return { x: (900 - origin - matrix.m41) / matrix.a + origin, y: (450 - origin - matrix.m42) / matrix.a + origin };
+        return {
+            x: (900 - media.offsetLeft - matrix.m41) / matrix.a + media.offsetLeft,
+            y: (450 - media.offsetTop - matrix.m42) / matrix.a + media.offsetTop
+        };
     });
     expect(anchored.x).toBeCloseTo(900, -1);
     expect(anchored.y).toBeCloseTo(450, -1);
@@ -803,12 +805,25 @@ test('zooms the wallpaper like a photo instead of the page', async ({ page }) =>
     expect(stretched).toBeLessThan(6.8);
     await expect.poll(() => zoomOf(page)).toBe(5);
 
-    // Two-finger scrolling pans, and springs back inside the picture's edges.
+    // Two-finger scrolling pans, and springs back so the picture's left edge meets the window's (past the blur margin).
     await page.mouse.wheel(-4000, 0);
-    await expect.poll(() => page.locator('.wallpaper-media').evaluate((media) => new DOMMatrix(getComputedStyle(media).transform).m41)).toBe(0);
+    await expect.poll(() => page.locator('.wallpaper-media').evaluate((media) => Math.round(media.getBoundingClientRect().left))).toBe(-10);
 
-    // Pinching back out below fit springs to fit and brings the home screen back.
-    await pinch(page, 40, 12);
+    // Pinching out goes past the resting size to the whole picture, cropping nothing, on a pale backdrop.
+    await pinch(page, 60, 12);
+    await expect.poll(() => zoomOf(page)).toBeLessThan(1);
+    await expect.poll(async () => {
+        const rect = await page.locator('.wallpaper-media').evaluate((media) => media.getBoundingClientRect().toJSON());
+        return rect.left >= -1 && rect.top >= -1 && rect.right <= 1441 && rect.bottom <= 1001 && (Math.abs(rect.width - 1440) < 2 || Math.abs(rect.height - 1000) < 2);
+    }).toBe(true);
+    await expect(page.locator('body')).toHaveClass(/is-zoomed/);
+    await expect(page.locator('.wallpaper-tint')).toHaveCSS('opacity', '0');
+    expect(await page.locator('wallpaper-surface').evaluate((element) => element.style.getPropertyValue('--wallpaper-backdrop'))).toContain('oklch(0.9');
+
+    // Pinching back in to about the resting size snaps to it and brings the home screen back.
+    await page.keyboard.down('Control');
+    for (let step = 0; step < 200 && await zoomOf(page) < 0.98; step += 1) await page.mouse.wheel(0, -2);
+    await page.keyboard.up('Control');
     await expect.poll(() => zoomOf(page)).toBe(1);
     await expect(page.locator('body')).not.toHaveClass(/is-zoomed/);
     await expect(page.locator('.top-bar')).toHaveCSS('opacity', '1');
