@@ -1,13 +1,16 @@
-import { dataUrlToBlob, isRecord, sanitizeImportedData } from './backup';
+import { isRecord, sanitizeImportedData } from './backup';
 import { mediaStore } from './media-store';
 import { appStore } from './store';
 import type { BackupData } from './types';
+
+/** The one backup format: the store's state, flat, plus local media as data URLs. */
+const BACKUP_VERSION = '2.0';
 
 export class BackupService {
     /** Backups keep the flat 2.0 layout even though sync storage now chunks bookmarks. */
     async exportData(): Promise<BackupData> {
         return {
-            version: '2.0',
+            version: BACKUP_VERSION,
             exportDate: new Date().toISOString(),
             data: structuredClone(appStore.state) as unknown as Record<string, unknown>,
             localMedia: await mediaStore.export()
@@ -16,22 +19,13 @@ export class BackupService {
 
     /** Media is replaced first; if saving the synced data then fails, the previous media comes back. */
     async importData(value: unknown): Promise<void> {
-        if (!isRecord(value) || !value.version || !isRecord(value.data)) {
-            throw new Error('备份文件格式无效');
-        }
+        if (!isRecord(value) || !isRecord(value.data)) throw new Error('备份文件格式无效');
+        if (value.version !== BACKUP_VERSION) throw new Error(`只支持 ${BACKUP_VERSION} 格式的备份（这个文件是 ${String(value.version ?? '未知')}）`);
         const data = sanitizeImportedData(value.data);
         // Without IndexedDB there is no media to protect; a backup without media still imports.
         const previous = await mediaStore.snapshot().catch(() => null);
         try {
             if (Object.hasOwn(value, 'localMedia')) await mediaStore.import(value.localMedia);
-            // 1.0 backups carried a local picture inline in the settings.
-            const { wallpaper } = data.settings;
-            if (wallpaper.type === 'local' && wallpaper.value.startsWith('data:image/')) {
-                const image = dataUrlToBlob(wallpaper.value);
-                if (!image) throw new Error('旧备份中的本地壁纸无效');
-                await mediaStore.set('image', image);
-                wallpaper.value = 'local';
-            }
             await appStore.replaceImportedData(data);
         } catch (error) {
             if (previous) await mediaStore.restore(previous).catch(() => undefined);

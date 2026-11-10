@@ -119,6 +119,11 @@ export function truncate(value: unknown, maxLength: number): string {
     return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
 }
 
+/**
+ * Icon addresses that point at a favicon service (Google's, or Chrome's own)
+ * are served from Chrome's local favicon cache instead, so showing a bookmark
+ * never sends its address to a third party.
+ */
 export function isManagedFavicon(value: unknown): boolean {
     const icon = String(value ?? '');
     return /^https:\/\/www\.google\.com\/s2\/favicons/i.test(icon)

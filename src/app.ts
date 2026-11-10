@@ -2,7 +2,7 @@ import { appStore } from './core/store';
 import { installChromeFallback } from './core/chrome-fallback';
 import type { ResolvedTheme } from './core/types';
 import { escapeHtml } from './core/utils';
-import { migrateLegacyWallpaper, useOnlineWallpaper } from './core/wallpaper-service';
+import { useOnlineWallpaper } from './core/wallpaper-service';
 import { BackupToast } from './components/backup-toast';
 import { BookmarkDialog } from './components/bookmark-dialog';
 import { BookmarkIndex } from './components/bookmark-index';
@@ -54,7 +54,6 @@ class InfinityNewTabApp extends HTMLElement {
                 window.addEventListener(type, this.wake, { passive: true, capture: true });
             });
             this.wake();
-            void migrateLegacyWallpaper();
         } catch (error) {
             this.innerHTML = `<div class="app-error"><h1>新标签页加载失败</h1><p>${escapeHtml(error instanceof Error ? error.message : '未知错误')}</p></div>`;
         }

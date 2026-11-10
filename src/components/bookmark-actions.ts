@@ -9,7 +9,7 @@ export { ROOT_FOLDER };
 /** What the bookmark dialog opens with: a bookmark to edit, or a folder and draft to add to. */
 export type BookmarkDialogDetail = { bookmark?: Bookmark; folder?: string; draft?: { url: string; name: string } };
 
-/** Bookmarks outside any folder are stored under “全部” for old backups but shown as their own group. */
+/** Bookmarks outside any folder are stored under the folder name “全部” and shown as their own group, “书签”. */
 export function folderLabel(folder: string): string {
     return folder === ROOT_FOLDER ? '书签' : folder;
 }

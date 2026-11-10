@@ -261,7 +261,7 @@
         clockFormat: appearance.clockFormat === "12h" ? "12h" : "24h",
         dateFormat: appearance.dateFormat === "short" ? "short" : "long",
         hdrHighlights: booleanOr(appearance.hdrHighlights, defaults.appearance.hdrHighlights),
-        theme: sanitizeTheme(appearance.theme, layout),
+        theme: appearance.theme === "light" || appearance.theme === "dark" ? appearance.theme : "auto",
         glass: appearance.glass === "tinted" ? "tinted" : "clear",
         reduceTransparency: booleanOr(appearance.reduceTransparency, defaults.appearance.reduceTransparency)
       }
@@ -281,19 +281,12 @@
       return null;
     }
   }
-  function sanitizeTheme(theme, layout) {
-    if (theme === "dark") return "dark";
-    if (theme === "light") return typeof layout.openInNewTab === "boolean" ? "light" : "auto";
-    return "auto";
-  }
   function sanitizeBookmarkIcon(value) {
     const icon2 = sanitizeRemoteUrl(value, true);
     return icon2.startsWith("data:") && icon2.length > MAX_INLINE_ICON_LENGTH ? "" : icon2;
   }
   function sanitizeWallpaperValue(value) {
-    if (typeof value !== "string") return "";
-    if (/^(local|online)(-\d+)?$/.test(value) || value.startsWith("data:image/")) return value;
-    return "";
+    return typeof value === "string" && /^(local|online)-\d+$/.test(value) ? value : "";
   }
   function booleanOr(value, fallback) {
     return typeof value === "boolean" ? value : fallback;
@@ -377,27 +370,21 @@
     return { values, count: chunks.length };
   }
   function decodeBookmarks(stored) {
-    const count = stored[BOOKMARK_CHUNKS_KEY];
-    if (typeof count === "number" && Number.isInteger(count) && count >= 0) {
-      return Array.from({ length: count }, (_, index) => stored[bookmarkChunkKey(index)]).flatMap((chunk) => Array.isArray(chunk) ? chunk : []);
-    }
-    const legacy = stored[LEGACY_BOOKMARKS_KEY];
-    return Array.isArray(legacy) ? legacy : [];
+    return Array.from({ length: storedChunkCount(stored) }, (_, index) => stored[bookmarkChunkKey(index)]).flatMap((chunk) => Array.isArray(chunk) ? chunk : []);
   }
   function storedChunkCount(stored) {
     const count = stored[BOOKMARK_CHUNKS_KEY];
     return typeof count === "number" && Number.isInteger(count) && count >= 0 ? count : 0;
   }
-  function staleBookmarkKeys(previousCount, nextCount, hasLegacy) {
-    const keys = hasLegacy ? [LEGACY_BOOKMARKS_KEY] : [];
+  function staleBookmarkKeys(previousCount, nextCount) {
+    const keys = [];
     for (let index = nextCount; index < previousCount; index += 1) keys.push(bookmarkChunkKey(index));
     return keys;
   }
-  var LEGACY_BOOKMARKS_KEY, BOOKMARK_CHUNKS_KEY, CHUNK_PREFIX, ITEM_BUDGET;
+  var BOOKMARK_CHUNKS_KEY, CHUNK_PREFIX, ITEM_BUDGET;
   var init_bookmark_storage = __esm({
     "src/core/bookmark-storage.ts"() {
       "use strict";
-      LEGACY_BOOKMARKS_KEY = "bookmarks";
       BOOKMARK_CHUNKS_KEY = "bookmarkChunks";
       CHUNK_PREFIX = "bookmarks.";
       ITEM_BUDGET = 7600;
@@ -500,7 +487,7 @@
       bookmark.order = index;
     });
   }
-  var ALL_CHANGES, RETIRED_KEYS, AppStore, appStore;
+  var ALL_CHANGES, AppStore, appStore;
   var init_store = __esm({
     "src/core/store.ts"() {
       "use strict";
@@ -517,12 +504,10 @@
         "settings.wallpaper",
         "settings.layout"
       ];
-      RETIRED_KEYS = ["todos"];
       AppStore = class extends EventTarget {
         stateValue = initialState();
         initialized = null;
         bookmarkChunks = 0;
-        hasLegacyBookmarks = false;
         queue = Promise.resolve();
         reloadQueued = false;
         get state() {
@@ -651,13 +636,9 @@
               recentSearches: next.recentSearches,
               lastBackupPrompt: next.lastBackupPrompt
             });
-            const staleKeys = [
-              ...RETIRED_KEYS,
-              ...staleBookmarkKeys(this.bookmarkChunks, encoded.count, this.hasLegacyBookmarks)
-            ];
-            await storageRemove(staleKeys);
+            const staleKeys = staleBookmarkKeys(this.bookmarkChunks, encoded.count);
+            if (staleKeys.length) await storageRemove(staleKeys);
             this.bookmarkChunks = encoded.count;
-            this.hasLegacyBookmarks = false;
             this.stateValue = structuredClone(next);
             this.emit(ALL_CHANGES);
           });
@@ -666,7 +647,6 @@
           return this.serial(async () => {
             await storageClear();
             this.bookmarkChunks = 0;
-            this.hasLegacyBookmarks = false;
             this.stateValue = initialState();
             this.emit(ALL_CHANGES);
           });
@@ -680,7 +660,6 @@
         async read() {
           const stored = await storageGet(null);
           this.bookmarkChunks = storedChunkCount(stored);
-          this.hasLegacyBookmarks = LEGACY_BOOKMARKS_KEY in stored;
           const bookmarks = sanitizeBookmarks(decodeBookmarks(stored));
           return {
             bookmarks,
@@ -727,12 +706,11 @@
         }
         /** Stale chunks are harmless to readers, so a failed cleanup never rolls back a save. */
         async dropStaleBookmarkKeys(nextCount) {
-          const stale = staleBookmarkKeys(this.bookmarkChunks, nextCount, this.hasLegacyBookmarks);
+          const stale = staleBookmarkKeys(this.bookmarkChunks, nextCount);
           this.bookmarkChunks = nextCount;
           if (!stale.length) return;
           try {
             await storageRemove(stale);
-            this.hasLegacyBookmarks = false;
           } catch {
           }
         }
@@ -919,15 +897,6 @@
     await validateLocalMedia(blob, "image");
     await storeWallpaper(blob, "image", "online");
   }
-  async function migrateLegacyWallpaper() {
-    const { settings } = await storageGet(["settings"]).catch(() => ({ settings: null }));
-    const wallpaper = isRecord(settings) && isRecord(settings.wallpaper) ? settings.wallpaper : null;
-    if (wallpaper?.type !== "preset" || typeof wallpaper.value !== "string" || !wallpaper.value.startsWith(ONLINE_WALLPAPER)) return;
-    try {
-      await useOnlineWallpaper();
-    } catch {
-    }
-  }
   function mediaKindOf(file) {
     if (file.type.startsWith("video/") || !file.type && VIDEO_EXTENSIONS.test(file.name)) return "video";
     if (file.type.startsWith("image/") || !file.type && (IMAGE_EXTENSIONS.test(file.name) || HEIC_EXTENSIONS.test(file.name))) return "image";
@@ -1050,7 +1019,6 @@
       "use strict";
       init_backup();
       init_media_store();
-      init_storage();
       init_store();
       ONLINE_WALLPAPER = "https://www.dmoe.cc/random.php";
       SAMPLE_SIZE = 32;
@@ -1066,18 +1034,19 @@
   function dateStamp() {
     return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   }
-  var BackupService, backupService;
+  var BACKUP_VERSION, BackupService, backupService;
   var init_backup_service = __esm({
     "src/core/backup-service.ts"() {
       "use strict";
       init_backup();
       init_media_store();
       init_store();
+      BACKUP_VERSION = "2.0";
       BackupService = class {
         /** Backups keep the flat 2.0 layout even though sync storage now chunks bookmarks. */
         async exportData() {
           return {
-            version: "2.0",
+            version: BACKUP_VERSION,
             exportDate: (/* @__PURE__ */ new Date()).toISOString(),
             data: structuredClone(appStore.state),
             localMedia: await mediaStore.export()
@@ -1085,20 +1054,12 @@
         }
         /** Media is replaced first; if saving the synced data then fails, the previous media comes back. */
         async importData(value) {
-          if (!isRecord(value) || !value.version || !isRecord(value.data)) {
-            throw new Error("\u5907\u4EFD\u6587\u4EF6\u683C\u5F0F\u65E0\u6548");
-          }
+          if (!isRecord(value) || !isRecord(value.data)) throw new Error("\u5907\u4EFD\u6587\u4EF6\u683C\u5F0F\u65E0\u6548");
+          if (value.version !== BACKUP_VERSION) throw new Error(`\u53EA\u652F\u6301 ${BACKUP_VERSION} \u683C\u5F0F\u7684\u5907\u4EFD\uFF08\u8FD9\u4E2A\u6587\u4EF6\u662F ${String(value.version ?? "\u672A\u77E5")}\uFF09`);
           const data = sanitizeImportedData(value.data);
           const previous = await mediaStore.snapshot().catch(() => null);
           try {
             if (Object.hasOwn(value, "localMedia")) await mediaStore.import(value.localMedia);
-            const { wallpaper } = data.settings;
-            if (wallpaper.type === "local" && wallpaper.value.startsWith("data:image/")) {
-              const image = dataUrlToBlob(wallpaper.value);
-              if (!image) throw new Error("\u65E7\u5907\u4EFD\u4E2D\u7684\u672C\u5730\u58C1\u7EB8\u65E0\u6548");
-              await mediaStore.set("image", image);
-              wallpaper.value = "local";
-            }
             await appStore.replaceImportedData(data);
           } catch (error) {
             if (previous) await mediaStore.restore(previous).catch(() => void 0);
@@ -3104,7 +3065,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             <section class="glass-panel settings-window" role="dialog" aria-modal="true" aria-label="\u8BBE\u7F6E" aria-hidden="true" inert>
                 <aside class="settings-sidebar">
                     <div class="settings-title">
-                        <button class="settings-close" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E" title="\u5173\u95ED">${ICONS.close}</button>
+                        <button class="settings-close" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E" aria-keyshortcuts="Escape" title="\u5173\u95ED\uFF08Esc\uFF09">${ICONS.close}</button>
                     </div>
                     <label class="settings-search">
                         ${ICONS.search}
@@ -3201,7 +3162,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             `)}
             ${group("\u5907\u4EFD", `
                 ${infoRow("\u5BFC\u51FA\u5907\u4EFD", "\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\uFF0C\u4E00\u4E2A JSON \u6587\u4EF6", '<button class="pill-button export-data" type="button">\u5BFC\u51FA\u2026</button>')}
-                ${infoRow("\u4ECE\u5907\u4EFD\u6062\u590D", "\u652F\u6301 1.0 / 2.0 \u5907\u4EFD\uFF0C\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E", '<label class="pill-button import-data">\u5BFC\u5165\u2026<input type="file" accept="application/json,.json" hidden></label>')}
+                ${infoRow("\u4ECE\u5907\u4EFD\u6062\u590D", "\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E\uFF0C\u5EFA\u8BAE\u5148\u5BFC\u51FA\u4E00\u4EFD", '<label class="pill-button import-data">\u5BFC\u5165\u2026<input type="file" accept="application/json,.json" hidden></label>')}
                 ${toggleRow("backupReminder", "\u6BCF\u6708\u63D0\u9192\u6211\u5907\u4EFD")}
             `)}
             ${group("", `
@@ -4074,7 +4035,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               window.addEventListener(type, this.wake, { passive: true, capture: true });
             });
             this.wake();
-            void migrateLegacyWallpaper();
           } catch (error) {
             this.innerHTML = `<div class="app-error"><h1>\u65B0\u6807\u7B7E\u9875\u52A0\u8F7D\u5931\u8D25</h1><p>${escapeHtml(error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF")}</p></div>`;
           }
