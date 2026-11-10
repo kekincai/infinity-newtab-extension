@@ -3,7 +3,7 @@ import { appStore } from '../core/store';
 import type { ResolvedTheme } from '../core/types';
 import { SCENE_BACKDROP, backdropOf, toneOf } from '../core/wallpaper-service';
 import { StoreElement } from './base';
-import { WallpaperZoom } from './wallpaper-zoom';
+import { WallpaperFramer, sameFraming } from './wallpaper-framing';
 
 export type WallpaperState = { animated: boolean; paused: boolean };
 
@@ -14,6 +14,8 @@ type Size = { width: number; height: number };
 const SCENE_SIZE: Size = { width: 1440, height: 900 };
 /** Extra margin past the window on every side, on top of the blur radius, so a blurred edge never shows. */
 const BLEED = 10;
+/** Once the picture covers less of the window than this, most text sits on the pale backdrop. */
+const LIGHT_BACKDROP_BELOW = 0.75;
 
 /**
  * Full-bleed wallpaper: the built-in Twilight Bay scene, a cached image or a
@@ -29,16 +31,27 @@ export class WallpaperSurface extends StoreElement {
     private failedMediaKey = '';
     private userPaused = false;
     private battery: BatteryManager | null = null;
-    private readonly zoom = new WallpaperZoom(this);
-    /** Blur changes how far the media reaches past the window, so a zoomed view has to start over. */
-    private zoomLayout = '';
+    private readonly framer = new WallpaperFramer(this, {
+        save: (framing) => {
+            if (sameFraming(framing, appStore.state.settings.wallpaper.framing)) return;
+            void appStore.updateSettings('wallpaper', { framing }).catch(() => undefined);
+        },
+        coverage: (share) => {
+            this.coverage = share;
+            this.reportTone();
+        }
+    });
+    /** The window size, picture size and blur the media layer was last laid out for. */
+    private layoutKey = '';
+    private pictureTone: ResolvedTheme | null = null;
+    private coverage = 1;
     /** The picture's own size; the media layer keeps its proportions so nothing inside it is cropped. */
     private naturalSize: Size = SCENE_SIZE;
 
     connectedCallback(): void {
         super.connectedCallback();
-        this.zoom.connect();
-        window.addEventListener('resize', this.layoutMedia);
+        this.framer.connect();
+        window.addEventListener('resize', this.onResize);
         document.addEventListener('visibilitychange', this.syncPlayback);
         void navigator.getBattery?.().then((battery) => {
             this.battery = battery as unknown as BatteryManager;
@@ -49,8 +62,8 @@ export class WallpaperSurface extends StoreElement {
 
     disconnectedCallback(): void {
         super.disconnectedCallback();
-        this.zoom.disconnect();
-        window.removeEventListener('resize', this.layoutMedia);
+        this.framer.disconnect();
+        window.removeEventListener('resize', this.onResize);
         document.removeEventListener('visibilitychange', this.syncPlayback);
         this.battery?.removeEventListener?.('chargingchange', this.syncPlayback);
         this.releaseObjectUrl();
@@ -70,18 +83,16 @@ export class WallpaperSurface extends StoreElement {
     protected render(): void {
         const wallpaper = appStore.state.settings.wallpaper;
         if (!this.querySelector('.wallpaper-media')) {
-            this.innerHTML = '<div class="wallpaper-media"></div><div class="wallpaper-tint"></div>';
+            this.innerHTML = '<div class="wallpaper-media"></div>';
         }
         this.style.setProperty('--wallpaper-blur', `${wallpaper.blur}px`);
         this.style.setProperty('--wallpaper-overlay', String(wallpaper.overlay / 100));
-        this.layoutMedia();
+        // A framing saved by another tab, or a changed blur margin, is shown unless a gesture is under way here.
+        if (this.layoutMedia() || (!this.framer.busy && !sameFraming(this.framer.framing, wallpaper.framing))) {
+            this.framer.show(wallpaper.framing);
+        }
         this.syncPlayback();
         const mediaKey = `${wallpaper.type}:${wallpaper.value}`;
-        const zoomLayout = `${mediaKey}|${wallpaper.blur}`;
-        if (zoomLayout !== this.zoomLayout) {
-            this.zoomLayout = zoomLayout;
-            this.zoom.reset();
-        }
         if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey || mediaKey === this.failedMediaKey) return;
         this.pendingMediaKey = mediaKey;
         void this.applyMedia(++this.renderToken, mediaKey);
@@ -93,11 +104,14 @@ export class WallpaperSurface extends StoreElement {
      * window is cropped by the surface, not by the layer, so zooming out can
      * bring it back.
      */
-    private readonly layoutMedia = (): void => {
+    private layoutMedia(): boolean {
         const media = this.querySelector<HTMLElement>('.wallpaper-media');
-        if (!media) return;
+        if (!media) return false;
         const bleed = appStore.state.settings.wallpaper.blur + BLEED;
         const { width, height } = this.naturalSize;
+        const key = `${innerWidth}x${innerHeight}|${width}x${height}|${bleed}`;
+        if (key === this.layoutKey) return false;
+        this.layoutKey = key;
         const cover = Math.max((innerWidth + bleed * 2) / width, (innerHeight + bleed * 2) / height);
         const w = width * cover;
         const h = height * cover;
@@ -105,13 +119,20 @@ export class WallpaperSurface extends StoreElement {
         media.style.width = `${w}px`;
         media.style.height = `${h}px`;
         this.dataset.bleed = String(bleed);
+        return true;
+    }
+
+    /** The saved framing is window-independent, so a resized window shows the same part of the picture. */
+    private readonly onResize = (): void => {
+        this.layoutMedia();
+        this.framer.show(appStore.state.settings.wallpaper.framing);
     };
 
     private setPicture(size: Size, backdrop: string): void {
         if (size.width > 0 && size.height > 0) this.naturalSize = size;
         this.style.setProperty('--wallpaper-backdrop', backdrop);
         this.layoutMedia();
-        this.zoom.reset();
+        this.framer.show(appStore.state.settings.wallpaper.framing);
     }
 
     private readonly syncPlayback = (): void => {
@@ -180,7 +201,10 @@ export class WallpaperSurface extends StoreElement {
             this.syncPlayback();
             this.reportState();
             const resolved = await tone;
-            if (token === this.renderToken) this.reportTone(resolved);
+            if (token === this.renderToken) {
+                this.pictureTone = resolved;
+                this.reportTone();
+            }
         } catch (error) {
             if (token === this.renderToken) {
                 this.failedMediaKey = mediaKey;
@@ -206,7 +230,13 @@ export class WallpaperSurface extends StoreElement {
         this.dispatchEvent(new CustomEvent<WallpaperState>('wallpaper-state', { bubbles: true, composed: true, detail: this.state }));
     }
 
-    private reportTone(tone: ResolvedTheme): void {
+    /**
+     * The text colour “自动” picks: the picture's own brightness, unless it has
+     * been shrunk so far that the text mostly sits on the pale frosted backdrop.
+     */
+    private reportTone(): void {
+        if (!this.pictureTone) return;
+        const tone = this.coverage < LIGHT_BACKDROP_BELOW ? 'light' : this.pictureTone;
         this.dispatchEvent(new CustomEvent('wallpaper-tone', { bubbles: true, composed: true, detail: { tone } }));
     }
 

@@ -3,6 +3,7 @@ import type {
     AppState,
     Bookmark,
     LayoutSettings,
+    WallpaperFraming,
     WallpaperSettings
 } from './types';
 import { ROOT_FOLDER, cleanText, compareBookmarks, normalizeUrl, sanitizeRemoteUrl } from './utils';
@@ -24,6 +25,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
         value: '',
         blur: 0,
         overlay: 12,
+        framing: { scale: 1, x: 0.5, y: 0.5 },
         idleHide: true,
         pauseOnBattery: true,
         pauseWhenHidden: true,
@@ -141,6 +143,7 @@ export function sanitizeSettings(value: unknown): AppSettings {
             value: wallpaperType === 'gradient' ? '' : sanitizeWallpaperValue(wallpaper.value),
             blur: clampNumber(wallpaper.blur, 0, 40, defaults.wallpaper.blur),
             overlay: clampNumber(wallpaper.overlay, 0, 60, defaults.wallpaper.overlay),
+            framing: sanitizeFraming(wallpaper.framing),
             idleHide: booleanOr(wallpaper.idleHide, defaults.wallpaper.idleHide),
             pauseOnBattery: booleanOr(wallpaper.pauseOnBattery, defaults.wallpaper.pauseOnBattery),
             pauseWhenHidden: booleanOr(wallpaper.pauseWhenHidden, defaults.wallpaper.pauseWhenHidden),
@@ -183,6 +186,17 @@ export function sanitizeBookmarkIcon(value: unknown): string {
 /** `local-<time>` / `online-<time>` name the cached media, so a new picture always reloads. */
 function sanitizeWallpaperValue(value: unknown): string {
     return typeof value === 'string' && /^(local|online)-\d+$/.test(value) ? value : '';
+}
+
+/** The scale's real lower limit depends on the picture's shape, so only a loose floor is applied here. */
+function sanitizeFraming(value: unknown): WallpaperFraming {
+    const source = isRecord(value) ? value : {};
+    const fallback = DEFAULT_SETTINGS.wallpaper.framing;
+    return {
+        scale: clampNumber(source.scale, 0.1, 5, fallback.scale),
+        x: clampNumber(source.x, 0, 1, fallback.x),
+        y: clampNumber(source.y, 0, 1, fallback.y)
+    };
 }
 
 function booleanOr(value: unknown, fallback: boolean): boolean {

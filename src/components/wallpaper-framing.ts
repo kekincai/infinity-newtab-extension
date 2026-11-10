@@ -1,15 +1,15 @@
+import type { WallpaperFraming } from '../core/types';
 import { hasOpenLayer } from './ui-layer';
 
 const MAX_SCALE = 5;
-/** Released this close to the resting size (filling the window) or to the whole picture, it settles there. */
+/** Released this close to just filling the window, or to the whole picture, the framing settles there. */
 const SNAP = 0.05;
-const DOUBLE_CLICK_SCALE = 2.5;
 /** Chrome turns a trackpad pinch into ctrl+wheel with deltaY ≈ −100 × ln(scale change). */
 const PINCH_UNITS = 100;
 /** A mouse wheel with ctrl jumps 100 units a notch; capped so one notch is a gentle step. */
 const MAX_PINCH_STEP = 30;
-/** No pinch or scroll for this long ends the gesture and the picture settles. */
-const GESTURE_END_MS = 120;
+/** No pinch or scroll for this long ends the gesture; the framing then settles and is saved. */
+const GESTURE_END_MS = 140;
 /** How far past the limits a pinch can stretch, as log-scale headroom: 35% over the top, 25% under the whole picture. */
 const STRETCH_OVER = Math.log(1.35);
 const STRETCH_UNDER = Math.log(1 / 0.75);
@@ -17,19 +17,29 @@ const STRETCH_UNDER = Math.log(1 / 0.75);
 const STIFFNESS = 260;
 const DAMPING = 30;
 
+export const DEFAULT_FRAMING: WallpaperFraming = { scale: 1, x: 0.5, y: 0.5 };
+
 type View = { scale: number; x: number; y: number };
 type Box = { left: number; top: number; width: number; height: number };
+type Range = { min: number; max: number };
+
+export type FramingCallbacks = {
+    /** A gesture or a double-click has settled on a new framing. */
+    save: (framing: WallpaperFraming) => void;
+    /** Share of the window the picture covers (1 when it fills it), after every settled change. */
+    coverage: (share: number) => void;
+};
 
 /**
- * Zooms the wallpaper the way Photos does. At rest (scale 1) the picture fills
- * the window and its overflow is cropped; pinching out shrinks it down to the
- * whole picture, pinching in enlarges it up to 5×, always around the fingers.
- * Two-finger scrolling pans, pushing past the edges or the limits meets growing
- * resistance, and on release everything springs back into range. The home
- * screen steps aside while the view is off its resting size; double-click
- * toggles zoom, and Esc, typing or a resize restores it.
+ * Lets the wallpaper be reframed in place, with the home screen untouched: a
+ * trackpad pinch scales it around the fingers, from the whole picture (nothing
+ * cropped, on a frosted backdrop) up to 5×, and two-finger scrolling over an
+ * empty part of the screen moves it. Going past the edges or the limits meets
+ * growing resistance, and on release a spring settles it back into range.
+ * The settled framing is saved with the wallpaper settings in window-independent
+ * terms; double-clicking an empty part of the screen returns to the default.
  */
-export class WallpaperZoom {
+export class WallpaperFramer {
     private view: View = { scale: 1, x: 0, y: 0 };
     /** The scale the fingers ask for; the view shows it stretched by `rubberBand` past the limits. */
     private requestedScale = 1;
@@ -39,49 +49,49 @@ export class WallpaperZoom {
     private gestureTimer = 0;
     private frame = 0;
     private lastTime = 0;
+    private interacting = false;
     private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-    constructor(private readonly surface: HTMLElement) {}
+    constructor(private readonly surface: HTMLElement, private readonly callbacks: FramingCallbacks) {}
 
     connect(): void {
         window.addEventListener('wheel', this.onWheel, { passive: false, capture: true });
         document.addEventListener('dblclick', this.onDoubleClick);
-        document.addEventListener('keydown', this.onKeyDown);
-        document.addEventListener('focusin', this.onFocusIn);
-        window.addEventListener('resize', this.reset);
     }
 
     disconnect(): void {
         window.removeEventListener('wheel', this.onWheel, true);
         document.removeEventListener('dblclick', this.onDoubleClick);
-        document.removeEventListener('keydown', this.onKeyDown);
-        document.removeEventListener('focusin', this.onFocusIn);
-        window.removeEventListener('resize', this.reset);
-        window.clearTimeout(this.gestureTimer);
-        cancelAnimationFrame(this.frame);
+        this.stop();
     }
 
-    /** Off the resting size, zoomed in or out. */
-    get zoomed(): boolean {
-        return Math.abs(this.view.scale - 1) > 0.001;
+    /** True from the first pinch or scroll until the spring has settled. */
+    get busy(): boolean {
+        return this.interacting || this.target !== null;
     }
 
-    /** Back to fit at once, e.g. when the wallpaper itself changes. */
-    readonly reset = (): void => {
-        window.clearTimeout(this.gestureTimer);
-        cancelAnimationFrame(this.frame);
-        this.frame = 0;
-        this.target = null;
-        this.velocity = { scale: 0, x: 0, y: 0 };
-        this.view = { scale: 1, x: 0, y: 0 };
+    /** The current framing in window-independent terms. */
+    get framing(): WallpaperFraming {
+        const box = this.box();
+        return {
+            scale: round(this.view.scale),
+            x: round(clamp((innerWidth / 2 - box.left - this.view.x) / (this.view.scale * box.width), 0, 1)),
+            y: round(clamp((innerHeight / 2 - box.top - this.view.y) / (this.view.scale * box.height), 0, 1))
+        };
+    }
+
+    /** Shows a saved framing at once, fitted to the current window and picture. */
+    show(framing: WallpaperFraming): void {
+        this.stop();
+        const box = this.box();
+        const scale = clamp(framing.scale, this.minScale(), MAX_SCALE);
+        this.view = this.clamped({
+            scale,
+            x: innerWidth / 2 - box.left - framing.x * scale * box.width,
+            y: innerHeight / 2 - box.top - framing.y * scale * box.height
+        });
         this.apply();
-        this.surface.classList.remove('is-zooming');
-    };
-
-    /** Animated back to fit. */
-    restore(): void {
-        if (!this.zoomed && !this.frame) return;
-        this.settleTo({ scale: 1, x: 0, y: 0 });
+        this.callbacks.coverage(this.coverage());
     }
 
     private get media(): HTMLElement | null {
@@ -91,13 +101,13 @@ export class WallpaperZoom {
     private readonly onWheel = (event: WheelEvent): void => {
         if (hasOpenLayer()) return;
         const pinch = event.ctrlKey;
-        if (!pinch && !this.zoomed) return; // Ordinary scrolling of the home screen.
+        // Scrolling over bookmarks, search results and other controls keeps its usual meaning.
+        if (!pinch && (isControl(event.target) || !this.canPan())) return;
         event.preventDefault();
         event.stopPropagation();
-        if (pinch && isTypingTarget(document.activeElement)) (document.activeElement as HTMLElement).blur();
         this.beginGesture();
         if (pinch) {
-            const step = Math.max(-MAX_PINCH_STEP, Math.min(MAX_PINCH_STEP, event.deltaY));
+            const step = clamp(event.deltaY, -MAX_PINCH_STEP, MAX_PINCH_STEP);
             this.focus = { x: event.clientX, y: event.clientY };
             this.requestedScale *= Math.exp(-step / PINCH_UNITS);
             this.view = this.zoomedAbout(this.view, rubberBand(this.requestedScale, this.minScale()), this.focus);
@@ -108,26 +118,19 @@ export class WallpaperZoom {
         this.gestureTimer = window.setTimeout(this.endGesture, GESTURE_END_MS);
     };
 
+    /** Double-clicking an empty part of the screen returns to the default framing. */
     private readonly onDoubleClick = (event: MouseEvent): void => {
         if (hasOpenLayer() || isControl(event.target)) return;
-        if (this.zoomed) {
-            this.restore();
-            return;
-        }
-        this.focus = { x: event.clientX, y: event.clientY };
-        this.settleTo(this.clamped(this.zoomedAbout(this.view, DOUBLE_CLICK_SCALE, this.focus)));
+        if (isDefault(this.framing)) return;
+        this.settleTo({ scale: 1, x: 0, y: 0 });
     };
 
-    private readonly onKeyDown = (event: KeyboardEvent): void => {
-        if (event.key !== 'Escape' || !this.zoomed || hasOpenLayer()) return;
-        event.preventDefault();
-        this.restore();
-    };
-
-    /** Anything taking focus (⌘K, /, Tab) needs the home screen back. */
-    private readonly onFocusIn = (): void => {
-        if (this.zoomed) this.restore();
-    };
+    /** Movement is possible on an axis where the picture is larger than the window, or while it is out of range. */
+    private canPan(): boolean {
+        const [rangeX, rangeY] = this.ranges(this.view.scale);
+        const outside = (value: number, range: Range) => value < range.min - 0.5 || value > range.max + 0.5;
+        return rangeX.max - rangeX.min > 1 || rangeY.max - rangeY.min > 1 || outside(this.view.x, rangeX) || outside(this.view.y, rangeY);
+    }
 
     private beginGesture(): void {
         window.clearTimeout(this.gestureTimer);
@@ -136,17 +139,28 @@ export class WallpaperZoom {
         this.target = null;
         this.velocity = { scale: 0, x: 0, y: 0 };
         this.requestedScale = unstretch(this.view.scale, this.minScale());
-        this.surface.classList.add('is-zooming');
+        this.interacting = true;
+        this.surface.classList.add('is-framing');
     }
 
     private readonly endGesture = (): void => {
+        this.interacting = false;
         const minimum = this.minScale();
-        let scale = Math.max(minimum, Math.min(MAX_SCALE, this.view.scale));
+        let scale = clamp(this.view.scale, minimum, MAX_SCALE);
         if (Math.abs(scale - 1) < SNAP) scale = 1;
         else if (scale / minimum - 1 < SNAP) scale = minimum;
-        // At its resting size the picture is centred again, exactly as before the gesture.
-        this.settleTo(scale === 1 ? { scale: 1, x: 0, y: 0 } : this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
+        this.settleTo(this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
     };
+
+    private stop(): void {
+        window.clearTimeout(this.gestureTimer);
+        cancelAnimationFrame(this.frame);
+        this.frame = 0;
+        this.target = null;
+        this.interacting = false;
+        this.velocity = { scale: 0, x: 0, y: 0 };
+        this.surface.classList.remove('is-framing');
+    }
 
     /** The view scaled to `scale` with the point under `at` staying put. */
     private zoomedAbout(view: View, scale: number, at: { x: number; y: number }): View {
@@ -185,7 +199,7 @@ export class WallpaperZoom {
 
     /**
      * Allowed offsets on each axis at `scale`. A picture larger than the window
-     * (plus the blur margin, which must stay out of view) can pan until an edge
+     * (plus the blur margin, which must stay out of view) can move until an edge
      * meets the window; a smaller one stays centred.
      */
     private ranges(scale: number): [Range, Range] {
@@ -203,19 +217,25 @@ export class WallpaperZoom {
     }
 
     private clamped(view: View): View {
-        const scale = Math.max(this.minScale(), Math.min(MAX_SCALE, view.scale));
+        const scale = clamp(view.scale, this.minScale(), MAX_SCALE);
         const [rangeX, rangeY] = this.ranges(scale);
-        return {
-            scale,
-            x: Math.min(rangeX.max, Math.max(rangeX.min, view.x)),
-            y: Math.min(rangeY.max, Math.max(rangeY.min, view.y))
-        };
+        return { scale, x: clamp(view.x, rangeX.min, rangeX.max), y: clamp(view.y, rangeY.min, rangeY.max) };
+    }
+
+    /** Share of the window the picture covers. */
+    private coverage(): number {
+        const box = this.box();
+        const left = Math.max(0, box.left + this.view.x);
+        const top = Math.max(0, box.top + this.view.y);
+        const right = Math.min(innerWidth, box.left + this.view.x + box.width * this.view.scale);
+        const bottom = Math.min(innerHeight, box.top + this.view.y + box.height * this.view.scale);
+        return Math.max(0, right - left) * Math.max(0, bottom - top) / (innerWidth * innerHeight);
     }
 
     private settleTo(target: View): void {
         window.clearTimeout(this.gestureTimer);
         this.target = target;
-        this.surface.classList.add('is-zooming');
+        this.surface.classList.add('is-framing');
         if (this.reducedMotion.matches) {
             this.view = target;
             this.finish();
@@ -260,19 +280,36 @@ export class WallpaperZoom {
         this.velocity = { scale: 0, x: 0, y: 0 };
         this.apply();
         // Dropping the compositing hint lets Chrome redraw the picture sharply at its new size.
-        this.surface.classList.remove('is-zooming');
+        this.surface.classList.remove('is-framing');
+        this.callbacks.coverage(this.coverage());
+        this.callbacks.save(this.framing);
     }
 
     private apply(): void {
         const media = this.media;
         const { scale, x, y } = this.view;
-        if (media) media.style.transform = scale === 1 && x === 0 && y === 0 ? '' : `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+        const resting = Math.abs(scale - 1) < 1e-4 && Math.abs(x) < 0.01 && Math.abs(y) < 0.01;
+        if (media) media.style.transform = resting ? '' : `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
         this.surface.dataset.zoom = scale.toFixed(3);
-        document.body.classList.toggle('is-zoomed', this.zoomed || (this.target !== null && Math.abs(this.target.scale - 1) > 0.001));
     }
 }
 
-type Range = { min: number; max: number };
+export function isDefault(framing: WallpaperFraming): boolean {
+    return Math.abs(framing.scale - 1) < 0.001 && Math.abs(framing.x - 0.5) < 0.001 && Math.abs(framing.y - 0.5) < 0.001;
+}
+
+export function sameFraming(left: WallpaperFraming, right: WallpaperFraming): boolean {
+    return Math.abs(left.scale - right.scale) < 0.001 && Math.abs(left.x - right.x) < 0.001 && Math.abs(left.y - right.y) < 0.001;
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+    return Math.min(maximum, Math.max(minimum, value));
+}
+
+/** Four decimals are plenty for a framing and keep the saved settings small. */
+function round(value: number): number {
+    return Math.round(value * 10000) / 10000;
+}
 
 /** Movement away from the allowed range is damped more the further out it already is. */
 function resist(value: number, delta: number, range: Range, size: number): number {
@@ -309,11 +346,7 @@ function release(shown: number, limit: number): number {
     return limit * (1 / (1 - ratio) - 1);
 }
 
-function isTypingTarget(target: Element | null): boolean {
-    return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable);
-}
-
-/** Double-clicks on controls, text and bookmarks keep their own meaning. */
+/** Pointer events on controls, text and bookmarks keep their own meaning. */
 function isControl(target: EventTarget | null): boolean {
     return target instanceof Element
         && Boolean(target.closest('a, button, input, label, select, textarea, [data-glass], bookmark-index, search-box, status-strip, dashboard-header, backup-toast, settings-panel, bookmark-dialog, .context-menu, .modal-backdrop'));

@@ -78,6 +78,9 @@ assert.equal(backup.settings.wallpaper.value, 'local-1700000000000');
 assert.equal(backup.settings.wallpaper.overlay, 30, '用户自己设的暗化保留');
 assert.equal(backup.settings.appearance.theme, 'light', '选择的深色文字原样保留');
 assert.equal(sanitizeSettings({}).wallpaper.overlay, 12, '暗化默认值统一为 12');
+assert.deepEqual(sanitizeSettings({}).wallpaper.framing, { scale: 1, x: 0.5, y: 0.5 }, '默认取景是铺满屏幕、居中');
+assert.deepEqual(sanitizeSettings({ wallpaper: { framing: { scale: 2.5, x: 0.2, y: 0.9 } } }).wallpaper.framing, { scale: 2.5, x: 0.2, y: 0.9 }, '保存的取景原样保留');
+assert.deepEqual(sanitizeSettings({ wallpaper: { framing: { scale: 99, x: -3, y: 'bad' } } }).wallpaper.framing, { scale: 5, x: 0, y: 0.5 }, '越界或无效的取景被收回到范围内');
 assert.deepEqual(sanitizeSettings({}), DEFAULT_SETTINGS, '缺省设置与 DEFAULT_SETTINGS 一致');
 
 const queryBackup = sanitizeImportedData({

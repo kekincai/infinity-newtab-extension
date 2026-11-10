@@ -557,7 +557,7 @@ glass-system {
 
 /* ---- Wallpaper ---------------------------------------------------------- */
 
-/* Behind the picture, seen only while it is zoomed out to show it whole: a pale
+/* Behind the picture, seen where it has been shrunk to show more of it: a pale
    frosted wash in the picture's own edge colours (set by wallpaper-surface.ts),
    with a white sheen and a fine grain so it reads as glass, not a flat fill. */
 wallpaper-surface {
@@ -583,12 +583,12 @@ wallpaper-surface {
     /* Off screen at rest; lifts the picture off the frosted backdrop once it is shown whole. */
     box-shadow: 0 24px 70px rgba(30, 34, 60, 0.22), 0 4px 14px rgba(30, 34, 60, 0.12);
     filter: blur(var(--wallpaper-blur, 0px));
-    /* Zoom transforms are computed from the top-left corner (see wallpaper-zoom.ts). */
+    /* Framing transforms are computed from the top-left corner (see wallpaper-framing.ts). */
     transform-origin: 0 0;
 }
 
-/* Only while a pinch or its spring runs: afterwards Chrome redraws the zoomed picture sharply. */
-wallpaper-surface.is-zooming .wallpaper-media {
+/* Only while a pinch or its spring runs: afterwards Chrome redraws the reframed picture sharply. */
+wallpaper-surface.is-framing .wallpaper-media {
     will-change: transform;
 }
 
@@ -601,16 +601,13 @@ wallpaper-surface.is-zooming .wallpaper-media {
     object-fit: cover;
 }
 
-.wallpaper-tint {
+/* The dimming sits on the picture itself, so it follows reframing and leaves the pale backdrop clear. */
+.wallpaper-media::after {
     position: absolute;
     inset: 0;
     background: rgba(8, 8, 24, var(--wallpaper-overlay, 0.12));
-    transition: background 300ms ease, opacity 240ms ease;
-}
-
-/* The dimming only helps the home screen's text; a zoomed picture is shown as it is. */
-body.is-zoomed .wallpaper-tint {
-    opacity: 0;
+    content: "";
+    transition: background 300ms ease;
 }
 
 @keyframes scene-ken-burns { from { transform: scale(1) translate3d(0, 0, 0); } to { transform: scale(1.07) translate3d(-1.2%, -0.8%, 0); } }
@@ -1279,17 +1276,7 @@ body.is-idle dashboard-header {
     opacity: 0.85;
 }
 
-/* A zoomed wallpaper is looked at, like a photo: the home screen steps aside until it is restored. */
-body.is-zoomed .top-bar,
-body.is-zoomed dashboard-header,
-body.is-zoomed search-box,
-body.is-zoomed .home-footer,
-body.is-zoomed backup-toast {
-    opacity: 0;
-    pointer-events: none;
-    /* Out of the way quickly; it fades back at the usual pace. */
-    transition-duration: 180ms;
-}
+
 
 /* ---- Settings window ----------------------------------------------------
    Laid out like macOS System Settings: a sidebar of coloured icon tiles and

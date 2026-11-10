@@ -252,6 +252,7 @@
         value: wallpaperType === "gradient" ? "" : sanitizeWallpaperValue(wallpaper.value),
         blur: clampNumber(wallpaper.blur, 0, 40, defaults.wallpaper.blur),
         overlay: clampNumber(wallpaper.overlay, 0, 60, defaults.wallpaper.overlay),
+        framing: sanitizeFraming(wallpaper.framing),
         idleHide: booleanOr(wallpaper.idleHide, defaults.wallpaper.idleHide),
         pauseOnBattery: booleanOr(wallpaper.pauseOnBattery, defaults.wallpaper.pauseOnBattery),
         pauseWhenHidden: booleanOr(wallpaper.pauseWhenHidden, defaults.wallpaper.pauseWhenHidden),
@@ -287,6 +288,15 @@
   }
   function sanitizeWallpaperValue(value) {
     return typeof value === "string" && /^(local|online)-\d+$/.test(value) ? value : "";
+  }
+  function sanitizeFraming(value) {
+    const source = isRecord(value) ? value : {};
+    const fallback = DEFAULT_SETTINGS.wallpaper.framing;
+    return {
+      scale: clampNumber(source.scale, 0.1, 5, fallback.scale),
+      x: clampNumber(source.x, 0, 1, fallback.x),
+      y: clampNumber(source.y, 0, 1, fallback.y)
+    };
   }
   function booleanOr(value, fallback) {
     return typeof value === "boolean" ? value : fallback;
@@ -324,6 +334,7 @@
           value: "",
           blur: 0,
           overlay: 12,
+          framing: { scale: 1, x: 0.5, y: 0.5 },
           idleHide: true,
           pauseOnBattery: true,
           pauseWhenHidden: true,
@@ -912,8 +923,8 @@
     await storeWallpaper(file, kind, "local");
   }
   async function resetWallpaper() {
-    const { type, value, blur, overlay } = DEFAULT_SETTINGS.wallpaper;
-    await appStore.updateSettings("wallpaper", { type, value, blur, overlay });
+    const { type, value, blur, overlay, framing } = DEFAULT_SETTINGS.wallpaper;
+    await appStore.updateSettings("wallpaper", { type, value, blur, overlay, framing });
     await mediaStore.clearAll();
   }
   function wallpaperLabel(wallpaper) {
@@ -927,7 +938,9 @@
     try {
       await appStore.updateSettings("wallpaper", {
         type: kind === "video" ? "video" : "local",
-        value: `${source}-${Date.now()}`
+        value: `${source}-${Date.now()}`,
+        // A new picture starts at the default framing; the old one's crop would be meaningless.
+        framing: DEFAULT_SETTINGS.wallpaper.framing
       });
     } catch (error) {
       try {
@@ -3782,7 +3795,19 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
   });
 
-  // src/components/wallpaper-zoom.ts
+  // src/components/wallpaper-framing.ts
+  function isDefault(framing) {
+    return Math.abs(framing.scale - 1) < 1e-3 && Math.abs(framing.x - 0.5) < 1e-3 && Math.abs(framing.y - 0.5) < 1e-3;
+  }
+  function sameFraming(left, right) {
+    return Math.abs(left.scale - right.scale) < 1e-3 && Math.abs(left.x - right.x) < 1e-3 && Math.abs(left.y - right.y) < 1e-3;
+  }
+  function clamp2(value, minimum, maximum) {
+    return Math.min(maximum, Math.max(minimum, value));
+  }
+  function round(value) {
+    return Math.round(value * 1e4) / 1e4;
+  }
   function resist(value, delta, range, size) {
     const outward = value >= range.max && delta > 0 || value <= range.min && delta < 0;
     if (!outward) return delta;
@@ -3806,32 +3831,30 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     const ratio = Math.min(shown / limit, 0.999);
     return limit * (1 / (1 - ratio) - 1);
   }
-  function isTypingTarget(target) {
-    return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLElement && target.isContentEditable;
-  }
   function isControl(target) {
     return target instanceof Element && Boolean(target.closest("a, button, input, label, select, textarea, [data-glass], bookmark-index, search-box, status-strip, dashboard-header, backup-toast, settings-panel, bookmark-dialog, .context-menu, .modal-backdrop"));
   }
-  var MAX_SCALE, SNAP, DOUBLE_CLICK_SCALE, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperZoom;
-  var init_wallpaper_zoom = __esm({
-    "src/components/wallpaper-zoom.ts"() {
+  var MAX_SCALE, SNAP, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperFramer;
+  var init_wallpaper_framing = __esm({
+    "src/components/wallpaper-framing.ts"() {
       "use strict";
       init_ui_layer();
       MAX_SCALE = 5;
       SNAP = 0.05;
-      DOUBLE_CLICK_SCALE = 2.5;
       PINCH_UNITS = 100;
       MAX_PINCH_STEP = 30;
-      GESTURE_END_MS = 120;
+      GESTURE_END_MS = 140;
       STRETCH_OVER = Math.log(1.35);
       STRETCH_UNDER = Math.log(1 / 0.75);
       STIFFNESS = 260;
       DAMPING = 30;
-      WallpaperZoom = class {
-        constructor(surface) {
+      WallpaperFramer = class {
+        constructor(surface, callbacks) {
           this.surface = surface;
+          this.callbacks = callbacks;
         }
         surface;
+        callbacks;
         view = { scale: 1, x: 0, y: 0 };
         /** The scale the fingers ask for; the view shows it stretched by `rubberBand` past the limits. */
         requestedScale = 1;
@@ -3841,42 +3864,42 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         gestureTimer = 0;
         frame = 0;
         lastTime = 0;
+        interacting = false;
         reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
         connect() {
           window.addEventListener("wheel", this.onWheel, { passive: false, capture: true });
           document.addEventListener("dblclick", this.onDoubleClick);
-          document.addEventListener("keydown", this.onKeyDown);
-          document.addEventListener("focusin", this.onFocusIn);
-          window.addEventListener("resize", this.reset);
         }
         disconnect() {
           window.removeEventListener("wheel", this.onWheel, true);
           document.removeEventListener("dblclick", this.onDoubleClick);
-          document.removeEventListener("keydown", this.onKeyDown);
-          document.removeEventListener("focusin", this.onFocusIn);
-          window.removeEventListener("resize", this.reset);
-          window.clearTimeout(this.gestureTimer);
-          cancelAnimationFrame(this.frame);
+          this.stop();
         }
-        /** Off the resting size, zoomed in or out. */
-        get zoomed() {
-          return Math.abs(this.view.scale - 1) > 1e-3;
+        /** True from the first pinch or scroll until the spring has settled. */
+        get busy() {
+          return this.interacting || this.target !== null;
         }
-        /** Back to fit at once, e.g. when the wallpaper itself changes. */
-        reset = () => {
-          window.clearTimeout(this.gestureTimer);
-          cancelAnimationFrame(this.frame);
-          this.frame = 0;
-          this.target = null;
-          this.velocity = { scale: 0, x: 0, y: 0 };
-          this.view = { scale: 1, x: 0, y: 0 };
+        /** The current framing in window-independent terms. */
+        get framing() {
+          const box = this.box();
+          return {
+            scale: round(this.view.scale),
+            x: round(clamp2((innerWidth / 2 - box.left - this.view.x) / (this.view.scale * box.width), 0, 1)),
+            y: round(clamp2((innerHeight / 2 - box.top - this.view.y) / (this.view.scale * box.height), 0, 1))
+          };
+        }
+        /** Shows a saved framing at once, fitted to the current window and picture. */
+        show(framing) {
+          this.stop();
+          const box = this.box();
+          const scale = clamp2(framing.scale, this.minScale(), MAX_SCALE);
+          this.view = this.clamped({
+            scale,
+            x: innerWidth / 2 - box.left - framing.x * scale * box.width,
+            y: innerHeight / 2 - box.top - framing.y * scale * box.height
+          });
           this.apply();
-          this.surface.classList.remove("is-zooming");
-        };
-        /** Animated back to fit. */
-        restore() {
-          if (!this.zoomed && !this.frame) return;
-          this.settleTo({ scale: 1, x: 0, y: 0 });
+          this.callbacks.coverage(this.coverage());
         }
         get media() {
           return this.surface.querySelector(".wallpaper-media");
@@ -3884,13 +3907,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         onWheel = (event) => {
           if (hasOpenLayer()) return;
           const pinch = event.ctrlKey;
-          if (!pinch && !this.zoomed) return;
+          if (!pinch && (isControl(event.target) || !this.canPan())) return;
           event.preventDefault();
           event.stopPropagation();
-          if (pinch && isTypingTarget(document.activeElement)) document.activeElement.blur();
           this.beginGesture();
           if (pinch) {
-            const step = Math.max(-MAX_PINCH_STEP, Math.min(MAX_PINCH_STEP, event.deltaY));
+            const step = clamp2(event.deltaY, -MAX_PINCH_STEP, MAX_PINCH_STEP);
             this.focus = { x: event.clientX, y: event.clientY };
             this.requestedScale *= Math.exp(-step / PINCH_UNITS);
             this.view = this.zoomedAbout(this.view, rubberBand(this.requestedScale, this.minScale()), this.focus);
@@ -3900,24 +3922,18 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.apply();
           this.gestureTimer = window.setTimeout(this.endGesture, GESTURE_END_MS);
         };
+        /** Double-clicking an empty part of the screen returns to the default framing. */
         onDoubleClick = (event) => {
           if (hasOpenLayer() || isControl(event.target)) return;
-          if (this.zoomed) {
-            this.restore();
-            return;
-          }
-          this.focus = { x: event.clientX, y: event.clientY };
-          this.settleTo(this.clamped(this.zoomedAbout(this.view, DOUBLE_CLICK_SCALE, this.focus)));
+          if (isDefault(this.framing)) return;
+          this.settleTo({ scale: 1, x: 0, y: 0 });
         };
-        onKeyDown = (event) => {
-          if (event.key !== "Escape" || !this.zoomed || hasOpenLayer()) return;
-          event.preventDefault();
-          this.restore();
-        };
-        /** Anything taking focus (⌘K, /, Tab) needs the home screen back. */
-        onFocusIn = () => {
-          if (this.zoomed) this.restore();
-        };
+        /** Movement is possible on an axis where the picture is larger than the window, or while it is out of range. */
+        canPan() {
+          const [rangeX, rangeY] = this.ranges(this.view.scale);
+          const outside = (value, range) => value < range.min - 0.5 || value > range.max + 0.5;
+          return rangeX.max - rangeX.min > 1 || rangeY.max - rangeY.min > 1 || outside(this.view.x, rangeX) || outside(this.view.y, rangeY);
+        }
         beginGesture() {
           window.clearTimeout(this.gestureTimer);
           cancelAnimationFrame(this.frame);
@@ -3925,15 +3941,26 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.target = null;
           this.velocity = { scale: 0, x: 0, y: 0 };
           this.requestedScale = unstretch(this.view.scale, this.minScale());
-          this.surface.classList.add("is-zooming");
+          this.interacting = true;
+          this.surface.classList.add("is-framing");
         }
         endGesture = () => {
+          this.interacting = false;
           const minimum = this.minScale();
-          let scale = Math.max(minimum, Math.min(MAX_SCALE, this.view.scale));
+          let scale = clamp2(this.view.scale, minimum, MAX_SCALE);
           if (Math.abs(scale - 1) < SNAP) scale = 1;
           else if (scale / minimum - 1 < SNAP) scale = minimum;
-          this.settleTo(scale === 1 ? { scale: 1, x: 0, y: 0 } : this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
+          this.settleTo(this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
         };
+        stop() {
+          window.clearTimeout(this.gestureTimer);
+          cancelAnimationFrame(this.frame);
+          this.frame = 0;
+          this.target = null;
+          this.interacting = false;
+          this.velocity = { scale: 0, x: 0, y: 0 };
+          this.surface.classList.remove("is-framing");
+        }
         /** The view scaled to `scale` with the point under `at` staying put. */
         zoomedAbout(view, scale, at) {
           const box = this.box();
@@ -3965,7 +3992,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         /**
          * Allowed offsets on each axis at `scale`. A picture larger than the window
-         * (plus the blur margin, which must stay out of view) can pan until an edge
+         * (plus the blur margin, which must stay out of view) can move until an edge
          * meets the window; a smaller one stays centred.
          */
         ranges(scale) {
@@ -3982,18 +4009,23 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           return [axis(box.left, box.width, innerWidth), axis(box.top, box.height, innerHeight)];
         }
         clamped(view) {
-          const scale = Math.max(this.minScale(), Math.min(MAX_SCALE, view.scale));
+          const scale = clamp2(view.scale, this.minScale(), MAX_SCALE);
           const [rangeX, rangeY] = this.ranges(scale);
-          return {
-            scale,
-            x: Math.min(rangeX.max, Math.max(rangeX.min, view.x)),
-            y: Math.min(rangeY.max, Math.max(rangeY.min, view.y))
-          };
+          return { scale, x: clamp2(view.x, rangeX.min, rangeX.max), y: clamp2(view.y, rangeY.min, rangeY.max) };
+        }
+        /** Share of the window the picture covers. */
+        coverage() {
+          const box = this.box();
+          const left = Math.max(0, box.left + this.view.x);
+          const top = Math.max(0, box.top + this.view.y);
+          const right = Math.min(innerWidth, box.left + this.view.x + box.width * this.view.scale);
+          const bottom = Math.min(innerHeight, box.top + this.view.y + box.height * this.view.scale);
+          return Math.max(0, right - left) * Math.max(0, bottom - top) / (innerWidth * innerHeight);
         }
         settleTo(target) {
           window.clearTimeout(this.gestureTimer);
           this.target = target;
-          this.surface.classList.add("is-zooming");
+          this.surface.classList.add("is-framing");
           if (this.reducedMotion.matches) {
             this.view = target;
             this.finish();
@@ -4030,14 +4062,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.target = null;
           this.velocity = { scale: 0, x: 0, y: 0 };
           this.apply();
-          this.surface.classList.remove("is-zooming");
+          this.surface.classList.remove("is-framing");
+          this.callbacks.coverage(this.coverage());
+          this.callbacks.save(this.framing);
         }
         apply() {
           const media = this.media;
           const { scale, x, y } = this.view;
-          if (media) media.style.transform = scale === 1 && x === 0 && y === 0 ? "" : `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+          const resting = Math.abs(scale - 1) < 1e-4 && Math.abs(x) < 0.01 && Math.abs(y) < 0.01;
+          if (media) media.style.transform = resting ? "" : `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
           this.surface.dataset.zoom = scale.toFixed(3);
-          document.body.classList.toggle("is-zoomed", this.zoomed || this.target !== null && Math.abs(this.target.scale - 1) > 1e-3);
         }
       };
     }
@@ -4074,7 +4108,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       return fallback;
     }
   }
-  var SCENE_SIZE, BLEED, WallpaperSurface, unmuteTarget, waitingForGesture, SCENE;
+  var SCENE_SIZE, BLEED, LIGHT_BACKDROP_BELOW, WallpaperSurface, unmuteTarget, waitingForGesture, SCENE;
   var init_wallpaper_surface = __esm({
     "src/components/wallpaper-surface.ts"() {
       "use strict";
@@ -4082,9 +4116,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_store();
       init_wallpaper_service();
       init_base();
-      init_wallpaper_zoom();
+      init_wallpaper_framing();
       SCENE_SIZE = { width: 1440, height: 900 };
       BLEED = 10;
+      LIGHT_BACKDROP_BELOW = 0.75;
       WallpaperSurface = class extends StoreElement {
         observedChanges = ["settings.wallpaper"];
         objectUrl = "";
@@ -4095,15 +4130,26 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         failedMediaKey = "";
         userPaused = false;
         battery = null;
-        zoom = new WallpaperZoom(this);
-        /** Blur changes how far the media reaches past the window, so a zoomed view has to start over. */
-        zoomLayout = "";
+        framer = new WallpaperFramer(this, {
+          save: (framing) => {
+            if (sameFraming(framing, appStore.state.settings.wallpaper.framing)) return;
+            void appStore.updateSettings("wallpaper", { framing }).catch(() => void 0);
+          },
+          coverage: (share) => {
+            this.coverage = share;
+            this.reportTone();
+          }
+        });
+        /** The window size, picture size and blur the media layer was last laid out for. */
+        layoutKey = "";
+        pictureTone = null;
+        coverage = 1;
         /** The picture's own size; the media layer keeps its proportions so nothing inside it is cropped. */
         naturalSize = SCENE_SIZE;
         connectedCallback() {
           super.connectedCallback();
-          this.zoom.connect();
-          window.addEventListener("resize", this.layoutMedia);
+          this.framer.connect();
+          window.addEventListener("resize", this.onResize);
           document.addEventListener("visibilitychange", this.syncPlayback);
           void navigator.getBattery?.().then((battery) => {
             this.battery = battery;
@@ -4113,8 +4159,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         disconnectedCallback() {
           super.disconnectedCallback();
-          this.zoom.disconnect();
-          window.removeEventListener("resize", this.layoutMedia);
+          this.framer.disconnect();
+          window.removeEventListener("resize", this.onResize);
           document.removeEventListener("visibilitychange", this.syncPlayback);
           this.battery?.removeEventListener?.("chargingchange", this.syncPlayback);
           this.releaseObjectUrl();
@@ -4131,18 +4177,15 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         render() {
           const wallpaper = appStore.state.settings.wallpaper;
           if (!this.querySelector(".wallpaper-media")) {
-            this.innerHTML = '<div class="wallpaper-media"></div><div class="wallpaper-tint"></div>';
+            this.innerHTML = '<div class="wallpaper-media"></div>';
           }
           this.style.setProperty("--wallpaper-blur", `${wallpaper.blur}px`);
           this.style.setProperty("--wallpaper-overlay", String(wallpaper.overlay / 100));
-          this.layoutMedia();
+          if (this.layoutMedia() || !this.framer.busy && !sameFraming(this.framer.framing, wallpaper.framing)) {
+            this.framer.show(wallpaper.framing);
+          }
           this.syncPlayback();
           const mediaKey = `${wallpaper.type}:${wallpaper.value}`;
-          const zoomLayout = `${mediaKey}|${wallpaper.blur}`;
-          if (zoomLayout !== this.zoomLayout) {
-            this.zoomLayout = zoomLayout;
-            this.zoom.reset();
-          }
           if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey || mediaKey === this.failedMediaKey) return;
           this.pendingMediaKey = mediaKey;
           void this.applyMedia(++this.renderToken, mediaKey);
@@ -4153,11 +4196,14 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
          * window is cropped by the surface, not by the layer, so zooming out can
          * bring it back.
          */
-        layoutMedia = () => {
+        layoutMedia() {
           const media = this.querySelector(".wallpaper-media");
-          if (!media) return;
+          if (!media) return false;
           const bleed = appStore.state.settings.wallpaper.blur + BLEED;
           const { width, height } = this.naturalSize;
+          const key = `${innerWidth}x${innerHeight}|${width}x${height}|${bleed}`;
+          if (key === this.layoutKey) return false;
+          this.layoutKey = key;
           const cover = Math.max((innerWidth + bleed * 2) / width, (innerHeight + bleed * 2) / height);
           const w = width * cover;
           const h = height * cover;
@@ -4165,12 +4211,18 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           media.style.width = `${w}px`;
           media.style.height = `${h}px`;
           this.dataset.bleed = String(bleed);
+          return true;
+        }
+        /** The saved framing is window-independent, so a resized window shows the same part of the picture. */
+        onResize = () => {
+          this.layoutMedia();
+          this.framer.show(appStore.state.settings.wallpaper.framing);
         };
         setPicture(size, backdrop) {
           if (size.width > 0 && size.height > 0) this.naturalSize = size;
           this.style.setProperty("--wallpaper-backdrop", backdrop);
           this.layoutMedia();
-          this.zoom.reset();
+          this.framer.show(appStore.state.settings.wallpaper.framing);
         }
         syncPlayback = () => {
           const { type, pauseOnBattery, pauseWhenHidden, sound } = appStore.state.settings.wallpaper;
@@ -4235,7 +4287,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.syncPlayback();
             this.reportState();
             const resolved = await tone;
-            if (token === this.renderToken) this.reportTone(resolved);
+            if (token === this.renderToken) {
+              this.pictureTone = resolved;
+              this.reportTone();
+            }
           } catch (error) {
             if (token === this.renderToken) {
               this.failedMediaKey = mediaKey;
@@ -4260,7 +4315,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         reportState() {
           this.dispatchEvent(new CustomEvent("wallpaper-state", { bubbles: true, composed: true, detail: this.state }));
         }
-        reportTone(tone) {
+        /**
+         * The text colour “自动” picks: the picture's own brightness, unless it has
+         * been shrunk so far that the text mostly sits on the pale frosted backdrop.
+         */
+        reportTone() {
+          if (!this.pictureTone) return;
+          const tone = this.coverage < LIGHT_BACKDROP_BELOW ? "light" : this.pictureTone;
           this.dispatchEvent(new CustomEvent("wallpaper-tone", { bubbles: true, composed: true, detail: { tone } }));
         }
         reportError(error) {
@@ -4485,7 +4546,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.idleTimer = window.setTimeout(this.goIdle, remaining);
             return;
           }
-          if (hasOpenLayer() || isTypingTarget2(document.activeElement)) {
+          if (hasOpenLayer() || isTypingTarget(document.activeElement)) {
             this.wake();
             return;
           }
@@ -4506,13 +4567,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             return;
           }
           if (hasOpenLayer()) return;
-          if (commandK || event.key === "/" && !isTypingTarget2(event.target)) {
+          if (commandK || event.key === "/" && !isTypingTarget(event.target)) {
             event.preventDefault();
             this.search?.focusField();
           }
         };
       };
-      function isTypingTarget2(target) {
+      function isTypingTarget(target) {
         return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target instanceof HTMLElement && target.isContentEditable;
       }
       var elements = [

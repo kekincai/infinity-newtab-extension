@@ -11,8 +11,9 @@ module.exports = defineConfig({
     use: {
         baseURL: 'http://127.0.0.1:4173',
         channel: 'chrome',
-        // SVG fragment filters in backdrop-filter are not composited by headless Chrome.
-        headless: false,
+        // Chrome's new headless mode composites SVG backdrop filters and runs WebGPU, so the
+        // refraction pixel test and the HDR rim test run without opening a window.
+        headless: true,
         locale: 'zh-CN',
         screenshot: 'off',
         trace: 'retain-on-failure'
