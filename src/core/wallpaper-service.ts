@@ -51,8 +51,8 @@ export async function useLocalWallpaper(file: File): Promise<void> {
 }
 
 export async function resetWallpaper(): Promise<void> {
-    const { type, value, blur, overlay } = DEFAULT_SETTINGS.wallpaper;
-    await appStore.updateSettings('wallpaper', { type, value, blur, overlay });
+    const { type, value, blur, overlay, framing } = DEFAULT_SETTINGS.wallpaper;
+    await appStore.updateSettings('wallpaper', { type, value, blur, overlay, framing });
     await mediaStore.clearAll();
 }
 
@@ -73,7 +73,9 @@ async function storeWallpaper(blob: Blob, kind: MediaKind, source: 'local' | 'on
     try {
         await appStore.updateSettings('wallpaper', {
             type: kind === 'video' ? 'video' : 'local',
-            value: `${source}-${Date.now()}`
+            value: `${source}-${Date.now()}`,
+            // A new picture starts at the default framing; the old one's crop would be meaningless.
+            framing: DEFAULT_SETTINGS.wallpaper.framing
         });
     } catch (error) {
         try {

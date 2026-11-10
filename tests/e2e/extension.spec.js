@@ -776,20 +776,28 @@ async function pinch(page, steps, deltaY) {
 
 const zoomOf = (page) => page.locator('wallpaper-surface').evaluate((element) => Number(element.dataset.zoom ?? 1));
 
-test('zooms the wallpaper like a photo instead of the page', async ({ page }) => {
+const mediaRect = (page) => page.locator('.wallpaper-media').evaluate((media) => media.getBoundingClientRect().toJSON());
+const savedFraming = (page) => page.evaluate(() => window.__readMockSync().settings.wallpaper.framing);
+
+test('reframes the wallpaper in place and keeps the framing', async ({ page }) => {
     const errors = await openExtension(page);
     await settleEntrance(page);
+    // Text colour follows the wallpaper, so the pale backdrop can switch it.
+    await openSettings(page);
+    await page.locator('[data-segment="theme"] [data-value="auto"]').click();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('body')).toHaveClass(/theme-dark/);
     await page.mouse.move(900, 450);
 
-    // Pinching in scales the picture around the pointer; Chrome's own page zoom stays out.
+    // A pinch scales the wallpaper around the pointer; the home screen and its dimming stay, and Chrome's page zoom stays out.
     await pinch(page, 20, -6);
     expect(await zoomOf(page)).toBeGreaterThan(1.5);
-    await expect(page.locator('body')).toHaveClass(/is-zoomed/);
     expect(await page.evaluate(() => visualViewport.scale)).toBe(1);
-    await expect(page.locator('.top-bar')).toHaveCSS('opacity', '0');
+    await expect(page.locator('.top-bar')).toHaveCSS('opacity', '1');
+    await expect(page.locator('.index')).toBeVisible();
+    expect(await page.locator('.wallpaper-media').evaluate((media) => getComputedStyle(media, '::after').backgroundColor)).toBe('rgba(8, 8, 24, 0.12)');
     const anchored = await page.locator('.wallpaper-media').evaluate((media) => {
         const matrix = new DOMMatrix(getComputedStyle(media).transform);
-        // The picture point under the pointer before the pinch is still under it.
         return {
             x: (900 - media.offsetLeft - matrix.m41) / matrix.a + media.offsetLeft,
             y: (450 - media.offsetTop - matrix.m42) / matrix.a + media.offsetTop
@@ -805,42 +813,47 @@ test('zooms the wallpaper like a photo instead of the page', async ({ page }) =>
     expect(stretched).toBeLessThan(6.8);
     await expect.poll(() => zoomOf(page)).toBe(5);
 
-    // Two-finger scrolling pans, and springs back so the picture's left edge meets the window's (past the blur margin).
-    await page.mouse.wheel(-4000, 0);
-    await expect.poll(() => page.locator('.wallpaper-media').evaluate((media) => Math.round(media.getBoundingClientRect().left))).toBe(-10);
+    // Two-finger scrolling over an empty part of the screen moves the picture, up to its edge (past the blur margin).
+    // Far enough to reach the edge at any device pixel ratio; the rest is absorbed by the rubber band.
+    await page.mouse.wheel(-6000, 0);
+    await page.mouse.wheel(-6000, 0);
+    await expect.poll(async () => Math.round((await mediaRect(page)).left)).toBe(-10);
+    // Over the bookmarks it scrolls them as before and leaves the wallpaper alone.
+    const before = await mediaRect(page);
+    await page.locator('.index').hover();
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(400);
+    expect(await mediaRect(page)).toEqual(before);
 
-    // Pinching out goes past the resting size to the whole picture, cropping nothing, on a pale backdrop.
-    await pinch(page, 60, 12);
+    // The settled framing is saved, and a new tab (here a reload) shows the same part of the picture.
+    await expect.poll(async () => (await savedFraming(page)).scale).toBe(5);
+    expect((await savedFraming(page)).x).toBeCloseTo(0.1, 1);
+    await page.reload();
+    await expect.poll(() => zoomOf(page)).toBe(5);
+    await expect.poll(async () => Math.round((await mediaRect(page)).left)).toBe(-10);
+
+    // Pinching out goes down to the whole picture, nothing cropped, on a pale backdrop, with the home screen still there.
+    await page.mouse.move(900, 450);
+    await pinch(page, 80, 12);
     await expect.poll(() => zoomOf(page)).toBeLessThan(1);
     await expect.poll(async () => {
-        const rect = await page.locator('.wallpaper-media').evaluate((media) => media.getBoundingClientRect().toJSON());
+        const rect = await mediaRect(page);
         return rect.left >= -1 && rect.top >= -1 && rect.right <= 1441 && rect.bottom <= 1001 && (Math.abs(rect.width - 1440) < 2 || Math.abs(rect.height - 1000) < 2);
     }).toBe(true);
-    await expect(page.locator('body')).toHaveClass(/is-zoomed/);
-    await expect(page.locator('.wallpaper-tint')).toHaveCSS('opacity', '0');
+    await expect(page.locator('.top-bar')).toHaveCSS('opacity', '1');
     expect(await page.locator('wallpaper-surface').evaluate((element) => element.style.getPropertyValue('--wallpaper-backdrop'))).toContain('oklch(0.9');
 
-    // Pinching back in to about the resting size snaps to it and brings the home screen back.
-    await page.keyboard.down('Control');
-    for (let step = 0; step < 200 && await zoomOf(page) < 0.98; step += 1) await page.mouse.wheel(0, -2);
-    await page.keyboard.up('Control');
-    await expect.poll(() => zoomOf(page)).toBe(1);
-    await expect(page.locator('body')).not.toHaveClass(/is-zoomed/);
-    await expect(page.locator('.top-bar')).toHaveCSS('opacity', '1');
+    // In a narrow window the whole picture leaves most of the text on the pale backdrop, so automatic text turns dark.
+    await page.setViewportSize({ width: 800, height: 1000 });
+    await page.mouse.move(400, 450);
+    await pinch(page, 40, 12);
+    await expect(page.locator('body')).toHaveClass(/theme-light/);
 
-    // Double-click on an empty part of the picture zooms in; Esc restores it.
-    await page.mouse.dblclick(900, 450);
-    await expect.poll(() => zoomOf(page)).toBe(2.5);
-    await page.keyboard.press('Escape');
+    // Double-clicking an empty part of the screen returns to the default framing, saved too.
+    await page.mouse.dblclick(400, 450);
     await expect.poll(() => zoomOf(page)).toBe(1);
-
-    // The search shortcut brings the home screen back too.
-    await page.mouse.dblclick(900, 450);
-    await expect.poll(() => zoomOf(page)).toBe(2.5);
-    await page.keyboard.press('/');
-    await expect(page.locator('.search-field input')).toBeFocused();
-    await expect.poll(() => zoomOf(page)).toBe(1);
-    await page.keyboard.press('Escape');
+    await expect.poll(() => savedFraming(page)).toEqual({ scale: 1, x: 0.5, y: 0.5 });
+    await expect(page.locator('body')).toHaveClass(/theme-dark/);
 
     // With settings open a pinch leaves the wallpaper alone.
     await page.locator('.settings-trigger').click();

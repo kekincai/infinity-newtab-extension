@@ -20,11 +20,23 @@ export interface LayoutSettings {
     backupReminder: boolean;
 }
 
+/**
+ * How the wallpaper is framed, independent of the window size: `scale` is
+ * relative to just filling the window (1), and `x`/`y` are the point of the
+ * picture (0–1 across and down) shown at the centre of the window.
+ */
+export interface WallpaperFraming {
+    scale: number;
+    x: number;
+    y: number;
+}
+
 export interface WallpaperSettings {
     type: WallpaperType;
     value: string;
     blur: number;
     overlay: number;
+    framing: WallpaperFraming;
     idleHide: boolean;
     pauseOnBattery: boolean;
     pauseWhenHidden: boolean;
