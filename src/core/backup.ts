@@ -117,7 +117,6 @@ export function sanitizeSettings(value: unknown): AppSettings {
     const appearance = isRecord(source.appearance) ? source.appearance : {};
     const defaults = DEFAULT_SETTINGS;
     const searchEngines = ['google', 'bing', 'baidu', 'duckduckgo'];
-    // `preset` (a remote picture URL, before 2.5) is no longer shown; such settings fall back to the default scene.
     const wallpaperTypes = ['gradient', 'local', 'video'];
     const wallpaperType = wallpaperTypes.includes(String(wallpaper.type))
         ? wallpaper.type as WallpaperSettings['type']
@@ -151,7 +150,7 @@ export function sanitizeSettings(value: unknown): AppSettings {
             clockFormat: appearance.clockFormat === '12h' ? '12h' : '24h',
             dateFormat: appearance.dateFormat === 'short' ? 'short' : 'long',
             hdrHighlights: booleanOr(appearance.hdrHighlights, defaults.appearance.hdrHighlights),
-            theme: sanitizeTheme(appearance.theme, layout),
+            theme: appearance.theme === 'light' || appearance.theme === 'dark' ? appearance.theme : 'auto',
             glass: appearance.glass === 'tinted' ? 'tinted' : 'clear',
             reduceTransparency: booleanOr(appearance.reduceTransparency, defaults.appearance.reduceTransparency)
         }
@@ -173,17 +172,6 @@ export function dataUrlToBlob(dataUrl: unknown): Blob | null {
     }
 }
 
-/**
- * Before 2.5 `light` was the default everyone had, so it moves to `auto` (which
- * still picks dark text on bright wallpapers). 2.5 settings are recognised by
- * the `openInNewTab` flag introduced alongside the automatic theme.
- */
-function sanitizeTheme(theme: unknown, layout: Record<string, unknown>): AppSettings['appearance']['theme'] {
-    if (theme === 'dark') return 'dark';
-    if (theme === 'light') return typeof layout.openInNewTab === 'boolean' ? 'light' : 'auto';
-    return 'auto';
-}
-
 /** Inline icons live in sync storage, so oversized data URLs are dropped instead of breaking the quota. */
 export const MAX_INLINE_ICON_LENGTH = 4096;
 
@@ -192,11 +180,9 @@ export function sanitizeBookmarkIcon(value: unknown): string {
     return icon.startsWith('data:') && icon.length > MAX_INLINE_ICON_LENGTH ? '' : icon;
 }
 
-/** `local` / `online-<time>` name the cached media; 1.0 backups carried the picture itself as a data URL. */
+/** `local-<time>` / `online-<time>` name the cached media, so a new picture always reloads. */
 function sanitizeWallpaperValue(value: unknown): string {
-    if (typeof value !== 'string') return '';
-    if (/^(local|online)(-\d+)?$/.test(value) || value.startsWith('data:image/')) return value;
-    return '';
+    return typeof value === 'string' && /^(local|online)-\d+$/.test(value) ? value : '';
 }
 
 function booleanOr(value: unknown, fallback: boolean): boolean {

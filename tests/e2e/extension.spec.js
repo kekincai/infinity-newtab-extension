@@ -11,7 +11,7 @@ const initialData = {
     settings: {
         layout: { showClock: true, showSearch: true, showBookmarks: true, showStatus: true, showRecent: true, searchEngine: 'google' },
         wallpaper: { type: 'gradient', value: '', blur: 0, overlay: 12, idleHide: false },
-        appearance: { clockFormat: '24h', dateFormat: 'long', theme: 'light' }
+        appearance: { clockFormat: '24h', dateFormat: 'long' }
     },
     recentSearches: ['二次元壁纸'],
     lastBackupPrompt: 4102444800000
@@ -29,7 +29,9 @@ async function installChromeMock(page, seed = initialData, options = {}) {
         const syncKey = 'infinity-e2e-sync';
         const localKey = 'infinity-e2e-local';
         if (!sessionStorage.getItem('infinity-e2e-ready')) {
-            localStorage.setItem(syncKey, JSON.stringify(seed));
+            // Stored the way the extension stores bookmarks: in numbered chunks.
+            const { bookmarks, ...rest } = seed;
+            localStorage.setItem(syncKey, JSON.stringify({ ...rest, bookmarkChunks: 1, 'bookmarks.0': bookmarks }));
             localStorage.setItem(localKey, '{}');
             sessionStorage.setItem('infinity-e2e-ready', '1');
         }
@@ -540,7 +542,7 @@ test('reports native video playback failures instead of swallowing them', async 
         });
         database.close();
         const stored = window.__readMockSync();
-        stored.settings.wallpaper = { ...stored.settings.wallpaper, type: 'video', value: 'local' };
+        stored.settings.wallpaper = { ...stored.settings.wallpaper, type: 'video', value: 'local-1' };
         await new Promise((resolve) => chrome.storage.sync.set({ settings: stored.settings }, resolve));
     }, videoBase64);
     await page.reload();
@@ -551,40 +553,46 @@ test('reports native video playback failures instead of swallowing them', async 
     expect(errors).toEqual([]);
 });
 
-test('imports a version 1 backup and exports version 2', async ({ page }, testInfo) => {
+test('imports and exports 2.0 backups and refuses older ones', async ({ page }, testInfo) => {
     const errors = await openExtension(page);
-    const backup = {
-        version: '1.0',
-        exportDate: '2026-01-24T14:12:46.859Z',
-        data: {
-            bookmarks: [{ id: 10, name: 'www.v2ex.com', url: 'https://www.v2ex.com/', order: 0 }],
-            folders: ['全部'],
-            settings: {
-                layout: { showClock: true, showSearch: true, showBookmarks: true },
-                wallpaper: { type: 'gradient', value: '', blur: 0, overlay: 12 },
-                appearance: { clockFormat: '24h', dateFormat: 'long' }
-            },
-            todos: []
-        }
+    const importFile = async (name, backup) => {
+        await page.locator('.import-data input').setInputFiles({
+            name, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup))
+        });
+        await expect(page.getByRole('alertdialog')).toContainText('从备份恢复');
+        await page.getByRole('alertdialog').getByRole('button', { name: '恢复' }).click();
     };
     await openSettings(page, 'data');
-    await page.locator('.import-data input').setInputFiles({
-        name: 'legacy-backup.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backup))
+
+    // A 1.0 backup is refused and nothing changes.
+    await importFile('legacy-backup.json', {
+        version: '1.0',
+        data: { bookmarks: [{ id: 10, name: 'www.v2ex.com', url: 'https://www.v2ex.com/', order: 0 }], folders: ['全部'] }
     });
-    await expect(page.getByRole('alertdialog')).toContainText('从备份恢复');
-    await page.getByRole('alertdialog').getByRole('button', { name: '恢复' }).click();
+    await expect(page.locator('.toast.is-error')).toContainText('只支持 2.0 格式的备份');
+    expect((await page.evaluate(() => window.__readMockSync())).bookmarks).toHaveLength(3);
+
+    await importFile('backup.json', {
+        version: '2.0',
+        exportDate: '2026-11-11T08:00:00.000Z',
+        data: {
+            bookmarks: [{ id: 10, name: 'www.v2ex.com', url: 'https://www.v2ex.com/', icon: '', folder: '全部', order: 0 }],
+            folders: ['全部'],
+            settings: { wallpaper: { type: 'gradient', value: '', blur: 0, overlay: 12 } },
+            recentSearches: [],
+            lastBackupPrompt: 4102444800000
+        },
+        localMedia: { image: null, video: null }
+    });
     await expect(page.locator('.toast.is-success')).toContainText('已从备份恢复');
     await expect(page.locator('[data-bookmark-id]')).toHaveCount(1);
     await expect(page.locator('[data-bookmark-id] .index-name')).toHaveText('V2EX');
     const stored = await page.evaluate(() => window.__readMockSync());
     expect(stored.bookmarks).toHaveLength(1);
-    expect(stored.bookmarks[0].folder).toBe('全部');
     expect(stored.settings.layout.showStatus).toBe(true);
-    expect(stored.settings.layout).not.toHaveProperty('dockSize');
-    expect(stored).not.toHaveProperty('todos');
     const raw = await page.evaluate(() => window.__readRawSync());
-    expect(raw).not.toHaveProperty('bookmarks');
     expect(raw.bookmarkChunks).toBe(1);
+    expect(raw).not.toHaveProperty('bookmarks.1');
 
     const downloadPromise = page.waitForEvent('download');
     await page.locator('.export-data').click();
@@ -595,6 +603,11 @@ test('imports a version 1 backup and exports version 2', async ({ page }, testIn
     expect(exported.version).toBe('2.0');
     expect(exported.data.bookmarks).toHaveLength(1);
     expect(exported.localMedia).toEqual({ image: null, video: null });
+
+    // What was exported imports again unchanged.
+    await importFile('round-trip.json', exported);
+    await expect(page.locator('.toast.is-success').last()).toContainText('已从备份恢复');
+    expect((await page.evaluate(() => window.__readMockSync())).bookmarks).toEqual(stored.bookmarks);
     expect(errors).toEqual([]);
 });
 

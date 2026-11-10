@@ -58,28 +58,25 @@ function area(data: Record<string, unknown>) {
 };
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 
-const oldBackup = sanitizeImportedData({
+const backup = sanitizeImportedData({
     bookmarks: [
-        { id: 1, name: 'www.google.com', url: 'https://www.google.com/' },
-        { id: 2, name: 'www.v2ex.com', url: 'https://www.v2ex.com/', folder: '全部', order: 2 },
-        { id: 3, name: 'Duplicate', url: 'https://www.v2ex.com/', folder: '全部', order: 9 }
+        { id: 1, name: 'www.google.com', url: 'https://www.google.com/', icon: '', folder: '全部', order: 0 },
+        { id: 2, name: 'www.v2ex.com', url: 'https://www.v2ex.com/', icon: '', folder: '全部', order: 2 },
+        { id: 3, name: 'Duplicate', url: 'https://www.v2ex.com/', icon: '', folder: '全部', order: 9 }
     ],
     folders: ['全部'],
     settings: {
-        layout: { showClock: true, showSearch: true, showBookmarks: true, showTodo: true },
-        wallpaper: { type: 'preset', value: 'https://images.unsplash.com/photo.jpg', blur: 0, overlay: 30 },
-        appearance: { clockFormat: '24h', dateFormat: 'long', enhancedAnimations: false }
-    },
-    todos: []
+        layout: { showClock: true, showSearch: true, showBookmarks: true, unknownSetting: true },
+        wallpaper: { type: 'local', value: 'local-1700000000000', blur: 0, overlay: 30 },
+        appearance: { clockFormat: '24h', dateFormat: 'long', theme: 'light' }
+    }
 });
 
-assert.equal(oldBackup.bookmarks.length, 2, '旧备份中完全相同的书签必须合并');
-assert.equal(oldBackup.bookmarks[0].folder, '全部');
-assert.equal('todos' in oldBackup, false, '不再使用的 todos 不随导入保留');
-assert.equal(oldBackup.settings.wallpaper.type, 'gradient', '旧版远程 preset 壁纸回到默认场景');
-assert.equal(oldBackup.settings.wallpaper.value, '');
-assert.equal(oldBackup.settings.wallpaper.overlay, 30, '用户自己设的暗化保留');
-assert.equal('enhancedAnimations' in oldBackup.settings.appearance, false, '已删除的设置不再保留');
+assert.equal(backup.bookmarks.length, 2, '同一文件夹中完全相同的书签必须合并');
+assert.equal(backup.bookmarks[0].folder, '全部');
+assert.equal(backup.settings.wallpaper.value, 'local-1700000000000');
+assert.equal(backup.settings.wallpaper.overlay, 30, '用户自己设的暗化保留');
+assert.equal(backup.settings.appearance.theme, 'light', '选择的深色文字原样保留');
 assert.equal(sanitizeSettings({}).wallpaper.overlay, 12, '暗化默认值统一为 12');
 assert.deepEqual(sanitizeSettings({}), DEFAULT_SETTINGS, '缺省设置与 DEFAULT_SETTINGS 一致');
 
@@ -92,15 +89,14 @@ const queryBackup = sanitizeImportedData({
     ]
 });
 assert.equal(queryBackup.bookmarks.length, 4, '查询串或路径大小写不同的书签是不同的页面，不能合并');
-assert.equal((oldBackup.settings as any).layout.showStatus, true);
-assert.equal((oldBackup.settings as any).layout.showRecent, true);
-assert.equal((oldBackup.settings as any).appearance.hdrHighlights, true);
-assert.equal('showTodo' in (oldBackup.settings as any).layout, false);
-assert.equal((oldBackup.settings as any).appearance.theme, 'auto', '旧版本默认的配色应迁移为自动');
-assert.equal(sanitizeSettings({ appearance: { theme: 'light' } }).appearance.theme, 'auto', '2.5 之前的 light 是默认值，应迁移为自动');
-assert.equal(sanitizeSettings({ layout: { openInNewTab: false }, appearance: { theme: 'light' } }).appearance.theme, 'light', '2.5 之后主动选择的深色文字必须保留');
+assert.equal(backup.settings.layout.showStatus, true, '缺少的设置取默认值');
+assert.equal(backup.settings.appearance.hdrHighlights, true);
+assert.equal('unknownSetting' in backup.settings.layout, false, '不认识的设置丢弃');
+assert.equal(sanitizeSettings({ appearance: { theme: 'light' } }).appearance.theme, 'light');
 assert.equal(sanitizeSettings({ appearance: { theme: 'dark' } }).appearance.theme, 'dark');
 assert.equal(sanitizeSettings({ wallpaper: { type: 'local', value: 'online-123' } }).wallpaper.value, 'online-123', '缓存的在线壁纸需要保留版本号以触发刷新');
+assert.equal(sanitizeSettings({ wallpaper: { type: 'local', value: 'data:image/png;base64,AAAA' } }).wallpaper.value, '', '壁纸设置里不再接受内嵌图片');
+assert.equal(sanitizeSettings({ wallpaper: { type: 'preset', value: 'https://www.dmoe.cc/random.php' } }).wallpaper.type, 'gradient', '不认识的壁纸类型回到默认场景');
 
 const unsafe = sanitizeImportedData({
     bookmarks: [{ id: 1, name: 'bad', url: 'javascript:alert(1)', icon: 'javascript:alert(2)' }],
@@ -180,7 +176,8 @@ assert.ok(convexSquircle(0.5) > 0.9, '凸面 squircle 应保持平滑的内侧�
 
 async function testTransactions(): Promise<void> {
     Object.assign(syncData, {
-        bookmarks: [
+        [BOOKMARK_CHUNKS_KEY]: 1,
+        [bookmarkChunkKey(0)]: [
             { id: 'a', name: 'A', url: 'https://a.example/', icon: '', folder: '全部', order: 0 },
             { id: 'b', name: 'B', url: 'https://b.example/', icon: '', folder: '全部', order: 1 },
             { id: 'c', name: 'C', url: 'https://c.example/', icon: '', folder: 'POM', order: 0 }
@@ -206,7 +203,6 @@ async function testTransactions(): Promise<void> {
     const extensionBookmark = await store.addBookmark({ name: '扩展页面', url: extensionPage, icon: '', folder: '全部' });
     assert.equal(extensionBookmark.url, extensionPage, '新增书签应接受 chrome-extension 页面');
 
-    assert.equal('bookmarks' in syncData, false, '保存后应移除旧的单键书签数组');
     assert.equal(syncData[BOOKMARK_CHUNKS_KEY], 1);
 
     for (let index = 0; index < 150; index += 1) {
@@ -290,18 +286,21 @@ async function testTabsDoNotOverwriteEachOther(): Promise<void> {
     assert.equal(ownTab, 1, '自己写入的回声不会再次通知');
 }
 
-async function testImportClearsRetiredKeys(): Promise<void> {
-    syncData.todos = [{ text: 'old' }];
+async function testImportDropsExtraChunks(): Promise<void> {
     const store = new AppStore();
     await store.init();
-    await store.replaceImportedData(sanitizeImportedData({ bookmarks: [], todos: [{ text: 'new' }] }));
-    assert.equal('todos' in syncData, false, '导入时清掉旧的 todos 键');
+    const many = Array.from({ length: 120 }, (_, index) => ({ id: index, url: `https://many-${index}.example.com/a/long/path?ref=${index}`, folder: '全部', order: index }));
+    await store.replaceImportedData(sanitizeImportedData({ bookmarks: many }));
+    assert.ok(Number(syncData[BOOKMARK_CHUNKS_KEY]) > 1);
+    await store.replaceImportedData(sanitizeImportedData({ bookmarks: [] }));
+    assert.equal(syncData[BOOKMARK_CHUNKS_KEY], 0);
+    assert.equal(bookmarkChunkKey(1) in syncData, false, '导入较少的书签时清掉多余的分片');
 }
 
 testTransactions()
     .then(testQueryBookmarksSurvive)
     .then(testTabsDoNotOverwriteEachOther)
-    .then(testImportClearsRetiredKeys)
+    .then(testImportDropsExtraChunks)
     .then(() => console.log('TypeScript core tests passed.'))
     .catch((error) => {
         console.error(error);

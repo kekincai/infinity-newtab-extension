@@ -8,7 +8,6 @@ import {
     sanitizeSettings
 } from './backup';
 import {
-    LEGACY_BOOKMARKS_KEY,
     decodeBookmarks,
     encodeBookmarks,
     staleBookmarkKeys,
@@ -28,8 +27,6 @@ const ALL_CHANGES: StoreChangeKey[] = [
     'settings.wallpaper',
     'settings.layout'
 ];
-/** Keys older versions wrote that nothing reads any more; an import clears them. */
-const RETIRED_KEYS = ['todos'];
 
 function initialState(): AppState {
     return {
@@ -50,7 +47,6 @@ export class AppStore extends EventTarget {
     private stateValue = initialState();
     private initialized: Promise<void> | null = null;
     private bookmarkChunks = 0;
-    private hasLegacyBookmarks = false;
     private queue: Promise<unknown> = Promise.resolve();
     private reloadQueued = false;
 
@@ -196,13 +192,9 @@ export class AppStore extends EventTarget {
                 recentSearches: next.recentSearches,
                 lastBackupPrompt: next.lastBackupPrompt
             });
-            const staleKeys = [
-                ...RETIRED_KEYS,
-                ...staleBookmarkKeys(this.bookmarkChunks, encoded.count, this.hasLegacyBookmarks)
-            ];
-            await storageRemove(staleKeys);
+            const staleKeys = staleBookmarkKeys(this.bookmarkChunks, encoded.count);
+            if (staleKeys.length) await storageRemove(staleKeys);
             this.bookmarkChunks = encoded.count;
-            this.hasLegacyBookmarks = false;
             this.stateValue = structuredClone(next);
             this.emit(ALL_CHANGES);
         });
@@ -212,7 +204,6 @@ export class AppStore extends EventTarget {
         return this.serial(async () => {
             await storageClear();
             this.bookmarkChunks = 0;
-            this.hasLegacyBookmarks = false;
             this.stateValue = initialState();
             this.emit(ALL_CHANGES);
         });
@@ -228,7 +219,6 @@ export class AppStore extends EventTarget {
     private async read(): Promise<AppState> {
         const stored = await storageGet<Record<string, unknown>>(null);
         this.bookmarkChunks = storedChunkCount(stored);
-        this.hasLegacyBookmarks = LEGACY_BOOKMARKS_KEY in stored;
         const bookmarks = sanitizeBookmarks(decodeBookmarks(stored));
         return {
             bookmarks,
@@ -282,12 +272,11 @@ export class AppStore extends EventTarget {
 
     /** Stale chunks are harmless to readers, so a failed cleanup never rolls back a save. */
     private async dropStaleBookmarkKeys(nextCount: number): Promise<void> {
-        const stale = staleBookmarkKeys(this.bookmarkChunks, nextCount, this.hasLegacyBookmarks);
+        const stale = staleBookmarkKeys(this.bookmarkChunks, nextCount);
         this.bookmarkChunks = nextCount;
         if (!stale.length) return;
         try {
             await storageRemove(stale);
-            this.hasLegacyBookmarks = false;
         } catch {
             // Retried on the next bookmark save.
         }

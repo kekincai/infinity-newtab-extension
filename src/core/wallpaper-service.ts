@@ -1,6 +1,5 @@
-import { DEFAULT_SETTINGS, isRecord } from './backup';
+import { DEFAULT_SETTINGS } from './backup';
 import { mediaStore, type MediaKind } from './media-store';
-import { storageGet } from './storage';
 import { appStore } from './store';
 import type { ResolvedTheme, WallpaperSettings } from './types';
 
@@ -25,22 +24,6 @@ export async function useOnlineWallpaper(): Promise<void> {
     if (!blob.type.startsWith('image/')) throw new Error('在线壁纸服务返回的不是图片');
     await validateLocalMedia(blob, 'image');
     await storeWallpaper(blob, 'image', 'online');
-}
-
-/**
- * Before 2.5 the random API URL itself was stored as a `preset` wallpaper. The
- * store no longer understands that type and shows the default scene instead,
- * so the stored settings are read directly: one picture is downloaded and kept.
- */
-export async function migrateLegacyWallpaper(): Promise<void> {
-    const { settings } = await storageGet<Record<string, unknown>>(['settings']).catch(() => ({ settings: null }));
-    const wallpaper = isRecord(settings) && isRecord(settings.wallpaper) ? settings.wallpaper : null;
-    if (wallpaper?.type !== 'preset' || typeof wallpaper.value !== 'string' || !wallpaper.value.startsWith(ONLINE_WALLPAPER)) return;
-    try {
-        await useOnlineWallpaper();
-    } catch {
-        // Offline or blocked: the default scene stays, and the next settings save retires the old value.
-    }
 }
 
 /** Pictures and videos dragged or pasted from other apps can arrive without a type; the extension tells instead. */

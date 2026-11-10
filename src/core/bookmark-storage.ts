@@ -1,11 +1,10 @@
 import type { Bookmark } from './types';
 
 /**
- * chrome.storage.sync caps every item at 8 KB, so one `bookmarks` array stops
- * saving after roughly fifty entries. Bookmarks are split into numbered chunks
- * that each stay under the per-item limit; the legacy key is still read.
+ * chrome.storage.sync caps every item at 8 KB, so one bookmarks array would
+ * stop saving after roughly fifty entries. Bookmarks are split into numbered
+ * chunks that each stay under the per-item limit.
  */
-export const LEGACY_BOOKMARKS_KEY = 'bookmarks';
 export const BOOKMARK_CHUNKS_KEY = 'bookmarkChunks';
 const CHUNK_PREFIX = 'bookmarks.';
 const ITEM_BUDGET = 7600;
@@ -37,13 +36,8 @@ export function encodeBookmarks(bookmarks: Bookmark[]): { values: Record<string,
 }
 
 export function decodeBookmarks(stored: Record<string, unknown>): unknown[] {
-    const count = stored[BOOKMARK_CHUNKS_KEY];
-    if (typeof count === 'number' && Number.isInteger(count) && count >= 0) {
-        return Array.from({ length: count }, (_, index) => stored[bookmarkChunkKey(index)])
-            .flatMap((chunk) => Array.isArray(chunk) ? chunk : []);
-    }
-    const legacy = stored[LEGACY_BOOKMARKS_KEY];
-    return Array.isArray(legacy) ? legacy : [];
+    return Array.from({ length: storedChunkCount(stored) }, (_, index) => stored[bookmarkChunkKey(index)])
+        .flatMap((chunk) => Array.isArray(chunk) ? chunk : []);
 }
 
 export function storedChunkCount(stored: Record<string, unknown>): number {
@@ -52,8 +46,8 @@ export function storedChunkCount(stored: Record<string, unknown>): number {
 }
 
 /** Keys left over after a save that produced `nextCount` chunks. */
-export function staleBookmarkKeys(previousCount: number, nextCount: number, hasLegacy: boolean): string[] {
-    const keys = hasLegacy ? [LEGACY_BOOKMARKS_KEY] : [];
+export function staleBookmarkKeys(previousCount: number, nextCount: number): string[] {
+    const keys: string[] = [];
     for (let index = nextCount; index < previousCount; index += 1) keys.push(bookmarkChunkKey(index));
     return keys;
 }
