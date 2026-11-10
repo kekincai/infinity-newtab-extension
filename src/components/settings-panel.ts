@@ -83,7 +83,7 @@ export class SettingsPanel extends StoreElement {
             <section class="glass-panel settings-window" role="dialog" aria-modal="true" aria-label="设置" aria-hidden="true" inert>
                 <aside class="settings-sidebar">
                     <div class="settings-title">
-                        <button class="settings-close" type="button" aria-label="关闭设置" title="关闭">${ICONS.close}</button>
+                        <button class="settings-close" type="button" aria-label="关闭设置" aria-keyshortcuts="Escape" title="关闭（Esc）">${ICONS.close}</button>
                     </div>
                     <label class="settings-search">
                         ${ICONS.search}
@@ -184,7 +184,7 @@ export class SettingsPanel extends StoreElement {
             `)}
             ${group('备份', `
                 ${infoRow('导出备份', '书签、设置和本地壁纸，一个 JSON 文件', '<button class="pill-button export-data" type="button">导出…</button>')}
-                ${infoRow('从备份恢复', '支持 1.0 / 2.0 备份，会覆盖当前数据', '<label class="pill-button import-data">导入…<input type="file" accept="application/json,.json" hidden></label>')}
+                ${infoRow('从备份恢复', '会覆盖当前数据，建议先导出一份', '<label class="pill-button import-data">导入…<input type="file" accept="application/json,.json" hidden></label>')}
                 ${toggleRow('backupReminder', '每月提醒我备份')}
             `)}
             ${group('', `
