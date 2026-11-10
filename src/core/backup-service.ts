@@ -1,46 +1,42 @@
 import { dataUrlToBlob, isRecord, sanitizeImportedData } from './backup';
 import { mediaStore } from './media-store';
 import { appStore } from './store';
-import { storageGet } from './storage';
 import type { BackupData } from './types';
 
 export class BackupService {
+    /** Backups keep the flat 2.0 layout even though sync storage now chunks bookmarks. */
     async exportData(): Promise<BackupData> {
         return {
             version: '2.0',
             exportDate: new Date().toISOString(),
-            data: await this.collectData(),
+            data: structuredClone(appStore.state) as unknown as Record<string, unknown>,
             localMedia: await mediaStore.export()
         };
     }
 
-    /** Backups keep the flat 2.0 layout even though sync storage now chunks bookmarks. */
-    private async collectData(): Promise<Record<string, unknown>> {
-        const { todos } = await storageGet<Record<string, unknown>>(['todos']);
-        return {
-            ...structuredClone(appStore.state),
-            ...(Array.isArray(todos) ? { todos } : {})
-        };
-    }
-
+    /** Media is replaced first; if saving the synced data then fails, the previous media comes back. */
     async importData(value: unknown): Promise<void> {
         if (!isRecord(value) || !value.version || !isRecord(value.data)) {
             throw new Error('备份文件格式无效');
         }
         const data = sanitizeImportedData(value.data);
-        if (Object.hasOwn(value, 'localMedia')) await mediaStore.import(value.localMedia, true);
-
-        const settings = data.settings;
-        if (isRecord(settings) && isRecord(settings.wallpaper)) {
-            const wallpaper = settings.wallpaper;
-            if (wallpaper.type === 'local' && typeof wallpaper.value === 'string' && wallpaper.value.startsWith('data:image/')) {
+        // Without IndexedDB there is no media to protect; a backup without media still imports.
+        const previous = await mediaStore.snapshot().catch(() => null);
+        try {
+            if (Object.hasOwn(value, 'localMedia')) await mediaStore.import(value.localMedia);
+            // 1.0 backups carried a local picture inline in the settings.
+            const { wallpaper } = data.settings;
+            if (wallpaper.type === 'local' && wallpaper.value.startsWith('data:image/')) {
                 const image = dataUrlToBlob(wallpaper.value);
                 if (!image) throw new Error('旧备份中的本地壁纸无效');
                 await mediaStore.set('image', image);
                 wallpaper.value = 'local';
             }
+            await appStore.replaceImportedData(data);
+        } catch (error) {
+            if (previous) await mediaStore.restore(previous).catch(() => undefined);
+            throw error;
         }
-        await appStore.replaceImportedData(data);
     }
 
     download(data: BackupData, filename = `infinity-newtab-backup-${dateStamp()}.json`): void {

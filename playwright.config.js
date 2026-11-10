@@ -7,7 +7,7 @@ module.exports = defineConfig({
     fullyParallel: false,
     workers: 1,
     reporter: [['list']],
-    outputDir: '/tmp/infinity-newtab-playwright-results',
+    outputDir: 'test-results',
     use: {
         baseURL: 'http://127.0.0.1:4173',
         channel: 'chrome',

@@ -150,12 +150,15 @@ export function notifyError(error: unknown, fallback = '操作失败'): void {
 }
 
 export type MenuItem =
-    | { label: string; icon?: string; danger?: boolean; disabled?: boolean; action: () => void }
+    | { label: string; icon?: string; danger?: boolean; action: () => void }
     | { separator: true }
     | { heading: string };
 
+/** A pointer position, or an element to open under (keyboard and button use). */
+export type MenuAnchor = { x: number; y: number } | HTMLElement;
+
 /** Opens a context menu at a point, or anchored under an element for keyboard / button use. */
-export function openMenu(items: MenuItem[], at: { x: number; y: number } | HTMLElement): void {
+export function openMenu(items: MenuItem[], at: MenuAnchor): void {
     document.querySelector('.context-menu')?.dispatchEvent(new Event('menu-close'));
     const menu = document.createElement('div');
     menu.className = 'context-menu glass-panel';
@@ -163,7 +166,7 @@ export function openMenu(items: MenuItem[], at: { x: number; y: number } | HTMLE
     menu.innerHTML = items.map((item, index) => {
         if ('separator' in item) return '<hr>';
         if ('heading' in item) return `<span class="menu-heading">${escapeHtml(item.heading)}</span>`;
-        return `<button type="button" role="menuitem" data-index="${index}" class="${item.danger ? 'danger' : ''}" ${item.disabled ? 'disabled' : ''}>${item.icon ? `<i aria-hidden="true">${item.icon}</i>` : '<i></i>'}<span>${escapeHtml(item.label)}</span></button>`;
+        return `<button type="button" role="menuitem" data-index="${index}" class="${item.danger ? 'danger' : ''}">${item.icon ? `<i aria-hidden="true">${item.icon}</i>` : '<i></i>'}<span>${escapeHtml(item.label)}</span></button>`;
     }).join('');
     document.body.append(menu);
 
@@ -188,7 +191,7 @@ export function openMenu(items: MenuItem[], at: { x: number; y: number } | HTMLE
     window.addEventListener('blur', close);
     window.addEventListener('resize', close);
 
-    const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button:not([disabled])')];
+    const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button')];
     menu.addEventListener('click', (event) => {
         const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-index]');
         const item = button ? items[Number(button.dataset.index)] : null;

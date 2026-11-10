@@ -23,9 +23,11 @@
   }
   function normalizeUrl(value) {
     if (typeof value !== "string" || !value.trim()) return "";
-    const candidate = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(value.trim()) ? value.trim() : `https://${value.trim()}`;
+    const text = value.trim();
+    const hasScheme = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(text);
     try {
-      const url = new URL(candidate);
+      let url = new URL(hasScheme ? text : `https://${text}`);
+      if (!hasScheme && LOCAL_HOST.test(url.hostname)) url = new URL(`http://${text}`);
       return BOOKMARK_PROTOCOLS.has(url.protocol) && url.hostname ? url.href : "";
     } catch {
       return "";
@@ -89,19 +91,20 @@
   function bookmarkIconCanUpgrade(bookmark) {
     return Boolean(bookmark.icon && !isManagedFavicon(bookmark.icon));
   }
-  function bookmarkIconIsRaster(bookmark) {
-    const icon2 = bookmarkIcon(bookmark);
-    return !/^data:image\/svg\+xml/i.test(icon2) && !/\.svg(?:$|[?#])/i.test(icon2);
-  }
   function bookmarkIconFallback(bookmark) {
     return bookmark.icon && !isManagedFavicon(bookmark.icon) ? faviconUrl(bookmark.url) : DEFAULT_ICON;
   }
-  var DEFAULT_ICON, BOOKMARK_PROTOCOLS, TWO_LEVEL_SUFFIXES, HOST_NAMES, BRAND_NAMES;
+  function compareBookmarks(left, right) {
+    return left.order - right.order || String(left.id).localeCompare(String(right.id));
+  }
+  var DEFAULT_ICON, BOOKMARK_PROTOCOLS, LOCAL_HOST, ROOT_FOLDER, TWO_LEVEL_SUFFIXES, HOST_NAMES, BRAND_NAMES;
   var init_utils = __esm({
     "src/core/utils.ts"() {
       "use strict";
       DEFAULT_ICON = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHJ4PSI4IiBmaWxsPSIjNjM2NmYxIi8+PHBhdGggZD0iTTE2IDhWMjRNOCAxNkgyNCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=";
       BOOKMARK_PROTOCOLS = /* @__PURE__ */ new Set(["http:", "https:", "chrome-extension:"]);
+      LOCAL_HOST = /^(localhost|.+\.localhost|.+\.local|\d{1,3}(\.\d{1,3}){3}|\[[\da-f:.]+\])$/i;
+      ROOT_FOLDER = "\u5168\u90E8";
       TWO_LEVEL_SUFFIXES = /* @__PURE__ */ new Set([
         "com.cn",
         "net.cn",
@@ -165,100 +168,102 @@
   // src/core/backup.ts
   function sanitizeImportedData(value) {
     if (!isRecord(value)) throw new Error("Backup data must be an object");
-    const sanitized = {};
-    const bookmarks = sanitizeBookmarks(Array.isArray(value.bookmarks) ? value.bookmarks : []);
-    sanitized.bookmarks = bookmarks;
-    const folders = /* @__PURE__ */ new Set();
-    if (Array.isArray(value.folders)) {
-      value.folders.forEach((folder) => {
-        const name = cleanText(folder, 80);
-        if (name) folders.add(name);
-      });
-    }
-    folders.add("\u5168\u90E8");
-    bookmarks.forEach((bookmark) => folders.add(bookmark.folder));
-    sanitized.folders = Array.from(folders);
-    if (value.settings !== void 0) sanitized.settings = sanitizeSettings(value.settings);
-    if (Array.isArray(value.todos)) sanitized.todos = value.todos;
-    if (Array.isArray(value.recentSearches)) {
-      sanitized.recentSearches = value.recentSearches.map((entry) => cleanText(entry, 200)).filter(Boolean).slice(0, 20);
-    }
-    const backupTime = Number(value.lastBackupPrompt);
-    if (Number.isFinite(backupTime)) sanitized.lastBackupPrompt = backupTime;
-    return sanitized;
+    const bookmarks = sanitizeBookmarks(Array.isArray(value.bookmarks) ? value.bookmarks : [], true);
+    return {
+      bookmarks,
+      folders: normalizeFolders(value.folders, bookmarks),
+      settings: sanitizeSettings(value.settings),
+      recentSearches: normalizeRecentSearches(value.recentSearches),
+      lastBackupPrompt: finiteNumber(value.lastBackupPrompt, 0)
+    };
   }
-  function sanitizeBookmarks(values) {
-    const merged = /* @__PURE__ */ new Map();
+  function sanitizeBookmarks(values, mergeDuplicates = false) {
+    const bookmarks = [];
+    const seen = /* @__PURE__ */ new Set();
     values.forEach((raw, index) => {
       if (!isRecord(raw)) return;
       const url = normalizeUrl(raw.url);
       if (!url) return;
-      const folder = cleanText(raw.folder, 80) || "\u5168\u90E8";
-      const key = `${folder}|${canonicalUrl(url)}`;
-      if (merged.has(key)) return;
+      const folder = cleanText(raw.folder, 80) || ROOT_FOLDER;
+      const key = `${folder}|${url}`;
+      if (mergeDuplicates && seen.has(key)) return;
+      seen.add(key);
       const id = typeof raw.id === "number" || typeof raw.id === "string" ? raw.id : Date.now() + index;
-      const icon2 = sanitizeBookmarkIcon(raw.icon);
       const order = Number(raw.order);
-      merged.set(key, {
+      bookmarks.push({
         id,
         folder,
         url,
         name: cleanText(raw.name, 160) || new URL(url).hostname,
-        icon: icon2,
+        icon: sanitizeBookmarkIcon(raw.icon),
         order: Number.isFinite(order) ? order : index
       });
     });
     const folders = /* @__PURE__ */ new Map();
-    merged.forEach((bookmark) => {
+    bookmarks.forEach((bookmark) => {
       const list = folders.get(bookmark.folder) ?? [];
       list.push(bookmark);
       folders.set(bookmark.folder, list);
     });
     folders.forEach((list) => {
-      list.sort((left, right) => left.order - right.order || String(left.id).localeCompare(String(right.id)));
+      list.sort(compareBookmarks);
       list.forEach((bookmark, index) => {
         bookmark.order = index;
       });
     });
-    return Array.from(merged.values());
+    return bookmarks;
+  }
+  function normalizeFolders(value, bookmarks) {
+    const folders = /* @__PURE__ */ new Set([ROOT_FOLDER]);
+    if (Array.isArray(value)) value.forEach((item) => {
+      const name = cleanText(item, 80);
+      if (name) folders.add(name);
+    });
+    bookmarks.forEach((bookmark) => folders.add(bookmark.folder));
+    return [...folders];
+  }
+  function normalizeRecentSearches(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => cleanText(item, 200)).filter(Boolean).slice(0, 20);
   }
   function sanitizeSettings(value) {
     const source = isRecord(value) ? value : {};
     const layout = isRecord(source.layout) ? source.layout : {};
     const wallpaper = isRecord(source.wallpaper) ? source.wallpaper : {};
     const appearance = isRecord(source.appearance) ? source.appearance : {};
+    const defaults = DEFAULT_SETTINGS;
     const searchEngines = ["google", "bing", "baidu", "duckduckgo"];
-    const wallpaperTypes = ["gradient", "preset", "local", "video"];
+    const wallpaperTypes = ["gradient", "local", "video"];
+    const wallpaperType = wallpaperTypes.includes(String(wallpaper.type)) ? wallpaper.type : defaults.wallpaper.type;
     return {
       layout: {
-        showClock: booleanOr(layout.showClock, true),
-        showSearch: booleanOr(layout.showSearch, true),
-        showBookmarks: booleanOr(layout.showBookmarks, true),
-        showStatus: booleanOr(layout.showStatus, true),
-        showRecent: booleanOr(layout.showRecent, true),
-        openInNewTab: booleanOr(layout.openInNewTab, false),
-        searchEngine: searchEngines.includes(String(layout.searchEngine)) ? layout.searchEngine : "google",
-        saveSearches: booleanOr(layout.saveSearches, true),
-        backupReminder: booleanOr(layout.backupReminder, true)
+        showClock: booleanOr(layout.showClock, defaults.layout.showClock),
+        showSearch: booleanOr(layout.showSearch, defaults.layout.showSearch),
+        showBookmarks: booleanOr(layout.showBookmarks, defaults.layout.showBookmarks),
+        showStatus: booleanOr(layout.showStatus, defaults.layout.showStatus),
+        showRecent: booleanOr(layout.showRecent, defaults.layout.showRecent),
+        openInNewTab: booleanOr(layout.openInNewTab, defaults.layout.openInNewTab),
+        searchEngine: searchEngines.includes(String(layout.searchEngine)) ? layout.searchEngine : defaults.layout.searchEngine,
+        saveSearches: booleanOr(layout.saveSearches, defaults.layout.saveSearches),
+        backupReminder: booleanOr(layout.backupReminder, defaults.layout.backupReminder)
       },
       wallpaper: {
-        type: wallpaperTypes.includes(String(wallpaper.type)) ? wallpaper.type : "gradient",
-        value: sanitizeWallpaperValue(wallpaper.value),
-        blur: clampNumber(wallpaper.blur, 0, 40, 0),
-        overlay: clampNumber(wallpaper.overlay, 0, 60, 12),
-        idleHide: booleanOr(wallpaper.idleHide, true),
-        pauseOnBattery: booleanOr(wallpaper.pauseOnBattery, true),
-        pauseWhenHidden: booleanOr(wallpaper.pauseWhenHidden, true),
-        sound: booleanOr(wallpaper.sound, false)
+        type: wallpaperType,
+        value: wallpaperType === "gradient" ? "" : sanitizeWallpaperValue(wallpaper.value),
+        blur: clampNumber(wallpaper.blur, 0, 40, defaults.wallpaper.blur),
+        overlay: clampNumber(wallpaper.overlay, 0, 60, defaults.wallpaper.overlay),
+        idleHide: booleanOr(wallpaper.idleHide, defaults.wallpaper.idleHide),
+        pauseOnBattery: booleanOr(wallpaper.pauseOnBattery, defaults.wallpaper.pauseOnBattery),
+        pauseWhenHidden: booleanOr(wallpaper.pauseWhenHidden, defaults.wallpaper.pauseWhenHidden),
+        sound: booleanOr(wallpaper.sound, defaults.wallpaper.sound)
       },
       appearance: {
         clockFormat: appearance.clockFormat === "12h" ? "12h" : "24h",
         dateFormat: appearance.dateFormat === "short" ? "short" : "long",
-        enhancedAnimations: booleanOr(appearance.enhancedAnimations, true),
-        hdrHighlights: booleanOr(appearance.hdrHighlights, true),
+        hdrHighlights: booleanOr(appearance.hdrHighlights, defaults.appearance.hdrHighlights),
         theme: sanitizeTheme(appearance.theme, layout),
         glass: appearance.glass === "tinted" ? "tinted" : "clear",
-        reduceTransparency: booleanOr(appearance.reduceTransparency, false)
+        reduceTransparency: booleanOr(appearance.reduceTransparency, defaults.appearance.reduceTransparency)
       }
     };
   }
@@ -276,10 +281,6 @@
       return null;
     }
   }
-  function canonicalUrl(value) {
-    const url = new URL(value);
-    return `${url.origin}${url.pathname}`.toLowerCase();
-  }
   function sanitizeTheme(theme, layout) {
     if (theme === "dark") return "dark";
     if (theme === "light") return typeof layout.openInNewTab === "boolean" ? "light" : "auto";
@@ -290,8 +291,9 @@
     return icon2.startsWith("data:") && icon2.length > MAX_INLINE_ICON_LENGTH ? "" : icon2;
   }
   function sanitizeWallpaperValue(value) {
-    if (typeof value === "string" && (value === "" || /^(local|online)(-\d+)?$/.test(value))) return value;
-    return sanitizeRemoteUrl(value, true);
+    if (typeof value !== "string") return "";
+    if (/^(local|online)(-\d+)?$/.test(value) || value.startsWith("data:image/")) return value;
+    return "";
   }
   function booleanOr(value, fallback) {
     return typeof value === "boolean" ? value : fallback;
@@ -299,6 +301,10 @@
   function clampNumber(value, minimum, maximum, fallback) {
     const number = Number(value);
     return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
+  }
+  function finiteNumber(value, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
   }
   function isRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -333,7 +339,6 @@
         appearance: {
           clockFormat: "24h",
           dateFormat: "long",
-          enhancedAnimations: true,
           hdrHighlights: true,
           theme: "auto",
           glass: "clear",
@@ -400,39 +405,44 @@
   });
 
   // src/core/storage.ts
-  function area(name) {
-    return chrome.storage[name];
+  function sync() {
+    return chrome.storage.sync;
   }
-  function storageGet(keys, areaName = "sync") {
+  function storageGet(keys) {
     return new Promise((resolve, reject) => {
-      area(areaName).get(keys, (result) => {
+      sync().get(keys, (result) => {
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
         else resolve(result ?? {});
       });
     });
   }
-  function storageSet(values, areaName = "sync") {
+  function storageSet(values) {
     return new Promise((resolve, reject) => {
-      area(areaName).set(values, () => {
+      sync().set(values, () => {
         if (chrome.runtime.lastError) reject(new Error(describeWriteError(chrome.runtime.lastError.message)));
         else resolve();
       });
     });
   }
-  function storageRemove(keys, areaName = "sync") {
+  function storageRemove(keys) {
     return new Promise((resolve, reject) => {
-      area(areaName).remove(keys, () => {
+      sync().remove(keys, () => {
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
         else resolve();
       });
     });
   }
-  function storageClear(areaName = "sync") {
+  function storageClear() {
     return new Promise((resolve, reject) => {
-      area(areaName).clear(() => {
+      sync().clear(() => {
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
         else resolve();
       });
+    });
+  }
+  function onSyncChanged(callback) {
+    chrome.storage.onChanged?.addListener?.((_changes, areaName) => {
+      if (areaName === "sync") callback();
     });
   }
   function describeWriteError(message = "") {
@@ -450,11 +460,19 @@
   function initialState() {
     return {
       bookmarks: [],
-      folders: ["\u5168\u90E8"],
+      folders: [ROOT_FOLDER],
       settings: structuredClone(DEFAULT_SETTINGS),
       recentSearches: [],
       lastBackupPrompt: 0
     };
+  }
+  function diff(previous, next) {
+    const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+    return ALL_CHANGES.filter((change) => {
+      if (!change.startsWith("settings.")) return !same(previous[change], next[change]);
+      const section = change.slice("settings.".length);
+      return !same(previous.settings[section], next.settings[section]);
+    });
   }
   function normalizeBookmarkInput(input, state, id = `${Date.now()}-${crypto.randomUUID()}`) {
     const url = normalizeUrl(input.url);
@@ -464,7 +482,7 @@
     if (icon2.startsWith("data:") && icon2.length > MAX_INLINE_ICON_LENGTH) {
       throw new Error("\u5185\u5D4C\u56FE\u6807\u8FC7\u5927\uFF0C\u8BF7\u6539\u7528\u56FE\u6807\u7F51\u5740");
     }
-    const folder = state.folders.includes(input.folder) ? input.folder : "\u5168\u90E8";
+    const folder = state.folders.includes(input.folder) ? input.folder : ROOT_FOLDER;
     return {
       id,
       url,
@@ -474,19 +492,6 @@
       order: state.bookmarks.filter((bookmark) => bookmark.folder === folder && String(bookmark.id) !== String(id)).length
     };
   }
-  function normalizeFolders(value, bookmarks) {
-    const folders = /* @__PURE__ */ new Set(["\u5168\u90E8"]);
-    if (Array.isArray(value)) value.forEach((item) => {
-      const name = cleanText(item, 80);
-      if (name) folders.add(name);
-    });
-    bookmarks.forEach((bookmark) => folders.add(bookmark.folder));
-    return [...folders];
-  }
-  function normalizeRecentSearches(value) {
-    if (!Array.isArray(value)) return [];
-    return value.map((item) => cleanText(item, 200)).filter(Boolean).slice(0, 20);
-  }
   function normalizeOrders(bookmarks) {
     new Set(bookmarks.map((bookmark) => bookmark.folder)).forEach((folder) => normalizeFolderOrder(bookmarks, folder));
   }
@@ -495,14 +500,7 @@
       bookmark.order = index;
     });
   }
-  function compareBookmarks(left, right) {
-    return left.order - right.order || String(left.id).localeCompare(String(right.id));
-  }
-  function finiteNumber(value, fallback) {
-    const number = Number(value);
-    return Number.isFinite(number) ? number : fallback;
-  }
-  var ALL_CHANGES, AppStore, appStore;
+  var ALL_CHANGES, RETIRED_KEYS, AppStore, appStore;
   var init_store = __esm({
     "src/core/store.ts"() {
       "use strict";
@@ -519,30 +517,27 @@
         "settings.wallpaper",
         "settings.layout"
       ];
+      RETIRED_KEYS = ["todos"];
       AppStore = class extends EventTarget {
         stateValue = initialState();
-        initialized = false;
+        initialized = null;
         bookmarkChunks = 0;
         hasLegacyBookmarks = false;
+        queue = Promise.resolve();
+        reloadQueued = false;
         get state() {
           return this.stateValue;
         }
-        async init(force = false) {
-          if (this.initialized && !force) return;
-          const stored = await storageGet(null);
-          this.bookmarkChunks = storedChunkCount(stored);
-          this.hasLegacyBookmarks = LEGACY_BOOKMARKS_KEY in stored;
-          const bookmarks = sanitizeBookmarks(decodeBookmarks(stored));
-          const folders = normalizeFolders(stored.folders, bookmarks);
-          this.stateValue = {
-            bookmarks,
-            folders,
-            settings: sanitizeSettings(stored.settings),
-            recentSearches: normalizeRecentSearches(stored.recentSearches),
-            lastBackupPrompt: finiteNumber(stored.lastBackupPrompt, 0)
-          };
-          this.initialized = true;
-          this.emit(ALL_CHANGES);
+        init() {
+          this.initialized ??= this.serial(async () => {
+            this.stateValue = await this.read();
+            this.emit(ALL_CHANGES);
+            onSyncChanged(this.queueReload);
+          });
+          this.initialized.catch(() => {
+            this.initialized = null;
+          });
+          return this.initialized;
         }
         async updateSettings(section, patch) {
           await this.commit((draft) => {
@@ -554,37 +549,42 @@
         }
         async addFolder(value) {
           const name = cleanText(value, 80);
-          if (!name || this.stateValue.folders.includes(name)) return false;
+          let added = false;
           await this.commit((draft) => {
+            if (!name || draft.folders.includes(name)) return false;
             draft.folders.push(name);
+            added = true;
           }, ["folders"]);
-          return true;
+          return added;
         }
         async renameFolder(from, to) {
           const name = cleanText(to, 80);
-          if (!name || from === "\u5168\u90E8" || name !== from && this.stateValue.folders.includes(name)) return false;
+          let renamed = false;
           await this.commit((draft) => {
+            if (!name || from === ROOT_FOLDER || name !== from && draft.folders.includes(name)) return false;
             draft.folders = draft.folders.map((folder) => folder === from ? name : folder);
             draft.bookmarks.forEach((bookmark) => {
               if (bookmark.folder === from) bookmark.folder = name;
             });
             normalizeOrders(draft.bookmarks);
+            renamed = true;
           }, ["folders", "bookmarks"]);
-          return true;
+          return renamed;
         }
         async deleteFolder(folder) {
-          if (folder === "\u5168\u90E8") return;
+          if (folder === ROOT_FOLDER) return;
           await this.commit((draft) => {
             draft.folders = draft.folders.filter((item) => item !== folder);
             draft.bookmarks.forEach((bookmark) => {
-              if (bookmark.folder === folder) bookmark.folder = "\u5168\u90E8";
+              if (bookmark.folder === folder) bookmark.folder = ROOT_FOLDER;
             });
             normalizeOrders(draft.bookmarks);
           }, ["folders", "bookmarks"]);
         }
         async addBookmark(input) {
-          const bookmark = normalizeBookmarkInput(input, this.stateValue);
+          let bookmark = null;
           await this.commit((draft) => {
+            bookmark = normalizeBookmarkInput(input, draft);
             draft.bookmarks.push(bookmark);
           }, ["bookmarks"]);
           return bookmark;
@@ -610,7 +610,7 @@
           await this.commit((draft) => {
             const bookmark = draft.bookmarks.find((item) => String(item.id) === String(id));
             if (!bookmark) throw new Error("\u627E\u4E0D\u5230\u62D6\u52A8\u7684\u4E66\u7B7E");
-            const destination = draft.folders.includes(targetFolder) ? targetFolder : "\u5168\u90E8";
+            const destination = draft.folders.includes(targetFolder) ? targetFolder : ROOT_FOLDER;
             const source = bookmark.folder;
             bookmark.folder = destination;
             const destinationList = draft.bookmarks.filter((item) => item.folder === destination && String(item.id) !== String(id)).sort(compareBookmarks);
@@ -640,59 +640,90 @@
             draft.lastBackupPrompt = value;
           }, ["lastBackupPrompt"]);
         }
-        async replaceImportedData(data) {
-          const next = initialState();
-          next.bookmarks = sanitizeBookmarks(Array.isArray(data.bookmarks) ? data.bookmarks : []);
-          next.folders = normalizeFolders(data.folders, next.bookmarks);
-          next.settings = sanitizeSettings(data.settings);
-          next.recentSearches = normalizeRecentSearches(data.recentSearches);
-          next.lastBackupPrompt = finiteNumber(data.lastBackupPrompt, 0);
-          const encoded = encodeBookmarks(next.bookmarks);
-          const values = {
-            ...encoded.values,
-            folders: next.folders,
-            settings: next.settings,
-            recentSearches: next.recentSearches,
-            lastBackupPrompt: next.lastBackupPrompt,
-            ...Array.isArray(data.todos) ? { todos: data.todos } : {}
-          };
-          await storageSet(values);
-          const staleKeys = [
-            ...["todos"].filter((key) => !(key in values)),
-            ...staleBookmarkKeys(this.bookmarkChunks, encoded.count, this.hasLegacyBookmarks)
-          ];
-          if (staleKeys.length) await storageRemove(staleKeys);
-          this.bookmarkChunks = encoded.count;
-          this.hasLegacyBookmarks = false;
-          this.stateValue = next;
-          this.initialized = true;
-          this.emit(ALL_CHANGES);
-        }
-        async reset() {
-          await storageClear("sync");
-          this.bookmarkChunks = 0;
-          this.hasLegacyBookmarks = false;
-          this.stateValue = initialState();
-          this.emit(ALL_CHANGES);
-        }
-        async commit(mutator, keys, changes = keys) {
-          const draft = structuredClone(this.stateValue);
-          mutator(draft);
-          const values = {};
-          let bookmarkChunks = null;
-          keys.forEach((key) => {
-            if (key !== "bookmarks") {
-              values[key] = draft[key];
-              return;
-            }
-            const encoded = encodeBookmarks(draft.bookmarks);
-            Object.assign(values, encoded.values);
-            bookmarkChunks = encoded.count;
+        /** Replaces everything with an already sanitized backup (see `sanitizeImportedData`). */
+        replaceImportedData(next) {
+          return this.serial(async () => {
+            const encoded = encodeBookmarks(next.bookmarks);
+            await storageSet({
+              ...encoded.values,
+              folders: next.folders,
+              settings: next.settings,
+              recentSearches: next.recentSearches,
+              lastBackupPrompt: next.lastBackupPrompt
+            });
+            const staleKeys = [
+              ...RETIRED_KEYS,
+              ...staleBookmarkKeys(this.bookmarkChunks, encoded.count, this.hasLegacyBookmarks)
+            ];
+            await storageRemove(staleKeys);
+            this.bookmarkChunks = encoded.count;
+            this.hasLegacyBookmarks = false;
+            this.stateValue = structuredClone(next);
+            this.emit(ALL_CHANGES);
           });
-          await storageSet(values);
-          this.stateValue = draft;
-          if (bookmarkChunks !== null) await this.dropStaleBookmarkKeys(bookmarkChunks);
-          this.emit(changes);
+        }
+        reset() {
+          return this.serial(async () => {
+            await storageClear();
+            this.bookmarkChunks = 0;
+            this.hasLegacyBookmarks = false;
+            this.stateValue = initialState();
+            this.emit(ALL_CHANGES);
+          });
+        }
+        /** Runs tasks one after another, so a write always starts from the latest state. */
+        serial(task) {
+          const run = this.queue.then(task, task);
+          this.queue = run.catch(() => void 0);
+          return run;
+        }
+        async read() {
+          const stored = await storageGet(null);
+          this.bookmarkChunks = storedChunkCount(stored);
+          this.hasLegacyBookmarks = LEGACY_BOOKMARKS_KEY in stored;
+          const bookmarks = sanitizeBookmarks(decodeBookmarks(stored));
+          return {
+            bookmarks,
+            folders: normalizeFolders(stored.folders, bookmarks),
+            settings: sanitizeSettings(stored.settings),
+            recentSearches: normalizeRecentSearches(stored.recentSearches),
+            lastBackupPrompt: finiteNumber(stored.lastBackupPrompt, 0)
+          };
+        }
+        /** Several change events (a save and its chunk cleanup) collapse into one reload. */
+        queueReload = () => {
+          if (this.reloadQueued) return;
+          this.reloadQueued = true;
+          void this.serial(async () => {
+            this.reloadQueued = false;
+            const next = await this.read();
+            const changes = diff(this.stateValue, next);
+            if (!changes.length) return;
+            this.stateValue = next;
+            this.emit(changes);
+          }).catch(() => void 0);
+        };
+        /** A mutator may return `false` to make no change at all. */
+        commit(mutator, keys, changes = keys) {
+          return this.serial(async () => {
+            const draft = structuredClone(this.stateValue);
+            if (mutator(draft) === false) return;
+            const values = {};
+            let bookmarkChunks = null;
+            keys.forEach((key) => {
+              if (key !== "bookmarks") {
+                values[key] = draft[key];
+                return;
+              }
+              const encoded = encodeBookmarks(draft.bookmarks);
+              Object.assign(values, encoded.values);
+              bookmarkChunks = encoded.count;
+            });
+            await storageSet(values);
+            this.stateValue = draft;
+            if (bookmarkChunks !== null) await this.dropStaleBookmarkKeys(bookmarkChunks);
+            this.emit(changes);
+          });
         }
         /** Stale chunks are harmless to readers, so a failed cleanup never rolls back a save. */
         async dropStaleBookmarkKeys(nextCount) {
@@ -716,6 +747,7 @@
   // src/core/chrome-fallback.ts
   function installChromeFallback() {
     if (globalThis.chrome?.storage?.sync) return;
+    const syncKey = "infinity-preview-sync";
     const makeArea = (name) => ({
       get(keys, callback) {
         const values = JSON.parse(localStorage.getItem(name) || "{}");
@@ -742,7 +774,17 @@
     });
     globalThis.chrome = {
       runtime: { id: "preview", lastError: null, getURL: (path) => new URL(path, location.href).href },
-      storage: { sync: makeArea("infinity-preview-sync"), local: makeArea("infinity-preview-local") },
+      storage: {
+        sync: makeArea(syncKey),
+        // Other preview tabs writing to localStorage stand in for other tabs and devices.
+        onChanged: {
+          addListener(listener) {
+            window.addEventListener("storage", (event) => {
+              if (event.key === syncKey) listener({}, "sync");
+            });
+          }
+        }
+      },
       tabs: {
         query: (_query, done) => done([]),
         update: () => void 0,
@@ -767,84 +809,96 @@
       reader.readAsDataURL(blob);
     });
   }
-  var DATABASE, STORE, MediaStore, mediaStore;
+  var DATABASE, STORE, KINDS, MediaStore, mediaStore;
   var init_media_store = __esm({
     "src/core/media-store.ts"() {
       "use strict";
       init_backup();
       DATABASE = "infinity-wallpaper";
       STORE = "wallpapers";
+      KINDS = ["image", "video"];
       MediaStore = class {
+        database = null;
         async get(kind) {
           const database = await this.open();
-          try {
-            return await new Promise((resolve, reject) => {
-              const request = database.transaction(STORE, "readonly").objectStore(STORE).get(kind);
-              request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
-              request.onerror = () => reject(request.error ?? new Error("\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u58C1\u7EB8"));
-            });
-          } finally {
-            database.close();
-          }
+          return new Promise((resolve, reject) => {
+            const request = database.transaction(STORE, "readonly").objectStore(STORE).get(kind);
+            request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
+            request.onerror = () => reject(request.error ?? new Error("\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u58C1\u7EB8"));
+          });
         }
         async set(kind, value) {
-          const database = await this.open();
-          try {
-            await new Promise((resolve, reject) => {
-              const transaction = database.transaction(STORE, "readwrite");
-              transaction.objectStore(STORE).put(value, kind);
-              transaction.oncomplete = () => resolve();
-              transaction.onerror = () => reject(transaction.error ?? new Error("\u65E0\u6CD5\u4FDD\u5B58\u672C\u5730\u58C1\u7EB8"));
-              transaction.onabort = () => reject(transaction.error ?? new Error("\u672C\u5730\u58C1\u7EB8\u5B58\u50A8\u5DF2\u4E2D\u6B62"));
-            });
-          } finally {
-            database.close();
-          }
+          await this.write((store) => store.put(value, kind), "\u65E0\u6CD5\u4FDD\u5B58\u672C\u5730\u58C1\u7EB8", "\u672C\u5730\u58C1\u7EB8\u5B58\u50A8\u5DF2\u4E2D\u6B62");
         }
         async clear(kind) {
-          const database = await this.open();
-          try {
-            await new Promise((resolve, reject) => {
-              const transaction = database.transaction(STORE, "readwrite");
-              transaction.objectStore(STORE).delete(kind);
-              transaction.oncomplete = () => resolve();
-              transaction.onerror = () => reject(transaction.error ?? new Error("\u65E0\u6CD5\u5220\u9664\u672C\u5730\u58C1\u7EB8"));
-              transaction.onabort = () => reject(transaction.error ?? new Error("\u672C\u5730\u58C1\u7EB8\u5220\u9664\u5DF2\u4E2D\u6B62"));
-            });
-          } finally {
-            database.close();
-          }
+          await this.write((store) => store.delete(kind), "\u65E0\u6CD5\u5220\u9664\u672C\u5730\u58C1\u7EB8", "\u672C\u5730\u58C1\u7EB8\u5220\u9664\u5DF2\u4E2D\u6B62");
         }
         async clearAll() {
-          await Promise.all([this.clear("image"), this.clear("video")]);
+          await Promise.all(KINDS.map((kind) => this.clear(kind)));
+        }
+        async snapshot() {
+          const [image, video] = await Promise.all(KINDS.map((kind) => this.get(kind)));
+          return { image, video };
+        }
+        async restore(snapshot) {
+          for (const kind of KINDS) {
+            const blob = snapshot[kind];
+            if (blob) await this.set(kind, blob);
+            else await this.clear(kind);
+          }
         }
         async export() {
-          const [image, video] = await Promise.all([this.get("image"), this.get("video")]);
+          const { image, video } = await this.snapshot();
           return {
             image: image ? await blobToDataUrl(image) : null,
             video: video ? await blobToDataUrl(video) : null
           };
         }
-        async import(value, replace = true) {
+        async import(value) {
           if (!isRecord(value)) {
-            if (replace) await this.clearAll();
+            await this.clearAll();
             return;
           }
-          for (const kind of ["image", "video"]) {
+          for (const kind of KINDS) {
             const blob = dataUrlToBlob(value[kind]);
             if (blob) await this.set(kind, blob);
-            else if (replace) await this.clear(kind);
+            else await this.clear(kind);
           }
         }
+        async write(run, failed, aborted) {
+          const database = await this.open();
+          await new Promise((resolve, reject) => {
+            const transaction = database.transaction(STORE, "readwrite");
+            run(transaction.objectStore(STORE));
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error ?? new Error(failed));
+            transaction.onabort = () => reject(transaction.error ?? new Error(aborted));
+          });
+        }
+        /** One connection for the page; it is dropped if it fails or another page upgrades the database. */
         open() {
-          return new Promise((resolve, reject) => {
+          this.database ??= new Promise((resolve, reject) => {
             const request = indexedDB.open(DATABASE, 1);
             request.onupgradeneeded = () => {
               if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
             };
-            request.onsuccess = () => resolve(request.result);
+            request.onsuccess = () => {
+              const database = request.result;
+              database.onversionchange = () => {
+                database.close();
+                this.database = null;
+              };
+              database.onclose = () => {
+                this.database = null;
+              };
+              resolve(database);
+            };
             request.onerror = () => reject(request.error ?? new Error("\u65E0\u6CD5\u6253\u5F00\u58C1\u7EB8\u6570\u636E\u5E93"));
           });
+          this.database.catch(() => {
+            this.database = null;
+          });
+          return this.database;
         }
       };
       mediaStore = new MediaStore();
@@ -866,8 +920,9 @@
     await storeWallpaper(blob, "image", "online");
   }
   async function migrateLegacyWallpaper() {
-    const { type, value } = appStore.state.settings.wallpaper;
-    if (type !== "preset" || !value.startsWith(ONLINE_WALLPAPER)) return;
+    const { settings } = await storageGet(["settings"]).catch(() => ({ settings: null }));
+    const wallpaper = isRecord(settings) && isRecord(settings.wallpaper) ? settings.wallpaper : null;
+    if (wallpaper?.type !== "preset" || typeof wallpaper.value !== "string" || !wallpaper.value.startsWith(ONLINE_WALLPAPER)) return;
     try {
       await useOnlineWallpaper();
     } catch {
@@ -880,14 +935,14 @@
     await storeWallpaper(file, kind, "local");
   }
   async function resetWallpaper() {
-    await appStore.updateSettings("wallpaper", { type: "gradient", value: "", blur: 0, overlay: 30 });
+    const { type, value, blur, overlay } = DEFAULT_SETTINGS.wallpaper;
+    await appStore.updateSettings("wallpaper", { type, value, blur, overlay });
     await mediaStore.clearAll();
   }
   function wallpaperLabel(wallpaper) {
     if (wallpaper.type === "video") return "\u672C\u5730\u89C6\u9891";
     if (wallpaper.type === "local") return wallpaper.value.startsWith("online") ? "\u5728\u7EBF\u58C1\u7EB8" : "\u672C\u5730\u56FE\u7247";
-    if (wallpaper.type === "preset") return "\u5728\u7EBF\u56FE\u7247";
-    return "\u9ED8\u8BA4\u6E10\u53D8";
+    return "Twilight Bay";
   }
   async function storeWallpaper(blob, kind, source) {
     const previous = await mediaStore.get(kind);
@@ -906,6 +961,7 @@
       }
       throw error;
     }
+    await mediaStore.clear(kind === "video" ? "image" : "video").catch(() => void 0);
   }
   async function toneOfBlob(blob) {
     const bitmap = await createImageBitmap(blob, { resizeWidth: SAMPLE_SIZE, resizeHeight: SAMPLE_SIZE });
@@ -984,7 +1040,9 @@
   var init_wallpaper_service = __esm({
     "src/core/wallpaper-service.ts"() {
       "use strict";
+      init_backup();
       init_media_store();
+      init_storage();
       init_store();
       ONLINE_WALLPAPER = "https://www.dmoe.cc/random.php";
       SAMPLE_SIZE = 32;
@@ -1003,41 +1061,37 @@
       init_backup();
       init_media_store();
       init_store();
-      init_storage();
       BackupService = class {
+        /** Backups keep the flat 2.0 layout even though sync storage now chunks bookmarks. */
         async exportData() {
           return {
             version: "2.0",
             exportDate: (/* @__PURE__ */ new Date()).toISOString(),
-            data: await this.collectData(),
+            data: structuredClone(appStore.state),
             localMedia: await mediaStore.export()
           };
         }
-        /** Backups keep the flat 2.0 layout even though sync storage now chunks bookmarks. */
-        async collectData() {
-          const { todos } = await storageGet(["todos"]);
-          return {
-            ...structuredClone(appStore.state),
-            ...Array.isArray(todos) ? { todos } : {}
-          };
-        }
+        /** Media is replaced first; if saving the synced data then fails, the previous media comes back. */
         async importData(value) {
           if (!isRecord(value) || !value.version || !isRecord(value.data)) {
             throw new Error("\u5907\u4EFD\u6587\u4EF6\u683C\u5F0F\u65E0\u6548");
           }
           const data = sanitizeImportedData(value.data);
-          if (Object.hasOwn(value, "localMedia")) await mediaStore.import(value.localMedia, true);
-          const settings = data.settings;
-          if (isRecord(settings) && isRecord(settings.wallpaper)) {
-            const wallpaper = settings.wallpaper;
-            if (wallpaper.type === "local" && typeof wallpaper.value === "string" && wallpaper.value.startsWith("data:image/")) {
+          const previous = await mediaStore.snapshot().catch(() => null);
+          try {
+            if (Object.hasOwn(value, "localMedia")) await mediaStore.import(value.localMedia);
+            const { wallpaper } = data.settings;
+            if (wallpaper.type === "local" && wallpaper.value.startsWith("data:image/")) {
               const image = dataUrlToBlob(wallpaper.value);
               if (!image) throw new Error("\u65E7\u5907\u4EFD\u4E2D\u7684\u672C\u5730\u58C1\u7EB8\u65E0\u6548");
               await mediaStore.set("image", image);
               wallpaper.value = "local";
             }
+            await appStore.replaceImportedData(data);
+          } catch (error) {
+            if (previous) await mediaStore.restore(previous).catch(() => void 0);
+            throw error;
           }
-          await appStore.replaceImportedData(data);
         }
         download(data, filename = `infinity-newtab-backup-${dateStamp()}.json`) {
           const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -1210,7 +1264,7 @@
     menu.innerHTML = items.map((item, index) => {
       if ("separator" in item) return "<hr>";
       if ("heading" in item) return `<span class="menu-heading">${escapeHtml(item.heading)}</span>`;
-      return `<button type="button" role="menuitem" data-index="${index}" class="${item.danger ? "danger" : ""}" ${item.disabled ? "disabled" : ""}>${item.icon ? `<i aria-hidden="true">${item.icon}</i>` : "<i></i>"}<span>${escapeHtml(item.label)}</span></button>`;
+      return `<button type="button" role="menuitem" data-index="${index}" class="${item.danger ? "danger" : ""}">${item.icon ? `<i aria-hidden="true">${item.icon}</i>` : "<i></i>"}<span>${escapeHtml(item.label)}</span></button>`;
     }).join("");
     document.body.append(menu);
     const anchor = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
@@ -1235,7 +1289,7 @@
     document.addEventListener("pointerdown", onOutside, true);
     window.addEventListener("blur", close);
     window.addEventListener("resize", close);
-    const buttons = [...menu.querySelectorAll("button:not([disabled])")];
+    const buttons = [...menu.querySelectorAll("button")];
     menu.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-index]");
       const item = button ? items[Number(button.dataset.index)] : null;
@@ -1341,14 +1395,12 @@
         shuffle: icon('<path d="M3 17h3.4c1.6 0 2.6-.7 3.5-2l4.2-6c.9-1.3 1.9-2 3.5-2H21"></path><path d="M3 7h3.4c1.6 0 2.6.7 3.5 2l.6.9M13.5 14.1l.6.9c.9 1.3 1.9 2 3.5 2H21"></path><path d="m18.5 4.5 2.5 2.5-2.5 2.5M18.5 14.5l2.5 2.5-2.5 2.5"></path>'),
         search: icon('<circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>'),
         plus: icon('<path d="M12 5v14M5 12h14"></path>'),
-        folder: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path>'),
         folderPlus: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path><path d="M12 11v5M9.5 13.5h5"></path>'),
         more: icon('<circle cx="6" cy="12" r="1.2"></circle><circle cx="12" cy="12" r="1.2"></circle><circle cx="18" cy="12" r="1.2"></circle>'),
         edit: icon('<path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="m13.5 6.5 4 4"></path>'),
         trash: icon('<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"></path>'),
         open: icon('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path>'),
         move: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path><path d="M10 13.5h6M13.5 11l2.5 2.5-2.5 2.5"></path>'),
-        refresh: icon('<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"></path>'),
         download: icon('<path d="M12 4v12M7 11l5 5 5-5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path>'),
         pause: solid('<rect x="6" y="4.5" width="4" height="15" rx="1.3"></rect><rect x="14" y="4.5" width="4" height="15" rx="1.3"></rect>'),
         play: solid('<path d="M8 5.2v13.6a1 1 0 0 0 1.5.86l11-6.8a1 1 0 0 0 0-1.72l-11-6.8A1 1 0 0 0 8 5.2z"></path>'),
@@ -1357,7 +1409,6 @@
         battery: icon('<rect x="3" y="7.5" width="16" height="9" rx="2"></rect><path d="M21 11v2"></path>'),
         bolt: icon('<path d="m13 3-7 10h5l-1 8 7-10h-5z"></path>'),
         clock: icon('<circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path>'),
-        grid: solid('<rect x="4" y="4" width="4" height="4" rx="1.2"></rect><rect x="10" y="4" width="4" height="4" rx="1.2"></rect><rect x="16" y="4" width="4" height="4" rx="1.2"></rect><rect x="4" y="10" width="4" height="4" rx="1.2"></rect><rect x="10" y="10" width="4" height="4" rx="1.2"></rect><rect x="16" y="10" width="4" height="4" rx="1.2"></rect><rect x="4" y="16" width="4" height="4" rx="1.2"></rect><rect x="10" y="16" width="4" height="4" rx="1.2"></rect><rect x="16" y="16" width="4" height="4" rx="1.2"></rect>'),
         close: icon('<path d="M6 6l12 12M18 6 6 18"></path>')
       };
       SETTINGS_GLYPHS = {
@@ -1376,11 +1427,8 @@
   function findBookmark(id) {
     return appStore.state.bookmarks.find((item) => String(item.id) === String(id));
   }
-  function compareBookmarks2(left, right) {
-    return left.order - right.order || String(left.id).localeCompare(String(right.id));
-  }
   function bookmarksIn(folder) {
-    return appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks2);
+    return appStore.state.bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks);
   }
   function bookmarkName(bookmark) {
     const name = cleanText(bookmark.name, 160);
@@ -1389,7 +1437,7 @@
   function interceptExtensionLink(event, url) {
     if (event.defaultPrevented || new URL(url).protocol !== "chrome-extension:") return;
     event.preventDefault();
-    void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
+    openInNewTab(url);
   }
   function openInNewTab(url) {
     void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
@@ -1473,7 +1521,6 @@
       return false;
     }
   }
-  var ROOT_FOLDER;
   var init_bookmark_actions = __esm({
     "src/components/bookmark-actions.ts"() {
       "use strict";
@@ -1481,7 +1528,6 @@
       init_utils();
       init_icons();
       init_ui_layer();
-      ROOT_FOLDER = "\u5168\u90E8";
     }
   });
 
@@ -1653,8 +1699,8 @@
     if (cleaned && cleaned.length <= 18 && !isAddressLike(cleaned)) return cleaned;
     return siteLabel(host);
   }
-  function loadRecentSites(refresh = false) {
-    if (!recentSites || refresh) {
+  function loadRecentSites() {
+    if (!recentSites) {
       recentSites = new Promise((resolve, reject) => {
         if (!chrome.history?.search) {
           reject(new Error("\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u5386\u53F2\u8BB0\u5F55\u8BBF\u95EE"));
@@ -1681,11 +1727,11 @@
   });
 
   // src/components/site-icon.ts
-  function siteIcon({ url, name, bookmark }, className = "") {
+  function siteIcon({ url, name, bookmark }, className, size) {
     const host = hostOf(url);
     const letter = Array.from(cleanDisplayName(name) || host || "?")[0]?.toUpperCase() ?? "?";
     const [from, to, ink] = TILE_COLORS[hash(host) % TILE_COLORS.length];
-    const image = bookmark ? `<img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="96px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" data-icon-raster="${bookmarkIconIsRaster(bookmark)}" alt="" decoding="async" draggable="false">` : `<img src="${escapeHtml(faviconUrl(url))}" srcset="${escapeHtml(faviconSrcSet(url))}" sizes="96px" alt="" loading="lazy" decoding="async" draggable="false">`;
+    const image = bookmark ? `<img src="${escapeHtml(bookmarkIcon(bookmark))}" srcset="${escapeHtml(bookmarkIconSrcSet(bookmark))}" sizes="${size}px" data-icon-fallback="${escapeHtml(bookmarkIconFallback(bookmark))}" data-icon-can-upgrade="${bookmarkIconCanUpgrade(bookmark)}" alt="" decoding="async" draggable="false">` : `<img src="${escapeHtml(faviconUrl(url))}" srcset="${escapeHtml(faviconSrcSet(url))}" sizes="${size}px" alt="" loading="lazy" decoding="async" draggable="false">`;
     return `<span class="app-icon ${className}" style="--tile-from:${from};--tile-to:${to};--tile-ink:${ink}">${image}<span class="app-letter" aria-hidden="true">${escapeHtml(letter)}</span></span>`;
   }
   function bindSiteIcons(root) {
@@ -1744,7 +1790,7 @@
   });
 
   // src/components/bookmark-index.ts
-  var MIN_ROWS, ROW_HEIGHT, MAX_HEIGHT_SHARE, RECENT_LIMIT, BookmarkIndex;
+  var MIN_ROWS, ROW_HEIGHT, MAX_HEIGHT_SHARE, RECENT_LIMIT, ICON_SIZE, BookmarkIndex;
   var init_bookmark_index = __esm({
     "src/components/bookmark-index.ts"() {
       "use strict";
@@ -1760,15 +1806,14 @@
       ROW_HEIGHT = 28;
       MAX_HEIGHT_SHARE = 0.4;
       RECENT_LIMIT = 8;
+      ICON_SIZE = 16;
       BookmarkIndex = class extends StoreElement {
         observedChanges = ["bookmarks", "folders", "settings.layout"];
         draggingId = null;
-        /** Refits when the footer gives the index a different width, e.g. once the wallpaper caption appears. */
-        resizeObserver = new ResizeObserver(([entry]) => {
-          if (entry.contentRect.width === this.fittedWidth) return;
-          this.fit();
-        });
-        fittedWidth = 0;
+        /** Refits when the footer gives the index a different width, e.g. once the pause button appears. */
+        resizeObserver = new ResizeObserver(() => this.refit());
+        /** The width and window height the rows were last fitted to. */
+        fittedSize = "";
         recent = { sites: [], state: "idle", error: "" };
         connectedCallback() {
           this.addEventListener("click", this.onClick);
@@ -1779,13 +1824,13 @@
           this.addEventListener("drop", this.onDrop);
           this.addEventListener("dragend", this.onDragEnd);
           this.addEventListener("wheel", this.onWheel, { passive: false });
-          window.addEventListener("resize", this.fit);
+          window.addEventListener("resize", this.refit);
           this.resizeObserver.observe(this);
           super.connectedCallback();
         }
         disconnectedCallback() {
           super.disconnectedCallback();
-          window.removeEventListener("resize", this.fit);
+          window.removeEventListener("resize", this.refit);
           this.resizeObserver.disconnect();
         }
         render() {
@@ -1826,14 +1871,14 @@
           return `
             <li><a class="index-link" href="${escapeHtml(bookmark.url)}" ${this.target()} rel="noopener noreferrer"
                 data-bookmark-id="${escapeHtml(bookmark.id)}" draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
-                ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark }, "index-icon")}<span class="index-name">${escapeHtml(name)}</span>
+                ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark }, "index-icon", ICON_SIZE)}<span class="index-name">${escapeHtml(name)}</span>
             </a></li>`;
         }
         recentTemplate() {
           const { sites, state } = this.recent;
           const items = state === "ready" ? sites.slice(0, RECENT_LIMIT).map((site, index) => `
                 <li><a class="index-link" href="${escapeHtml(site.url)}" ${this.target()} rel="noopener noreferrer" data-recent-index="${index}" title="${escapeHtml(hostOf(site.url))}">
-                    ${siteIcon({ url: site.url, name: site.title }, "index-icon")}<span class="index-name">${escapeHtml(site.title)}</span>
+                    ${siteIcon({ url: site.url, name: site.title }, "index-icon", ICON_SIZE)}<span class="index-name">${escapeHtml(site.title)}</span>
                 </a></li>`).join("") : "";
           const note = state === "error" ? escapeHtml(this.recent.error) : state === "ready" && !items ? "\u6700\u8FD1 30 \u5929\u6CA1\u6709\u8BB0\u5F55" : state === "ready" ? "" : "\u6B63\u5728\u6574\u7406\u2026";
           return `
@@ -1845,11 +1890,18 @@
         target() {
           return appStore.state.settings.layout.openInNewTab ? 'target="_blank"' : "";
         }
+        sizeKey() {
+          return `${this.getBoundingClientRect().width}x${window.innerHeight}`;
+        }
+        /** A window resize and the resize observer both land here; only a real size change refits. */
+        refit = () => {
+          if (this.sizeKey() !== this.fittedSize) this.fit();
+        };
         /** Adds rows until every column fits the width, up to a share of the window; past that the index scrolls sideways. */
-        fit = () => {
+        fit() {
           const index = this.querySelector(".index");
           if (!index) return;
-          this.fittedWidth = this.getBoundingClientRect().width;
+          this.fittedSize = this.sizeKey();
           const longest = Math.max(MIN_ROWS, ...[...index.querySelectorAll(".index-list")].map((list) => list.childElementCount));
           const maxRows = Math.min(longest, Math.max(MIN_ROWS, Math.floor(window.innerHeight * MAX_HEIGHT_SHARE / ROW_HEIGHT)));
           let rows = MIN_ROWS;
@@ -1859,7 +1911,7 @@
             index.style.setProperty("--rows", String(rows));
           }
           this.syncEdges();
-        };
+        }
         /** Fades only the edges that have columns scrolled past them. */
         syncEdges = () => {
           const index = this.querySelector(".index");
@@ -1998,11 +2050,19 @@
         connectedCallback() {
           super.connectedCallback();
           this.scheduleTick();
+          document.addEventListener("visibilitychange", this.onVisibility);
         }
         disconnectedCallback() {
           super.disconnectedCallback();
           window.clearTimeout(this.clockTimer);
+          document.removeEventListener("visibilitychange", this.onVisibility);
         }
+        /** Background tabs and sleep delay timers, so a tab coming back corrects the time at once. */
+        onVisibility = () => {
+          if (document.visibilityState !== "visible") return;
+          this.updateClock();
+          this.scheduleTick();
+        };
         render() {
           this.hidden = !appStore.state.settings.layout.showClock;
           if (!this.querySelector(".hero-time")) {
@@ -2039,7 +2099,14 @@
   });
 
   // src/components/hdr-glass.ts
-  var MAX_RIMS, PEAK, MAX_PIXELS, FRAME_FLOATS, RIM_FLOATS, HDR_SHADER, HdrRimLayer;
+  function isHdrDisplay() {
+    return hdrMedia.matches;
+  }
+  function onHdrDisplayChange(listener) {
+    hdrMedia.addEventListener("change", listener);
+    return () => hdrMedia.removeEventListener("change", listener);
+  }
+  var MAX_RIMS, PEAK, MAX_PIXELS, FRAME_FLOATS, RIM_FLOATS, HDR_SHADER, hdrMedia, HdrRimLayer;
   var init_hdr_glass = __esm({
     "src/components/hdr-glass.ts"() {
       "use strict";
@@ -2112,7 +2179,15 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     // Premultiplied light that may exceed its alpha: it adds to what is below, past SDR white on HDR screens.
     return vec4f(vec3f(radiance * frame.peak), coverage * 0.3);
 }`;
+      hdrMedia = window.matchMedia("(dynamic-range: high)");
       HdrRimLayer = class {
+        /** `onActivate` runs whenever the layer starts drawing, so its owner can measure the rims for it. */
+        constructor(onActivate = () => void 0) {
+          this.onActivate = onActivate;
+          this.canvas.className = "hdr-glass-layer";
+          this.canvas.setAttribute("aria-hidden", "true");
+        }
+        onActivate;
         canvas = document.createElement("canvas");
         device = null;
         context = null;
@@ -2124,26 +2199,23 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         pointer = { x: -1e4, y: -1e4 };
         initializing = false;
         drawFrame = 0;
-        hdrMedia = window.matchMedia("(dynamic-range: high)");
+        stopWatchingDisplay = null;
         classObserver = new MutationObserver(() => this.syncVisibility());
-        constructor() {
-          this.canvas.className = "hdr-glass-layer";
-          this.canvas.setAttribute("aria-hidden", "true");
-        }
         /** Ready to draw: HDR screen, the setting on and a WebGPU device. */
         get active() {
-          return Boolean(this.device) && this.hdrMedia.matches && document.body.classList.contains("hdr-highlights");
+          return Boolean(this.device) && isHdrDisplay() && document.body.classList.contains("hdr-highlights");
         }
         connect() {
           this.classObserver.observe(document.body, { attributeFilter: ["class"] });
-          this.hdrMedia.addEventListener("change", this.onDisplayChange);
+          this.stopWatchingDisplay = onHdrDisplayChange(this.onDisplayChange);
           window.addEventListener("resize", this.onResize);
           this.onResize();
           void this.initialize();
         }
         disconnect() {
           this.classObserver.disconnect();
-          this.hdrMedia.removeEventListener("change", this.onDisplayChange);
+          this.stopWatchingDisplay?.();
+          this.stopWatchingDisplay = null;
           window.removeEventListener("resize", this.onResize);
           cancelAnimationFrame(this.drawFrame);
           this.drawFrame = 0;
@@ -2158,7 +2230,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.scheduleDraw();
         }
         onDisplayChange = () => {
-          if (this.hdrMedia.matches) void this.initialize();
+          if (isHdrDisplay()) void this.initialize();
           this.syncVisibility();
         };
         onResize = () => {
@@ -2169,15 +2241,25 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.scheduleDraw();
         };
         async initialize() {
-          if (this.device || this.initializing || !this.hdrMedia.matches || !("gpu" in navigator)) return;
+          if (this.device || this.initializing || !isHdrDisplay()) return;
+          if (!("gpu" in navigator)) {
+            this.canvas.dataset.hdrRenderer = "unavailable";
+            return;
+          }
           this.initializing = true;
           try {
             const gpu = navigator.gpu;
             const adapter = await gpu?.requestAdapter();
-            if (!adapter) return;
+            if (!adapter) {
+              this.canvas.dataset.hdrRenderer = "unavailable";
+              return;
+            }
             const device = await adapter.requestDevice();
             const context = this.canvas.getContext("webgpu");
-            if (!context) return;
+            if (!context) {
+              this.canvas.dataset.hdrRenderer = "unavailable";
+              return;
+            }
             context.configure({
               device,
               format: "rgba16float",
@@ -2216,7 +2298,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               this.syncVisibility();
             });
             this.syncVisibility();
-            this.scheduleDraw();
           } catch {
             this.canvas.dataset.hdrRenderer = "unavailable";
           } finally {
@@ -2224,8 +2305,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           }
         }
         syncVisibility() {
-          this.canvas.classList.toggle("is-visible", this.active);
-          if (this.active) this.scheduleDraw();
+          const active = this.active;
+          const activated = active && !this.canvas.classList.contains("is-visible");
+          this.canvas.classList.toggle("is-visible", active);
+          if (!active) return;
+          this.scheduleDraw();
+          if (activated) this.onActivate();
         }
         scheduleDraw() {
           if (this.drawFrame || !this.active) return;
@@ -2385,7 +2470,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   });
 
   // src/components/glass.ts
-  function measure(element, glint) {
+  function measure(element) {
     const rect = element.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1 || rect.bottom < 0 || rect.top > innerHeight) return null;
     let opacity = 1;
@@ -2399,7 +2484,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     if (!top || !(element.contains(top) || top.contains(element))) return null;
     const scale = rect.width / Math.max(1, element.offsetWidth);
     const radius = cornerRadius(getComputedStyle(element).borderTopLeftRadius, element.offsetWidth, element.offsetHeight) * scale;
-    return { x: rect.left, y: rect.top, width: rect.width, height: rect.height, radius, opacity, glint };
+    return { x: rect.left, y: rect.top, width: rect.width, height: rect.height, radius, opacity, glint: 0 };
   }
   function cornerRadius(value, width, height) {
     const radius = value.endsWith("%") ? Math.min(width, height) * Number.parseFloat(value) / 100 : Number.parseFloat(value) || 0;
@@ -2418,22 +2503,28 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       SETTLE_MS = 700;
       GlassSystem = class extends HTMLElement {
         defs = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        /** Filters by shape, removed again once no control has that shape. */
         filters = /* @__PURE__ */ new Map();
         tracked = /* @__PURE__ */ new Map();
-        hdr = new HdrRimLayer();
+        hdr = new HdrRimLayer(() => this.wake());
         resizeObserver = new ResizeObserver((entries) => {
           entries.forEach((entry) => this.refract(entry.target));
           this.wake();
         });
-        mutationObserver = new MutationObserver(() => {
-          this.scan();
+        /** Added or removed controls are picked up here; class and visibility changes only re-measure. */
+        mutationObserver = new MutationObserver((records) => {
+          if (records.some((record) => record.type === "childList")) this.scan();
           this.wake();
         });
         hovered = null;
         pointer = { x: -1e4, y: -1e4 };
         smoothPointer = { x: -1e4, y: -1e4 };
+        /** Until then the pointer light keeps easing. */
         settleUntil = 0;
+        /** Until then every frame re-measures where the controls are. */
+        measureUntil = 0;
         frame = 0;
+        nextFilterId = 1;
         connectedCallback() {
           this.defs.classList.add("glass-filters");
           this.defs.setAttribute("aria-hidden", "true");
@@ -2443,6 +2534,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.scan();
           this.mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "hidden"] });
           document.addEventListener("pointermove", this.onPointerMove, { passive: true, capture: true });
+          document.addEventListener("pointerdown", this.wake, { passive: true, capture: true });
+          document.addEventListener("pointerup", this.wake, { passive: true, capture: true });
           document.addEventListener("pointerleave", this.onPointerLeave);
           window.addEventListener("scroll", this.wake, { passive: true, capture: true });
           window.addEventListener("resize", this.wake);
@@ -2452,6 +2545,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.resizeObserver.disconnect();
           this.mutationObserver.disconnect();
           document.removeEventListener("pointermove", this.onPointerMove, true);
+          document.removeEventListener("pointerdown", this.wake, true);
+          document.removeEventListener("pointerup", this.wake, true);
           document.removeEventListener("pointerleave", this.onPointerLeave);
           window.removeEventListener("scroll", this.wake, true);
           window.removeEventListener("resize", this.wake);
@@ -2466,10 +2561,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.tracked.set(element, { shapeKey: "", glint: 0 });
             this.resizeObserver.observe(element);
           });
-          this.tracked.forEach((_state, element) => {
+          this.tracked.forEach((state, element) => {
             if (element.isConnected) return;
             this.tracked.delete(element);
             this.resizeObserver.unobserve(element);
+            this.release(state.shapeKey);
           });
         }
         /** Points the control's backdrop at a filter built for its exact size and corner radius. */
@@ -2482,14 +2578,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const shape = { width, height, radius };
           const key = opticalShapeKey(shape);
           if (state.shapeKey === key) return;
+          const filter = this.filters.get(key) ?? this.createFilter(shape, key);
+          filter.uses += 1;
+          this.release(state.shapeKey);
           state.shapeKey = key;
-          const id = this.filters.get(key) ?? this.createFilter(shape, key);
-          element.style.setProperty("--glass-backdrop", `url("#${id}") saturate(${SATURATION}) brightness(1.04)`);
-          element.dataset.glassFilter = id;
+          element.style.setProperty("--glass-backdrop", `url("#${filter.id}") saturate(${SATURATION}) brightness(1.04)`);
+          element.dataset.glassFilter = filter.id;
         }
         createFilter(shape, key) {
           const map = createRefractionMap(shape);
-          const id = `glass-refraction-${this.filters.size + 1}`;
+          const id = `glass-refraction-${this.nextFilterId++}`;
           const bend = Math.min(map.maximumDisplacement, shape.radius * 3) * REFRACTION;
           this.defs.firstElementChild.insertAdjacentHTML("beforeend", `
             <filter id="${id}" color-interpolation-filters="sRGB" data-shape="${key}">
@@ -2497,8 +2595,18 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                 <feImage href="${map.displacement}" x="0" y="0" width="${shape.width}" height="${shape.height}" preserveAspectRatio="none" result="bend"></feImage>
                 <feDisplacementMap in="frost" in2="bend" scale="${bend.toFixed(2)}" xChannelSelector="R" yChannelSelector="G"></feDisplacementMap>
             </filter>`);
-          this.filters.set(key, id);
-          return id;
+          const filter = { id, element: this.defs.firstElementChild.lastElementChild, uses: 0 };
+          this.filters.set(key, filter);
+          return filter;
+        }
+        /** Drops a filter (and its displacement map) once no control uses its shape. */
+        release(key) {
+          const filter = key ? this.filters.get(key) : void 0;
+          if (!filter) return;
+          filter.uses -= 1;
+          if (filter.uses > 0) return;
+          filter.element.remove();
+          this.filters.delete(key);
         }
         onPointerMove = (event) => {
           this.pointer = { x: event.clientX, y: event.clientY };
@@ -2506,40 +2614,47 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (element !== this.hovered) {
             this.hovered = element;
             if (this.smoothPointer.x < -1e3) this.smoothPointer = { ...this.pointer };
+            this.wake();
           }
           if (element) {
             const rect = element.getBoundingClientRect();
             element.style.setProperty("--glint-x", `${event.clientX - rect.left}px`);
             element.style.setProperty("--glint-y", `${event.clientY - rect.top}px`);
           }
-          this.wake();
+          this.ease();
         };
         onPointerLeave = () => {
           this.hovered = null;
           this.wake();
         };
-        /** Re-measures for a moment; the loop stops by itself once nothing moves. */
+        /** The layout may have changed: re-measure for a moment; the loop stops by itself once nothing moves. */
         wake = () => {
+          this.measureUntil = performance.now() + SETTLE_MS;
+          this.ease();
+        };
+        /** Only the pointer moved: the light eases towards it over rims already measured. */
+        ease() {
           this.settleUntil = performance.now() + SETTLE_MS;
           if (!this.frame) this.frame = requestAnimationFrame(this.tick);
-        };
+        }
         tick = (time) => {
           this.frame = 0;
           if (!this.hdr.active) return;
           this.smoothPointer.x += (this.pointer.x - this.smoothPointer.x) * 0.35;
           this.smoothPointer.y += (this.pointer.y - this.smoothPointer.y) * 0.35;
           let moving = Math.abs(this.pointer.x - this.smoothPointer.x) + Math.abs(this.pointer.y - this.smoothPointer.y) > 0.5;
+          const remeasure = time < this.measureUntil;
           const rims = [];
           this.tracked.forEach((state, element) => {
             const target = element === this.hovered ? 1 : 0;
             state.glint += (target - state.glint) * 0.2;
             if (Math.abs(target - state.glint) > 0.01) moving = true;
             if (rims.length >= MAX_RIMS) return;
-            const rim = measure(element, state.glint);
-            if (rim) rims.push(rim);
+            if (remeasure || state.rim === void 0) state.rim = measure(element);
+            if (state.rim) rims.push({ ...state.rim, glint: state.glint });
           });
           this.hdr.update(rims, this.smoothPointer);
-          if (moving || time < this.settleUntil) this.frame = requestAnimationFrame(this.tick);
+          if (moving || time < this.settleUntil || remeasure) this.frame = requestAnimationFrame(this.tick);
         };
       };
     }
@@ -2547,14 +2662,14 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
 
   // src/components/search-box.ts
   function siteRow(site) {
-    return { kind: "site", title: site.title, subtitle: `${site.host} \xB7 \u8FD1 30 \u5929 ${site.count} \u6B21`, url: site.url, site };
+    return { kind: "site", title: site.title, subtitle: `${site.host} \xB7 \u8FD1 30 \u5929 ${site.count} \u6B21`, url: site.url };
   }
   function rowIcon(row) {
     if (row.kind === "web") return `<span class="row-icon row-icon-plain">${ICONS.search}</span>`;
     if (row.kind === "recent") return `<span class="row-icon row-icon-plain">${ICONS.clock}</span>`;
     if (row.kind === "url") return `<span class="row-icon row-icon-plain">${ICONS.open}</span>`;
-    if (row.kind === "bookmark") return siteIcon({ url: row.url, name: row.title, bookmark: row.bookmark }, "row-icon");
-    return siteIcon({ url: row.url, name: row.title }, "row-icon");
+    if (row.kind === "bookmark") return siteIcon({ url: row.url, name: row.title, bookmark: row.bookmark }, "row-icon", ROW_ICON_SIZE);
+    return siteIcon({ url: row.url, name: row.title }, "row-icon", ROW_ICON_SIZE);
   }
   function matchScore(query, name, url) {
     const host = hostOf(url).toLowerCase();
@@ -2565,9 +2680,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   }
   function looksLikeUrl(value) {
     if (/\s/.test(value)) return false;
-    return /^[a-z][a-z\d+.-]*:\/\//i.test(value) || /^localhost(:\d+)?(\/|$)/i.test(value) || /^[\w-]+(\.[\w-]+)*\.[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(value);
+    return /^[a-z][a-z\d+.-]*:\/\//i.test(value) || /^localhost(:\d+)?(\/|$)/i.test(value) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/\S*)?$/.test(value) || /^[\w-]+(\.[\w-]+)*\.[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(value);
   }
-  var ENGINES, SHORTCUT_LABEL, ENGINE_ORDER, GROUP_TITLES, SearchBox;
+  var ENGINES, SHORTCUT_LABEL, ENGINE_ORDER, GROUP_TITLES, ROW_ICON_SIZE, SearchBox;
   var init_search_box = __esm({
     "src/components/search-box.ts"() {
       "use strict";
@@ -2587,6 +2702,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       SHORTCUT_LABEL = /Mac|iPhone|iPad/.test(navigator.platform) ? "\u2318K" : "Ctrl K";
       ENGINE_ORDER = Object.keys(ENGINES);
       GROUP_TITLES = { url: "\u7F51\u5740", bookmark: "\u4E66\u7B7E", site: "\u5E38\u8BBF\u95EE", web: "\u641C\u7D22\u7F51\u7EDC", recent: "\u6700\u8FD1\u641C\u7D22" };
+      ROW_ICON_SIZE = 20;
       SearchBox = class extends StoreElement {
         observedChanges = ["settings.layout"];
         engine = "google";
@@ -2794,27 +2910,30 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const row = this.rows[index];
           if (!row) {
             const query = this.input.value.trim();
-            if (query) this.search(query);
+            if (query) this.search(query, background);
             return;
           }
           if (row.kind === "web" || row.kind === "recent") {
-            this.search(row.query);
+            this.search(row.query, background);
             return;
           }
-          if (background || appStore.state.settings.layout.openInNewTab || new URL(row.url).protocol === "chrome-extension:") {
-            openInNewTab(row.url);
-            this.input.value = "";
-            this.input.blur();
-          } else {
-            window.location.href = row.url;
-          }
+          this.go(row.url, background || appStore.state.settings.layout.openInNewTab || new URL(row.url).protocol === "chrome-extension:");
         }
-        search(query) {
+        /** ⌘/Ctrl+Enter or ⌘/Ctrl-click opens the result in a background tab and keeps this page. */
+        go(url, newTab) {
+          if (!newTab) {
+            window.location.href = url;
+            return;
+          }
+          openInNewTab(url);
+          this.input.value = "";
+          this.input.blur();
+        }
+        /** A failed save of the recent search never stops the search itself. */
+        search(query, newTab = false) {
           const target = `${ENGINES[this.engine].url}${encodeURIComponent(query)}`;
           const save = appStore.state.settings.layout.saveSearches ? appStore.saveRecentSearch(query) : Promise.resolve();
-          void save.finally(() => {
-            window.location.href = target;
-          });
+          void save.catch(() => void 0).then(() => this.go(target, newTab));
         }
         cycleEngine(step) {
           const index = ENGINE_ORDER.indexOf(this.engine);
@@ -2824,7 +2943,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         syncEngine() {
           const button = this.querySelector(".search-engine");
           button.textContent = ENGINES[this.engine].label;
-          button.dataset.engine = this.engine;
           button.setAttribute("aria-label", `\u641C\u7D22\u5F15\u64CE\uFF1A${ENGINES[this.engine].label}\uFF0C\u70B9\u6309\u6216\u6309 Tab \u5207\u6362`);
         }
       };
@@ -2841,30 +2959,30 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   function rowLabel(label, sub) {
     return `<span class="row-label"><span class="row-title">${label}</span>${sub ? `<span class="row-sub">${sub}</span>` : ""}</span>`;
   }
-  function depends(on) {
-    return on ? `data-depends="${on}"` : "";
-  }
   function infoRow(label, sub, control) {
     return `<div class="setting-row">${rowLabel(label, sub)}${control}</div>`;
   }
-  function segmentRow(name, label, value, options, sub = "", dependsOn = "") {
+  function segmentRow(name, label, value, options, sub = "", kind = "radio") {
+    const radio = kind === "radio";
     return `
-        <div class="setting-row segment-row" ${depends(dependsOn)}>
+        <div class="setting-row segment-row">
             <span class="row-label"><span class="row-title" id="segment-${name}">${label}</span>${sub ? `<span class="row-sub">${sub}</span>` : ""}</span>
-            <div class="segmented" role="radiogroup" aria-labelledby="segment-${name}" data-segment="${name}">
-                ${options.map(([optionValue, optionLabel]) => {
+            <div class="segmented" role="${radio ? "radiogroup" : "group"}" aria-labelledby="segment-${name}" data-segment="${name}" data-kind="${kind}">
+                ${options.map(([optionValue, optionLabel], index) => {
       const checked = optionValue === value;
-      return `<button type="button" role="radio" aria-checked="${checked}" tabindex="${checked ? 0 : -1}" class="${checked ? "is-active" : ""}" data-value="${optionValue}">${escapeHtml(optionLabel)}</button>`;
+      const focusable = checked || index === 0 && !options.some(([option]) => option === value);
+      const state = radio ? `role="radio" aria-checked="${checked}"` : `aria-pressed="${checked}"`;
+      return `<button type="button" ${state} tabindex="${focusable ? 0 : -1}" class="${checked ? "is-active" : ""}" data-value="${optionValue}">${escapeHtml(optionLabel)}</button>`;
     }).join("")}
             </div>
         </div>`;
   }
-  function toggleRow(name, label, sub = "", dependsOn = "") {
-    return `<label class="setting-row toggle-row" ${depends(dependsOn)}>${rowLabel(label, sub)}<span class="switch"><input type="checkbox" role="switch" data-toggle="${name}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></span></label>`;
+  function toggleRow(name, label, sub = "") {
+    return `<label class="setting-row toggle-row">${rowLabel(label, sub)}<span class="switch"><input type="checkbox" role="switch" data-toggle="${name}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></span></label>`;
   }
-  function rangeRow(name, label, value, min, max, unit, dependsOn = "", sub = "") {
+  function rangeRow(name, label, value, min, max, unit, sub = "") {
     return `
-        <div class="setting-row" ${depends(dependsOn)}>
+        <div class="setting-row">
             ${rowLabel(label, sub)}
             <span class="range-control">
                 <input class="slider" type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}">
@@ -2880,13 +2998,15 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   }
   function wallpaperKind({ type, value }) {
     if (type === "video") return "video";
-    if (type === "preset" || type === "local" && value.startsWith("online")) return "online";
-    return type === "local" ? "image" : "";
+    if (type === "local") return value.startsWith("online") ? "online" : "image";
+    return "";
   }
   function hdrDescription() {
-    const hdrDisplay = window.matchMedia("(dynamic-range: high)").matches && CSS.supports("dynamic-range-limit", "no-limit");
-    if (!hdrDisplay) return "\u5F53\u524D\u4E3A SDR \u5C4F\u5E55\uFF0C\u8FDE\u63A5 HDR \u5C4F\u5E55\u540E\u81EA\u52A8\u751F\u6548";
-    return "gpu" in navigator ? "\u5F53\u524D\u5C4F\u5E55\u652F\u6301 HDR \xB7 WebGPU \u5DF2\u542F\u7528" : "\u5F53\u524D\u5C4F\u5E55\u652F\u6301 HDR \xB7 \u6D4F\u89C8\u5668\u672A\u5F00\u653E WebGPU \u9AD8\u5149";
+    if (!isHdrDisplay()) return "\u5F53\u524D\u4E3A SDR \u5C4F\u5E55\uFF0C\u8FDE\u63A5 HDR \u5C4F\u5E55\u540E\u81EA\u52A8\u751F\u6548";
+    const renderer = document.querySelector(".hdr-glass-layer")?.dataset.hdrRenderer;
+    if (renderer === "webgpu") return "\u5F53\u524D\u5C4F\u5E55\u652F\u6301 HDR \xB7 WebGPU \u5DF2\u542F\u7528";
+    if (renderer === "unavailable" || renderer === "lost") return "\u5F53\u524D\u5C4F\u5E55\u652F\u6301 HDR \xB7 \u6D4F\u89C8\u5668\u672A\u5F00\u653E WebGPU \u9AD8\u5149";
+    return "\u5F53\u524D\u5C4F\u5E55\u652F\u6301 HDR";
   }
   function formatBytes(bytes) {
     if (bytes < 1024) return `${bytes} B`;
@@ -2908,6 +3028,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_wallpaper_service();
       init_base();
       init_dashboard_header();
+      init_hdr_glass();
       init_icons();
       init_search_box();
       init_ui_layer();
@@ -2924,11 +3045,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         releaseLayer = null;
         previewUrl = "";
         previewToken = 0;
-        open(pane2) {
-          if (pane2) this.selectPane(pane2);
+        stopWatchingDisplay = null;
+        connectedCallback() {
+          super.connectedCallback();
+          this.stopWatchingDisplay = onHdrDisplayChange(() => this.syncHdrDescription());
+        }
+        open() {
           if (this.openState) return;
           this.openState = true;
           this.syncOpenState();
+          this.syncHdrDescription();
           this.placeSegmentThumbs();
           this.releaseLayer = pushLayer(this.querySelector(".settings-window"), () => this.close());
           void this.refreshPreview();
@@ -2948,6 +3074,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         disconnectedCallback() {
           super.disconnectedCallback();
+          this.stopWatchingDisplay?.();
+          this.stopWatchingDisplay = null;
           if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
         }
         handleStoreChange() {
@@ -2979,7 +3107,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                     ${this.appearancePane(settings)}
                     ${this.widgetsPane(settings)}
                     ${this.wallpaperPane(settings)}
-                    ${this.dataPane(settings)}
+                    ${this.dataPane()}
                     <p class="settings-empty" hidden></p>
                 </div>
             </section>`;
@@ -3037,9 +3165,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                 </div>
             </div>
             ${group("\u663E\u793A", `
-                ${segmentRow("wallpaperKind", "\u7C7B\u578B", wallpaperKind(wallpaper), [["video", "\u89C6\u9891"], ["image", "\u56FE\u7247"], ["online", "\u5728\u7EBF"]], "\u9ED8\u8BA4\u662F\u5185\u7F6E\u7684\u52A8\u6001\u573A\u666F Twilight Bay")}
+                ${segmentRow("wallpaperKind", "\u7C7B\u578B", wallpaperKind(wallpaper), [["video", "\u89C6\u9891"], ["image", "\u56FE\u7247"], ["online", "\u5728\u7EBF"]], "\u9ED8\u8BA4\u662F\u5185\u7F6E\u7684\u52A8\u6001\u573A\u666F Twilight Bay", "actions")}
                 ${rangeRow("blur", "\u6A21\u7CCA", wallpaper.blur, 0, 40, "px")}
-                ${rangeRow("overlay", "\u6697\u5316", wallpaper.overlay, 0, 60, "%", "", "\u8BA9\u767D\u8272\u6587\u5B57\u5728\u4EAE\u58C1\u7EB8\u4E0A\u4E5F\u6E05\u695A")}
+                ${rangeRow("overlay", "\u6697\u5316", wallpaper.overlay, 0, 60, "%", "\u8BA9\u767D\u8272\u6587\u5B57\u5728\u4EAE\u58C1\u7EB8\u4E0A\u4E5F\u6E05\u695A")}
             `)}
             ${group("\u64AD\u653E", `
                 ${toggleRow("idleHide", "\u9759\u6B62\u65F6\u9690\u85CF\u754C\u9762", "8 \u79D2\u65E0\u64CD\u4F5C\u540E\u53EA\u4FDD\u7559\u65F6\u95F4\uFF0C\u79FB\u52A8\u9F20\u6807\u5373\u6062\u590D")}
@@ -3049,7 +3177,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             `)}
         `);
         }
-        dataPane(_settings) {
+        dataPane() {
           return pane("data", "\u6570\u636E", `
             ${group("", `
                 ${infoRow("Chrome \u540C\u6B65", '<span class="sync-summary"></span>', '<span class="row-value sync-usage"></span>')}
@@ -3091,16 +3219,20 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         bindControls() {
           this.querySelectorAll("[data-segment]").forEach((groupElement) => {
             const buttons = [...groupElement.querySelectorAll("[data-value]")];
+            const actions = groupElement.dataset.kind === "actions";
             buttons.forEach((button) => button.addEventListener("click", () => {
               void this.applySegment(groupElement.dataset.segment ?? "", button.dataset.value ?? "");
             }));
             groupElement.addEventListener("keydown", (event) => {
               if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
               event.preventDefault();
-              const index = buttons.findIndex((button) => button.classList.contains("is-active"));
-              const next = buttons[(index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length];
+              const current = actions ? buttons.indexOf(document.activeElement) : buttons.findIndex((button) => button.classList.contains("is-active"));
+              const next = buttons[(current + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length];
+              if (actions) buttons.forEach((button) => {
+                button.tabIndex = button === next ? 0 : -1;
+              });
               next.focus();
-              next.click();
+              if (!actions) next.click();
             });
           });
           this.querySelectorAll("input[data-toggle]").forEach((input) => {
@@ -3210,7 +3342,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           windowElement?.setAttribute("aria-hidden", String(!this.openState));
           windowElement?.toggleAttribute("inert", !this.openState);
           this.querySelector(".settings-scrim")?.classList.toggle("is-open", this.openState);
-          document.body.classList.toggle("settings-open", this.openState);
+        }
+        /** The screen can change while the page is open (a window moved to another display). */
+        syncHdrDescription() {
+          const row = this.querySelector('input[data-toggle="hdrHighlights"]')?.closest(".setting-row");
+          const sub = row?.querySelector(".row-sub");
+          if (sub) sub.textContent = hdrDescription();
         }
         syncControls(settings) {
           const { appearance, layout, wallpaper } = settings;
@@ -3226,10 +3363,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             const value = segments[groupElement.dataset.segment ?? ""];
             const buttons = [...groupElement.querySelectorAll("[data-value]")];
             const hasValue = buttons.some((button) => button.dataset.value === value);
+            const state = groupElement.dataset.kind === "actions" ? "aria-pressed" : "aria-checked";
             buttons.forEach((button, index) => {
               const checked = button.dataset.value === value;
               button.classList.toggle("is-active", checked);
-              button.setAttribute("aria-checked", String(checked));
+              button.setAttribute(state, String(checked));
               button.tabIndex = checked || !hasValue && index === 0 ? 0 : -1;
             });
           });
@@ -3251,9 +3389,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           };
           this.querySelectorAll("input[data-toggle]").forEach((input) => {
             input.checked = toggles[input.dataset.toggle ?? ""] ?? input.checked;
-          });
-          this.querySelectorAll("[data-depends]").forEach((row) => {
-            row.classList.toggle("is-disabled", (row.dataset.depends ?? "").split(" ").some((name) => !toggles[name]));
           });
           const ranges = { blur: wallpaper.blur, overlay: wallpaper.overlay };
           this.querySelectorAll('input[type="range"]').forEach((input) => {
@@ -3338,9 +3473,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const meta = this.querySelector(".wallpaper-meta");
           const duration = this.querySelector(".wallpaper-duration");
           duration.hidden = true;
-          name.textContent = type === "gradient" ? "Twilight Bay" : wallpaperLabel(wallpaper);
+          name.textContent = wallpaperLabel(wallpaper);
           const size = blob ? ` \xB7 ${formatBytes(blob.size)}` : "";
-          meta.textContent = type === "gradient" ? "\u5185\u7F6E\u52A8\u6001\u573A\u666F \xB7 \u4E0D\u5360\u7528\u4EFB\u4F55\u5B58\u50A8" : type === "preset" ? "\u5728\u7EBF\u56FE\u7247 \xB7 \u6BCF\u6B21\u6253\u5F00\u65F6\u4ECE\u7F51\u7EDC\u52A0\u8F7D" : `${type === "video" ? "\u89C6\u9891" : "\u56FE\u7247"}${size} \xB7 \u5DF2\u4FDD\u5B58\u5230\u672C\u673A`;
+          meta.textContent = type === "gradient" ? "\u5185\u7F6E\u52A8\u6001\u573A\u666F \xB7 \u4E0D\u5360\u7528\u4EFB\u4F55\u5B58\u50A8" : `${type === "video" ? "\u89C6\u9891" : "\u56FE\u7247"}${size} \xB7 \u5DF2\u4FDD\u5B58\u5230\u672C\u673A`;
           if (type === "video" && this.previewUrl) {
             const video = document.createElement("video");
             Object.assign(video, { src: this.previewUrl, muted: true, loop: true, autoplay: true, playsInline: true });
@@ -3357,8 +3492,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               meta.textContent = `${wallpaperLabel(wallpaper)} \xB7 ${image.naturalWidth}\xD7${image.naturalHeight}${size} \xB7 \u5DF2\u4FDD\u5B58\u5230\u672C\u673A`;
             };
             image.src = this.previewUrl;
-          } else if (type === "preset" && value) {
-            host.style.backgroundImage = `url("${value.replaceAll('"', "%22")}")`;
           }
         }
         async refreshData() {
@@ -3374,7 +3507,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                 resolve(null);
               }
             }),
-            Promise.all([mediaStore.get("image"), mediaStore.get("video")]).catch(() => [null, null])
+            mediaStore.snapshot().then(({ image, video }) => [image, video]).catch(() => [null, null])
           ]);
           const usage = this.querySelector(".sync-usage");
           if (usage) usage.textContent = bytes === null ? "" : `\u5DF2\u7528 ${formatBytes(bytes)} / 100 KB`;
@@ -3576,10 +3709,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       video.muted = false;
       return;
     }
+    unmuteTarget = video;
+    if (waitingForGesture) return;
+    waitingForGesture = true;
     const unmute = () => {
       window.removeEventListener("pointerdown", unmute, true);
       window.removeEventListener("keydown", unmute, true);
-      if (video.isConnected && appStore.state.settings.wallpaper.sound) video.muted = false;
+      waitingForGesture = false;
+      const target = unmuteTarget;
+      unmuteTarget = null;
+      if (target?.isConnected && appStore.state.settings.wallpaper.sound) target.muted = false;
     };
     window.addEventListener("pointerdown", unmute, true);
     window.addEventListener("keydown", unmute, true);
@@ -3591,7 +3730,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       return "dark";
     }
   }
-  var WallpaperSurface, SCENE;
+  var WallpaperSurface, unmuteTarget, waitingForGesture, SCENE;
   var init_wallpaper_surface = __esm({
     "src/components/wallpaper-surface.ts"() {
       "use strict";
@@ -3605,6 +3744,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         renderToken = 0;
         appliedMediaKey = "";
         pendingMediaKey = "";
+        /** Media that failed to load is not retried (nor reported again) until the wallpaper itself changes. */
+        failedMediaKey = "";
         userPaused = false;
         battery = null;
         connectedCallback() {
@@ -3640,7 +3781,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.style.setProperty("--wallpaper-overlay", String(wallpaper.overlay / 100));
           this.syncPlayback();
           const mediaKey = `${wallpaper.type}:${wallpaper.value}`;
-          if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey) return;
+          if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey || mediaKey === this.failedMediaKey) return;
           this.pendingMediaKey = mediaKey;
           void this.applyMedia(++this.renderToken, mediaKey);
         }
@@ -3692,18 +3833,20 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               candidateUrl = "";
             } else {
               if (token !== this.renderToken) return;
-              const preset = wallpaper.type === "preset" && wallpaper.value;
-              const background = preset ? `url("${wallpaper.value.replaceAll('"', "%22")}")` : "";
-              this.commitMedia(host, null, "", background);
-              if (!preset) host.innerHTML = SCENE;
+              this.commitMedia(host, null, "", "");
+              host.innerHTML = SCENE;
             }
             this.appliedMediaKey = mediaKey;
+            this.failedMediaKey = "";
             this.syncPlayback();
             this.reportState();
             const resolved = await tone;
             if (token === this.renderToken) this.reportTone(resolved);
           } catch (error) {
-            if (token === this.renderToken) this.reportError(error);
+            if (token === this.renderToken) {
+              this.failedMediaKey = mediaKey;
+              this.reportError(error);
+            }
           } finally {
             if (candidateVideo) this.disposeVideo(candidateVideo);
             if (candidateUrl) URL.revokeObjectURL(candidateUrl);
@@ -3745,6 +3888,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           video.remove();
         }
       };
+      unmuteTarget = null;
+      waitingForGesture = false;
       SCENE = `
 <svg class="scene" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
     <defs>
@@ -3837,23 +3982,17 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       installChromeFallback();
       var IDLE_DELAY = 8e3;
       var InfinityNewTabApp = class extends HTMLElement {
-        hdrMedia = window.matchMedia("(dynamic-range: high)");
         wallpaperTone = "dark";
         idleTimer = 0;
+        lastActivity = 0;
         updateClasses = () => {
           const { appearance } = appStore.state.settings;
-          const hdrDisplay = this.hasHdrDisplay();
-          const hdrCapable = hdrDisplay && "gpu" in navigator;
           const theme = appearance.theme === "auto" ? this.wallpaperTone : appearance.theme;
           document.body.classList.toggle("theme-light", theme === "light");
           document.body.classList.toggle("theme-dark", theme === "dark");
           document.body.classList.toggle("glass-tinted", appearance.glass === "tinted");
           document.body.classList.toggle("reduce-transparency", appearance.reduceTransparency);
-          document.body.classList.toggle("enhanced-animations", appearance.enhancedAnimations);
           document.body.classList.toggle("hdr-highlights", appearance.hdrHighlights);
-          document.body.classList.toggle("hdr-display", hdrDisplay);
-          document.body.classList.toggle("hdr-capable", hdrCapable);
-          document.body.dataset.hdrOutput = hdrDisplay ? "high" : "standard";
         };
         onStoreChange = (event) => {
           const changes = event.detail?.changes;
@@ -3866,7 +4005,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             await appStore.init();
             this.updateClasses();
             appStore.addEventListener("change", this.onStoreChange);
-            this.hdrMedia.addEventListener("change", this.updateClasses);
             this.render();
             window.addEventListener("keydown", this.onKeyDown);
             ["pointermove", "pointerdown", "keydown", "wheel", "focusin"].forEach((type) => {
@@ -3880,15 +4018,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         disconnectedCallback() {
           appStore.removeEventListener("change", this.onStoreChange);
-          this.hdrMedia.removeEventListener("change", this.updateClasses);
           window.removeEventListener("keydown", this.onKeyDown);
           ["pointermove", "pointerdown", "keydown", "wheel", "focusin"].forEach((type) => {
             window.removeEventListener(type, this.wake, true);
           });
           window.clearTimeout(this.idleTimer);
-        }
-        hasHdrDisplay() {
-          return this.hdrMedia.matches && CSS.supports("dynamic-range-limit", "no-limit");
         }
         render() {
           this.innerHTML = `
@@ -3937,15 +4071,28 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             button.removeAttribute("aria-busy");
           }
         }
-        /** Any input brings the interface back and restarts the idle countdown. */
+        /**
+         * Any input brings the interface back and restarts the idle countdown. Input
+         * only records its time; the one pending timer checks it when it fires.
+         */
         wake = () => {
           document.body.classList.remove("is-idle");
-          window.clearTimeout(this.idleTimer);
-          if (!appStore.state.settings.wallpaper.idleHide) return;
-          this.idleTimer = window.setTimeout(this.goIdle, IDLE_DELAY);
+          this.lastActivity = Date.now();
+          if (!appStore.state.settings.wallpaper.idleHide) {
+            window.clearTimeout(this.idleTimer);
+            this.idleTimer = 0;
+            return;
+          }
+          if (!this.idleTimer) this.idleTimer = window.setTimeout(this.goIdle, IDLE_DELAY);
         };
         goIdle = () => {
-          if (hasOpenLayer() || isTypingTarget(document.activeElement) || document.querySelector(".context-menu, .modal-backdrop")) {
+          this.idleTimer = 0;
+          const remaining = this.lastActivity + IDLE_DELAY - Date.now();
+          if (remaining > 0) {
+            this.idleTimer = window.setTimeout(this.goIdle, remaining);
+            return;
+          }
+          if (hasOpenLayer() || isTypingTarget(document.activeElement)) {
             this.wake();
             return;
           }

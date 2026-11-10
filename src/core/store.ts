@@ -1,4 +1,12 @@
-import { DEFAULT_SETTINGS, MAX_INLINE_ICON_LENGTH, sanitizeBookmarks, sanitizeSettings } from './backup';
+import {
+    DEFAULT_SETTINGS,
+    MAX_INLINE_ICON_LENGTH,
+    finiteNumber,
+    normalizeFolders,
+    normalizeRecentSearches,
+    sanitizeBookmarks,
+    sanitizeSettings
+} from './backup';
 import {
     LEGACY_BOOKMARKS_KEY,
     decodeBookmarks,
@@ -6,9 +14,9 @@ import {
     staleBookmarkKeys,
     storedChunkCount
 } from './bookmark-storage';
-import { storageClear, storageGet, storageRemove, storageSet } from './storage';
+import { onSyncChanged, storageClear, storageGet, storageRemove, storageSet } from './storage';
 import type { AppSettings, AppState, Bookmark, SettingsSection } from './types';
-import { cleanText, normalizeUrl, sanitizeRemoteUrl } from './utils';
+import { ROOT_FOLDER, cleanText, compareBookmarks, normalizeUrl, sanitizeRemoteUrl } from './utils';
 
 export type StoreChangeKey = keyof AppState | `settings.${SettingsSection}`;
 const ALL_CHANGES: StoreChangeKey[] = [
@@ -20,43 +28,44 @@ const ALL_CHANGES: StoreChangeKey[] = [
     'settings.wallpaper',
     'settings.layout'
 ];
+/** Keys older versions wrote that nothing reads any more; an import clears them. */
+const RETIRED_KEYS = ['todos'];
 
 function initialState(): AppState {
     return {
         bookmarks: [],
-        folders: ['全部'],
+        folders: [ROOT_FOLDER],
         settings: structuredClone(DEFAULT_SETTINGS),
         recentSearches: [],
         lastBackupPrompt: 0
     };
 }
 
+/**
+ * The page's copy of everything in sync storage. Writes run one at a time, and
+ * changes made by other tabs or devices are reloaded so a later save here never
+ * overwrites them with stale data.
+ */
 export class AppStore extends EventTarget {
     private stateValue = initialState();
-    private initialized = false;
+    private initialized: Promise<void> | null = null;
     private bookmarkChunks = 0;
     private hasLegacyBookmarks = false;
+    private queue: Promise<unknown> = Promise.resolve();
+    private reloadQueued = false;
 
     get state(): Readonly<AppState> {
         return this.stateValue;
     }
 
-    async init(force = false): Promise<void> {
-        if (this.initialized && !force) return;
-        const stored = await storageGet<Record<string, unknown>>(null);
-        this.bookmarkChunks = storedChunkCount(stored);
-        this.hasLegacyBookmarks = LEGACY_BOOKMARKS_KEY in stored;
-        const bookmarks = sanitizeBookmarks(decodeBookmarks(stored));
-        const folders = normalizeFolders(stored.folders, bookmarks);
-        this.stateValue = {
-            bookmarks,
-            folders,
-            settings: sanitizeSettings(stored.settings),
-            recentSearches: normalizeRecentSearches(stored.recentSearches),
-            lastBackupPrompt: finiteNumber(stored.lastBackupPrompt, 0)
-        };
-        this.initialized = true;
-        this.emit(ALL_CHANGES);
+    init(): Promise<void> {
+        this.initialized ??= this.serial(async () => {
+            this.stateValue = await this.read();
+            this.emit(ALL_CHANGES);
+            onSyncChanged(this.queueReload);
+        });
+        this.initialized.catch(() => { this.initialized = null; });
+        return this.initialized;
     }
 
     async updateSettings<S extends SettingsSection>(
@@ -73,39 +82,48 @@ export class AppStore extends EventTarget {
 
     async addFolder(value: string): Promise<boolean> {
         const name = cleanText(value, 80);
-        if (!name || this.stateValue.folders.includes(name)) return false;
-        await this.commit((draft) => { draft.folders.push(name); }, ['folders']);
-        return true;
+        let added = false;
+        await this.commit((draft) => {
+            if (!name || draft.folders.includes(name)) return false;
+            draft.folders.push(name);
+            added = true;
+        }, ['folders']);
+        return added;
     }
 
     async renameFolder(from: string, to: string): Promise<boolean> {
         const name = cleanText(to, 80);
-        if (!name || from === '全部' || (name !== from && this.stateValue.folders.includes(name))) return false;
+        let renamed = false;
         await this.commit((draft) => {
+            if (!name || from === ROOT_FOLDER || (name !== from && draft.folders.includes(name))) return false;
             draft.folders = draft.folders.map((folder) => folder === from ? name : folder);
             draft.bookmarks.forEach((bookmark) => {
                 if (bookmark.folder === from) bookmark.folder = name;
             });
             normalizeOrders(draft.bookmarks);
+            renamed = true;
         }, ['folders', 'bookmarks']);
-        return true;
+        return renamed;
     }
 
     async deleteFolder(folder: string): Promise<void> {
-        if (folder === '全部') return;
+        if (folder === ROOT_FOLDER) return;
         await this.commit((draft) => {
             draft.folders = draft.folders.filter((item) => item !== folder);
             draft.bookmarks.forEach((bookmark) => {
-                if (bookmark.folder === folder) bookmark.folder = '全部';
+                if (bookmark.folder === folder) bookmark.folder = ROOT_FOLDER;
             });
             normalizeOrders(draft.bookmarks);
         }, ['folders', 'bookmarks']);
     }
 
     async addBookmark(input: Pick<Bookmark, 'name' | 'url' | 'icon' | 'folder'>): Promise<Bookmark> {
-        const bookmark = normalizeBookmarkInput(input, this.stateValue);
-        await this.commit((draft) => { draft.bookmarks.push(bookmark); }, ['bookmarks']);
-        return bookmark;
+        let bookmark: Bookmark | null = null;
+        await this.commit((draft) => {
+            bookmark = normalizeBookmarkInput(input, draft);
+            draft.bookmarks.push(bookmark);
+        }, ['bookmarks']);
+        return bookmark!;
     }
 
     async updateBookmark(id: Bookmark['id'], input: Pick<Bookmark, 'name' | 'url' | 'icon' | 'folder'>): Promise<void> {
@@ -133,7 +151,7 @@ export class AppStore extends EventTarget {
         await this.commit((draft) => {
             const bookmark = draft.bookmarks.find((item) => String(item.id) === String(id));
             if (!bookmark) throw new Error('找不到拖动的书签');
-            const destination = draft.folders.includes(targetFolder) ? targetFolder : '全部';
+            const destination = draft.folders.includes(targetFolder) ? targetFolder : ROOT_FOLDER;
             const source = bookmark.folder;
             bookmark.folder = destination;
             const destinationList = draft.bookmarks
@@ -167,65 +185,99 @@ export class AppStore extends EventTarget {
         await this.commit((draft) => { draft.lastBackupPrompt = value; }, ['lastBackupPrompt']);
     }
 
-    async replaceImportedData(data: Record<string, unknown>): Promise<void> {
-        const next = initialState();
-        next.bookmarks = sanitizeBookmarks(Array.isArray(data.bookmarks) ? data.bookmarks : []);
-        next.folders = normalizeFolders(data.folders, next.bookmarks);
-        next.settings = sanitizeSettings(data.settings);
-        next.recentSearches = normalizeRecentSearches(data.recentSearches);
-        next.lastBackupPrompt = finiteNumber(data.lastBackupPrompt, 0);
-        const encoded = encodeBookmarks(next.bookmarks);
-        const values: Record<string, unknown> = {
-            ...encoded.values,
-            folders: next.folders,
-            settings: next.settings,
-            recentSearches: next.recentSearches,
-            lastBackupPrompt: next.lastBackupPrompt,
-            ...(Array.isArray(data.todos) ? { todos: data.todos } : {})
+    /** Replaces everything with an already sanitized backup (see `sanitizeImportedData`). */
+    replaceImportedData(next: AppState): Promise<void> {
+        return this.serial(async () => {
+            const encoded = encodeBookmarks(next.bookmarks);
+            await storageSet({
+                ...encoded.values,
+                folders: next.folders,
+                settings: next.settings,
+                recentSearches: next.recentSearches,
+                lastBackupPrompt: next.lastBackupPrompt
+            });
+            const staleKeys = [
+                ...RETIRED_KEYS,
+                ...staleBookmarkKeys(this.bookmarkChunks, encoded.count, this.hasLegacyBookmarks)
+            ];
+            await storageRemove(staleKeys);
+            this.bookmarkChunks = encoded.count;
+            this.hasLegacyBookmarks = false;
+            this.stateValue = structuredClone(next);
+            this.emit(ALL_CHANGES);
+        });
+    }
+
+    reset(): Promise<void> {
+        return this.serial(async () => {
+            await storageClear();
+            this.bookmarkChunks = 0;
+            this.hasLegacyBookmarks = false;
+            this.stateValue = initialState();
+            this.emit(ALL_CHANGES);
+        });
+    }
+
+    /** Runs tasks one after another, so a write always starts from the latest state. */
+    private serial<T>(task: () => Promise<T>): Promise<T> {
+        const run = this.queue.then(task, task);
+        this.queue = run.catch(() => undefined);
+        return run;
+    }
+
+    private async read(): Promise<AppState> {
+        const stored = await storageGet<Record<string, unknown>>(null);
+        this.bookmarkChunks = storedChunkCount(stored);
+        this.hasLegacyBookmarks = LEGACY_BOOKMARKS_KEY in stored;
+        const bookmarks = sanitizeBookmarks(decodeBookmarks(stored));
+        return {
+            bookmarks,
+            folders: normalizeFolders(stored.folders, bookmarks),
+            settings: sanitizeSettings(stored.settings),
+            recentSearches: normalizeRecentSearches(stored.recentSearches),
+            lastBackupPrompt: finiteNumber(stored.lastBackupPrompt, 0)
         };
-        await storageSet(values);
-        const staleKeys = [
-            ...['todos'].filter((key) => !(key in values)),
-            ...staleBookmarkKeys(this.bookmarkChunks, encoded.count, this.hasLegacyBookmarks)
-        ];
-        if (staleKeys.length) await storageRemove(staleKeys);
-        this.bookmarkChunks = encoded.count;
-        this.hasLegacyBookmarks = false;
-        this.stateValue = next;
-        this.initialized = true;
-        this.emit(ALL_CHANGES);
     }
 
-    async reset(): Promise<void> {
-        await storageClear('sync');
-        this.bookmarkChunks = 0;
-        this.hasLegacyBookmarks = false;
-        this.stateValue = initialState();
-        this.emit(ALL_CHANGES);
-    }
+    /** Several change events (a save and its chunk cleanup) collapse into one reload. */
+    private readonly queueReload = (): void => {
+        if (this.reloadQueued) return;
+        this.reloadQueued = true;
+        void this.serial(async () => {
+            this.reloadQueued = false;
+            const next = await this.read();
+            const changes = diff(this.stateValue, next);
+            if (!changes.length) return; // Our own write coming back.
+            this.stateValue = next;
+            this.emit(changes);
+        }).catch(() => undefined);
+    };
 
-    private async commit(
-        mutator: (draft: AppState) => void,
+    /** A mutator may return `false` to make no change at all. */
+    private commit(
+        mutator: (draft: AppState) => void | false,
         keys: Array<keyof AppState>,
         changes: StoreChangeKey[] = keys
     ): Promise<void> {
-        const draft = structuredClone(this.stateValue);
-        mutator(draft);
-        const values: Record<string, unknown> = {};
-        let bookmarkChunks: number | null = null;
-        keys.forEach((key) => {
-            if (key !== 'bookmarks') {
-                values[key] = draft[key];
-                return;
-            }
-            const encoded = encodeBookmarks(draft.bookmarks);
-            Object.assign(values, encoded.values);
-            bookmarkChunks = encoded.count;
+        return this.serial(async () => {
+            const draft = structuredClone(this.stateValue);
+            if (mutator(draft) === false) return;
+            const values: Record<string, unknown> = {};
+            let bookmarkChunks: number | null = null;
+            keys.forEach((key) => {
+                if (key !== 'bookmarks') {
+                    values[key] = draft[key];
+                    return;
+                }
+                const encoded = encodeBookmarks(draft.bookmarks);
+                Object.assign(values, encoded.values);
+                bookmarkChunks = encoded.count;
+            });
+            await storageSet(values);
+            this.stateValue = draft;
+            if (bookmarkChunks !== null) await this.dropStaleBookmarkKeys(bookmarkChunks);
+            this.emit(changes);
         });
-        await storageSet(values);
-        this.stateValue = draft;
-        if (bookmarkChunks !== null) await this.dropStaleBookmarkKeys(bookmarkChunks);
-        this.emit(changes);
     }
 
     /** Stale chunks are harmless to readers, so a failed cleanup never rolls back a save. */
@@ -246,6 +298,15 @@ export class AppStore extends EventTarget {
     }
 }
 
+function diff(previous: AppState, next: AppState): StoreChangeKey[] {
+    const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+    return ALL_CHANGES.filter((change) => {
+        if (!change.startsWith('settings.')) return !same(previous[change as keyof AppState], next[change as keyof AppState]);
+        const section = change.slice('settings.'.length) as SettingsSection;
+        return !same(previous.settings[section], next.settings[section]);
+    });
+}
+
 function normalizeBookmarkInput(
     input: Pick<Bookmark, 'name' | 'url' | 'icon' | 'folder'>,
     state: Pick<AppState, 'bookmarks' | 'folders'>,
@@ -258,7 +319,7 @@ function normalizeBookmarkInput(
     if (icon.startsWith('data:') && icon.length > MAX_INLINE_ICON_LENGTH) {
         throw new Error('内嵌图标过大，请改用图标网址');
     }
-    const folder = state.folders.includes(input.folder) ? input.folder : '全部';
+    const folder = state.folders.includes(input.folder) ? input.folder : ROOT_FOLDER;
     return {
         id,
         url,
@@ -269,21 +330,6 @@ function normalizeBookmarkInput(
     };
 }
 
-function normalizeFolders(value: unknown, bookmarks: Bookmark[]): string[] {
-    const folders = new Set<string>(['全部']);
-    if (Array.isArray(value)) value.forEach((item) => {
-        const name = cleanText(item, 80);
-        if (name) folders.add(name);
-    });
-    bookmarks.forEach((bookmark) => folders.add(bookmark.folder));
-    return [...folders];
-}
-
-function normalizeRecentSearches(value: unknown): string[] {
-    if (!Array.isArray(value)) return [];
-    return value.map((item) => cleanText(item, 200)).filter(Boolean).slice(0, 20);
-}
-
 function normalizeOrders(bookmarks: Bookmark[]): void {
     new Set(bookmarks.map((bookmark) => bookmark.folder)).forEach((folder) => normalizeFolderOrder(bookmarks, folder));
 }
@@ -291,15 +337,6 @@ function normalizeOrders(bookmarks: Bookmark[]): void {
 function normalizeFolderOrder(bookmarks: Bookmark[], folder: string): void {
     bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks)
         .forEach((bookmark, index) => { bookmark.order = index; });
-}
-
-function compareBookmarks(left: Bookmark, right: Bookmark): number {
-    return left.order - right.order || String(left.id).localeCompare(String(right.id));
-}
-
-function finiteNumber(value: unknown, fallback: number): number {
-    const number = Number(value);
-    return Number.isFinite(number) ? number : fallback;
 }
 
 export const appStore = new AppStore();

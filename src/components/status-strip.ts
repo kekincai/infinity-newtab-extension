@@ -7,7 +7,7 @@ import { hostOf } from './site-icon';
 type Media = { id: number; title: string; host: string; icon: string; muted: boolean };
 type Status = { media: Media | null; downloads: number[]; battery: { level: number; charging: boolean } | null };
 
-/** Top-left capsules that only appear while media plays, files download or the laptop runs on battery. */
+/** Top-right capsules that only appear while media plays, files download or the laptop runs on battery. */
 export class StatusStrip extends StoreElement {
     protected readonly observedChanges = ['settings.layout'] as const;
     private timer = 0;

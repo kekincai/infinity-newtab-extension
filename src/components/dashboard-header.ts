@@ -1,7 +1,7 @@
 import { appStore } from '../core/store';
 import { StoreElement } from './base';
 
-/** Centered clock and date; re-renders only when its layout or format settings change. */
+/** The date and clock at the top left; re-renders only when its layout or format settings change. */
 export class DashboardHeader extends StoreElement {
     protected readonly observedChanges = ['settings.layout', 'settings.appearance'] as const;
     private clockTimer = 0;
@@ -9,12 +9,21 @@ export class DashboardHeader extends StoreElement {
     connectedCallback(): void {
         super.connectedCallback();
         this.scheduleTick();
+        document.addEventListener('visibilitychange', this.onVisibility);
     }
 
     disconnectedCallback(): void {
         super.disconnectedCallback();
         window.clearTimeout(this.clockTimer);
+        document.removeEventListener('visibilitychange', this.onVisibility);
     }
+
+    /** Background tabs and sleep delay timers, so a tab coming back corrects the time at once. */
+    private readonly onVisibility = (): void => {
+        if (document.visibilityState !== 'visible') return;
+        this.updateClock();
+        this.scheduleTick();
+    };
 
     protected render(): void {
         this.hidden = !appStore.state.settings.layout.showClock;

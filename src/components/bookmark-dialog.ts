@@ -1,10 +1,8 @@
 import { appStore } from '../core/store';
 import type { Bookmark } from '../core/types';
 import { DEFAULT_ICON, escapeHtml, faviconUrl, normalizeUrl, sanitizeRemoteUrl } from '../core/utils';
-import { ROOT_FOLDER, folderLabel } from './bookmark-actions';
+import { type BookmarkDialogDetail as DialogDetail, ROOT_FOLDER, folderLabel } from './bookmark-actions';
 import { notifyError, pushLayer } from './ui-layer';
-
-type DialogDetail = { bookmark?: Bookmark; folder?: string; draft?: { url: string; name: string } };
 
 export class BookmarkDialog extends HTMLElement {
     private editing?: Bookmark;

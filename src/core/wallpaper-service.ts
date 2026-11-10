@@ -1,4 +1,6 @@
+import { DEFAULT_SETTINGS, isRecord } from './backup';
 import { mediaStore, type MediaKind } from './media-store';
+import { storageGet } from './storage';
 import { appStore } from './store';
 import type { ResolvedTheme, WallpaperSettings } from './types';
 
@@ -26,16 +28,18 @@ export async function useOnlineWallpaper(): Promise<void> {
 }
 
 /**
- * Before 2.5 the random API URL itself was stored, so every new tab fetched a
- * different picture. Cache one copy locally the first time 2.5 starts.
+ * Before 2.5 the random API URL itself was stored as a `preset` wallpaper. The
+ * store no longer understands that type and shows the default scene instead,
+ * so the stored settings are read directly: one picture is downloaded and kept.
  */
 export async function migrateLegacyWallpaper(): Promise<void> {
-    const { type, value } = appStore.state.settings.wallpaper;
-    if (type !== 'preset' || !value.startsWith(ONLINE_WALLPAPER)) return;
+    const { settings } = await storageGet<Record<string, unknown>>(['settings']).catch(() => ({ settings: null }));
+    const wallpaper = isRecord(settings) && isRecord(settings.wallpaper) ? settings.wallpaper : null;
+    if (wallpaper?.type !== 'preset' || typeof wallpaper.value !== 'string' || !wallpaper.value.startsWith(ONLINE_WALLPAPER)) return;
     try {
         await useOnlineWallpaper();
     } catch {
-        // Offline or blocked: keep the remote URL and try again next time.
+        // Offline or blocked: the default scene stays, and the next settings save retires the old value.
     }
 }
 
@@ -47,18 +51,22 @@ export async function useLocalWallpaper(file: File): Promise<void> {
 }
 
 export async function resetWallpaper(): Promise<void> {
-    await appStore.updateSettings('wallpaper', { type: 'gradient', value: '', blur: 0, overlay: 30 });
+    const { type, value, blur, overlay } = DEFAULT_SETTINGS.wallpaper;
+    await appStore.updateSettings('wallpaper', { type, value, blur, overlay });
     await mediaStore.clearAll();
 }
 
 export function wallpaperLabel(wallpaper: WallpaperSettings): string {
     if (wallpaper.type === 'video') return '本地视频';
     if (wallpaper.type === 'local') return wallpaper.value.startsWith('online') ? '在线壁纸' : '本地图片';
-    if (wallpaper.type === 'preset') return '在线图片';
-    return '默认渐变';
+    return 'Twilight Bay';
 }
 
-/** Saves the media first and rolls it back if the settings write fails. */
+/**
+ * Saves the media first and rolls it back if the settings write fails. Once the
+ * new wallpaper is in use the other kind is dropped, so an old video does not
+ * linger in local storage and in every backup.
+ */
 async function storeWallpaper(blob: Blob, kind: MediaKind, source: 'local' | 'online'): Promise<void> {
     const previous = await mediaStore.get(kind);
     await mediaStore.set(kind, blob);
@@ -76,6 +84,7 @@ async function storeWallpaper(blob: Blob, kind: MediaKind, source: 'local' | 'on
         }
         throw error;
     }
+    await mediaStore.clear(kind === 'video' ? 'image' : 'video').catch(() => undefined);
 }
 
 export async function toneOfBlob(blob: Blob): Promise<ResolvedTheme> {

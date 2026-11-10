@@ -18,6 +18,8 @@ export class WallpaperSurface extends StoreElement {
     private renderToken = 0;
     private appliedMediaKey = '';
     private pendingMediaKey = '';
+    /** Media that failed to load is not retried (nor reported again) until the wallpaper itself changes. */
+    private failedMediaKey = '';
     private userPaused = false;
     private battery: BatteryManager | null = null;
 
@@ -58,7 +60,7 @@ export class WallpaperSurface extends StoreElement {
         this.style.setProperty('--wallpaper-overlay', String(wallpaper.overlay / 100));
         this.syncPlayback();
         const mediaKey = `${wallpaper.type}:${wallpaper.value}`;
-        if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey) return;
+        if (mediaKey === this.appliedMediaKey || mediaKey === this.pendingMediaKey || mediaKey === this.failedMediaKey) return;
         this.pendingMediaKey = mediaKey;
         void this.applyMedia(++this.renderToken, mediaKey);
     }
@@ -114,19 +116,20 @@ export class WallpaperSurface extends StoreElement {
                 candidateUrl = '';
             } else {
                 if (token !== this.renderToken) return;
-                const preset = wallpaper.type === 'preset' && wallpaper.value;
-                const background = preset ? `url("${wallpaper.value.replaceAll('"', '%22')}")` : '';
-                // Remote presets from old versions cannot be sampled cross-origin; assume a busy, dark image.
-                this.commitMedia(host, null, '', background);
-                if (!preset) host.innerHTML = SCENE;
+                this.commitMedia(host, null, '', '');
+                host.innerHTML = SCENE;
             }
             this.appliedMediaKey = mediaKey;
+            this.failedMediaKey = '';
             this.syncPlayback();
             this.reportState();
             const resolved = await tone;
             if (token === this.renderToken) this.reportTone(resolved);
         } catch (error) {
-            if (token === this.renderToken) this.reportError(error);
+            if (token === this.renderToken) {
+                this.failedMediaKey = mediaKey;
+                this.reportError(error);
+            }
         } finally {
             if (candidateVideo) this.disposeVideo(candidateVideo);
             if (candidateUrl) URL.revokeObjectURL(candidateUrl);
@@ -173,6 +176,10 @@ export class WallpaperSurface extends StoreElement {
     }
 }
 
+/** The video to unmute at the first gesture; one pair of listeners waits for it however often playback syncs. */
+let unmuteTarget: HTMLVideoElement | null = null;
+let waitingForGesture = false;
+
 /** Unmuting before any user gesture would make Chrome pause the video, so wait for one. */
 function applySound(video: HTMLVideoElement, sound: boolean): void {
     if (!sound) {
@@ -183,10 +190,16 @@ function applySound(video: HTMLVideoElement, sound: boolean): void {
         video.muted = false;
         return;
     }
+    unmuteTarget = video;
+    if (waitingForGesture) return;
+    waitingForGesture = true;
     const unmute = () => {
         window.removeEventListener('pointerdown', unmute, true);
         window.removeEventListener('keydown', unmute, true);
-        if (video.isConnected && appStore.state.settings.wallpaper.sound) video.muted = false;
+        waitingForGesture = false;
+        const target = unmuteTarget;
+        unmuteTarget = null;
+        if (target?.isConnected && appStore.state.settings.wallpaper.sound) target.muted = false;
     };
     window.addEventListener('pointerdown', unmute, true);
     window.addEventListener('keydown', unmute, true);

@@ -20,7 +20,7 @@ import {
 } from './bookmark-actions';
 import { ICONS } from './icons';
 import { bindSiteIcons, hostOf, siteIcon } from './site-icon';
-import { openMenu } from './ui-layer';
+import { type MenuAnchor, openMenu } from './ui-layer';
 
 /** Rows every column starts with; more are added only when the columns would not fit the width. */
 const MIN_ROWS = 4;
@@ -28,8 +28,8 @@ const ROW_HEIGHT = 28;
 /** The index may grow up to this share of the window before it scrolls sideways instead. */
 const MAX_HEIGHT_SHARE = 0.4;
 const RECENT_LIMIT = 8;
-
-type MenuAnchor = { x: number; y: number } | HTMLElement;
+/** CSS size of the favicons in the index, so the browser picks a matching resolution. */
+const ICON_SIZE = 16;
 
 /**
  * Every bookmark at once, as a text index along the bottom of the wallpaper:
@@ -38,12 +38,10 @@ type MenuAnchor = { x: number; y: number } | HTMLElement;
 export class BookmarkIndex extends StoreElement {
     protected readonly observedChanges = ['bookmarks', 'folders', 'settings.layout'] as const;
     private draggingId: Bookmark['id'] | null = null;
-    /** Refits when the footer gives the index a different width, e.g. once the wallpaper caption appears. */
-    private readonly resizeObserver = new ResizeObserver(([entry]) => {
-        if (entry.contentRect.width === this.fittedWidth) return;
-        this.fit();
-    });
-    private fittedWidth = 0;
+    /** Refits when the footer gives the index a different width, e.g. once the pause button appears. */
+    private readonly resizeObserver = new ResizeObserver(() => this.refit());
+    /** The width and window height the rows were last fitted to. */
+    private fittedSize = '';
     private recent: { sites: RecentSite[]; state: 'idle' | 'loading' | 'ready' | 'error'; error: string } = { sites: [], state: 'idle', error: '' };
 
     connectedCallback(): void {
@@ -55,14 +53,14 @@ export class BookmarkIndex extends StoreElement {
         this.addEventListener('drop', this.onDrop);
         this.addEventListener('dragend', this.onDragEnd);
         this.addEventListener('wheel', this.onWheel, { passive: false });
-        window.addEventListener('resize', this.fit);
+        window.addEventListener('resize', this.refit);
         this.resizeObserver.observe(this);
         super.connectedCallback();
     }
 
     disconnectedCallback(): void {
         super.disconnectedCallback();
-        window.removeEventListener('resize', this.fit);
+        window.removeEventListener('resize', this.refit);
         this.resizeObserver.disconnect();
     }
 
@@ -109,7 +107,7 @@ export class BookmarkIndex extends StoreElement {
         return `
             <li><a class="index-link" href="${escapeHtml(bookmark.url)}" ${this.target()} rel="noopener noreferrer"
                 data-bookmark-id="${escapeHtml(bookmark.id)}" draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
-                ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark }, 'index-icon')}<span class="index-name">${escapeHtml(name)}</span>
+                ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark }, 'index-icon', ICON_SIZE)}<span class="index-name">${escapeHtml(name)}</span>
             </a></li>`;
     }
 
@@ -118,7 +116,7 @@ export class BookmarkIndex extends StoreElement {
         const items = state === 'ready'
             ? sites.slice(0, RECENT_LIMIT).map((site, index) => `
                 <li><a class="index-link" href="${escapeHtml(site.url)}" ${this.target()} rel="noopener noreferrer" data-recent-index="${index}" title="${escapeHtml(hostOf(site.url))}">
-                    ${siteIcon({ url: site.url, name: site.title }, 'index-icon')}<span class="index-name">${escapeHtml(site.title)}</span>
+                    ${siteIcon({ url: site.url, name: site.title }, 'index-icon', ICON_SIZE)}<span class="index-name">${escapeHtml(site.title)}</span>
                 </a></li>`).join('')
             : '';
         const note = state === 'error' ? escapeHtml(this.recent.error)
@@ -135,11 +133,20 @@ export class BookmarkIndex extends StoreElement {
         return appStore.state.settings.layout.openInNewTab ? 'target="_blank"' : '';
     }
 
+    private sizeKey(): string {
+        return `${this.getBoundingClientRect().width}x${window.innerHeight}`;
+    }
+
+    /** A window resize and the resize observer both land here; only a real size change refits. */
+    private readonly refit = (): void => {
+        if (this.sizeKey() !== this.fittedSize) this.fit();
+    };
+
     /** Adds rows until every column fits the width, up to a share of the window; past that the index scrolls sideways. */
-    private readonly fit = (): void => {
+    private fit(): void {
         const index = this.querySelector<HTMLElement>('.index');
         if (!index) return;
-        this.fittedWidth = this.getBoundingClientRect().width;
+        this.fittedSize = this.sizeKey();
         const longest = Math.max(MIN_ROWS, ...[...index.querySelectorAll('.index-list')].map((list) => list.childElementCount));
         const maxRows = Math.min(longest, Math.max(MIN_ROWS, Math.floor(window.innerHeight * MAX_HEIGHT_SHARE / ROW_HEIGHT)));
         let rows = MIN_ROWS;
@@ -149,7 +156,7 @@ export class BookmarkIndex extends StoreElement {
             index.style.setProperty('--rows', String(rows));
         }
         this.syncEdges();
-    };
+    }
 
     /** Fades only the edges that have columns scrolled past them. */
     private readonly syncEdges = (): void => {

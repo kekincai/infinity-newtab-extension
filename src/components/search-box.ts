@@ -18,11 +18,13 @@ export const SHORTCUT_LABEL = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K
 
 const ENGINE_ORDER = Object.keys(ENGINES) as SearchEngineKey[];
 const GROUP_TITLES = { url: '网址', bookmark: '书签', site: '常访问', web: '搜索网络', recent: '最近搜索' } as const;
+/** CSS size of a result's site icon, so the favicon picked from the srcset matches it. */
+const ROW_ICON_SIZE = 20;
 
 type Row =
     | { kind: 'url'; title: string; subtitle: string; url: string }
     | { kind: 'bookmark'; title: string; subtitle: string; url: string; bookmark: Bookmark }
-    | { kind: 'site'; title: string; subtitle: string; url: string; site: RecentSite }
+    | { kind: 'site'; title: string; subtitle: string; url: string }
     | { kind: 'web'; title: string; subtitle: string; query: string }
     | { kind: 'recent'; title: string; subtitle: string; query: string };
 
@@ -263,26 +265,32 @@ export class SearchBox extends StoreElement {
         const row = this.rows[index];
         if (!row) {
             const query = this.input.value.trim();
-            if (query) this.search(query);
+            if (query) this.search(query, background);
             return;
         }
         if (row.kind === 'web' || row.kind === 'recent') {
-            this.search(row.query);
+            this.search(row.query, background);
             return;
         }
-        if (background || appStore.state.settings.layout.openInNewTab || new URL(row.url).protocol === 'chrome-extension:') {
-            openInNewTab(row.url);
-            this.input.value = '';
-            this.input.blur();
-        } else {
-            window.location.href = row.url;
-        }
+        this.go(row.url, background || appStore.state.settings.layout.openInNewTab || new URL(row.url).protocol === 'chrome-extension:');
     }
 
-    private search(query: string): void {
+    /** ⌘/Ctrl+Enter or ⌘/Ctrl-click opens the result in a background tab and keeps this page. */
+    private go(url: string, newTab: boolean): void {
+        if (!newTab) {
+            window.location.href = url;
+            return;
+        }
+        openInNewTab(url);
+        this.input.value = '';
+        this.input.blur();
+    }
+
+    /** A failed save of the recent search never stops the search itself. */
+    private search(query: string, newTab = false): void {
         const target = `${ENGINES[this.engine].url}${encodeURIComponent(query)}`;
         const save = appStore.state.settings.layout.saveSearches ? appStore.saveRecentSearch(query) : Promise.resolve();
-        void save.finally(() => { window.location.href = target; });
+        void save.catch(() => undefined).then(() => this.go(target, newTab));
     }
 
     private cycleEngine(step: number): void {
@@ -294,21 +302,20 @@ export class SearchBox extends StoreElement {
     private syncEngine(): void {
         const button = this.querySelector<HTMLButtonElement>('.search-engine')!;
         button.textContent = ENGINES[this.engine].label;
-        button.dataset.engine = this.engine;
         button.setAttribute('aria-label', `搜索引擎：${ENGINES[this.engine].label}，点按或按 Tab 切换`);
     }
 }
 
 function siteRow(site: RecentSite): Row {
-    return { kind: 'site', title: site.title, subtitle: `${site.host} · 近 30 天 ${site.count} 次`, url: site.url, site };
+    return { kind: 'site', title: site.title, subtitle: `${site.host} · 近 30 天 ${site.count} 次`, url: site.url };
 }
 
 function rowIcon(row: Row): string {
     if (row.kind === 'web') return `<span class="row-icon row-icon-plain">${ICONS.search}</span>`;
     if (row.kind === 'recent') return `<span class="row-icon row-icon-plain">${ICONS.clock}</span>`;
     if (row.kind === 'url') return `<span class="row-icon row-icon-plain">${ICONS.open}</span>`;
-    if (row.kind === 'bookmark') return siteIcon({ url: row.url, name: row.title, bookmark: row.bookmark }, 'row-icon');
-    return siteIcon({ url: row.url, name: row.title }, 'row-icon');
+    if (row.kind === 'bookmark') return siteIcon({ url: row.url, name: row.title, bookmark: row.bookmark }, 'row-icon', ROW_ICON_SIZE);
+    return siteIcon({ url: row.url, name: row.title }, 'row-icon', ROW_ICON_SIZE);
 }
 
 /** Host and name prefixes rank above matches in the middle of a URL. */
@@ -324,5 +331,6 @@ function looksLikeUrl(value: string): boolean {
     if (/\s/.test(value)) return false;
     return /^[a-z][a-z\d+.-]*:\/\//i.test(value)
         || /^localhost(:\d+)?(\/|$)/i.test(value)
+        || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/\S*)?$/.test(value)
         || /^[\w-]+(\.[\w-]+)*\.[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(value);
 }
