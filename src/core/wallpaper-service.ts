@@ -43,8 +43,25 @@ export async function migrateLegacyWallpaper(): Promise<void> {
     }
 }
 
+/** Pictures and videos dragged or pasted from other apps can arrive without a type; the extension tells instead. */
+const IMAGE_EXTENSIONS = /\.(jpe?g|png|gif|webp|avif|bmp|tiff?)$/i;
+const VIDEO_EXTENSIONS = /\.(mp4|m4v|mov|webm|ogv)$/i;
+/** iPhone photos are often HEIC, which Chrome cannot decode. */
+const HEIC = /^image\/hei[cf]/i;
+const HEIC_EXTENSIONS = /\.hei[cf]$/i;
+
+export function mediaKindOf(file: File): MediaKind | null {
+    if (file.type.startsWith('video/') || (!file.type && VIDEO_EXTENSIONS.test(file.name))) return 'video';
+    if (file.type.startsWith('image/') || (!file.type && (IMAGE_EXTENSIONS.test(file.name) || HEIC_EXTENSIONS.test(file.name)))) return 'image';
+    return null;
+}
+
+/** Files from the picker, a drop or the clipboard all take this path. */
 export async function useLocalWallpaper(file: File): Promise<void> {
-    const kind: MediaKind | null = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : null;
+    if (HEIC.test(file.type) || HEIC_EXTENSIONS.test(file.name)) {
+        throw new Error('Chrome 无法显示 HEIC 格式的照片。请在“照片”中选中它，按 ⌘C 复制后在这里粘贴，或用“文件 → 导出”存为 JPEG');
+    }
+    const kind = mediaKindOf(file);
     if (!kind) throw new Error('请选择图片或视频文件');
     await validateLocalMedia(file, kind);
     await storeWallpaper(file, kind, 'local');
