@@ -928,8 +928,16 @@
     } catch {
     }
   }
+  function mediaKindOf(file) {
+    if (file.type.startsWith("video/") || !file.type && VIDEO_EXTENSIONS.test(file.name)) return "video";
+    if (file.type.startsWith("image/") || !file.type && (IMAGE_EXTENSIONS.test(file.name) || HEIC_EXTENSIONS.test(file.name))) return "image";
+    return null;
+  }
   async function useLocalWallpaper(file) {
-    const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : null;
+    if (HEIC.test(file.type) || HEIC_EXTENSIONS.test(file.name)) {
+      throw new Error("Chrome \u65E0\u6CD5\u663E\u793A HEIC \u683C\u5F0F\u7684\u7167\u7247\u3002\u8BF7\u5728\u201C\u7167\u7247\u201D\u4E2D\u9009\u4E2D\u5B83\uFF0C\u6309 \u2318C \u590D\u5236\u540E\u5728\u8FD9\u91CC\u7C98\u8D34\uFF0C\u6216\u7528\u201C\u6587\u4EF6 \u2192 \u5BFC\u51FA\u201D\u5B58\u4E3A JPEG");
+    }
+    const kind = mediaKindOf(file);
     if (!kind) throw new Error("\u8BF7\u9009\u62E9\u56FE\u7247\u6216\u89C6\u9891\u6587\u4EF6");
     await validateLocalMedia(file, kind);
     await storeWallpaper(file, kind, "local");
@@ -1036,7 +1044,7 @@
   function errorMessage(error) {
     return error instanceof Error ? error.message : "\u64CD\u4F5C\u5931\u8D25";
   }
-  var ONLINE_WALLPAPER, SAMPLE_SIZE, LIGHT_THRESHOLD;
+  var ONLINE_WALLPAPER, SAMPLE_SIZE, LIGHT_THRESHOLD, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, HEIC, HEIC_EXTENSIONS;
   var init_wallpaper_service = __esm({
     "src/core/wallpaper-service.ts"() {
       "use strict";
@@ -1047,6 +1055,10 @@
       ONLINE_WALLPAPER = "https://www.dmoe.cc/random.php";
       SAMPLE_SIZE = 32;
       LIGHT_THRESHOLD = 0.58;
+      IMAGE_EXTENSIONS = /\.(jpe?g|png|gif|webp|avif|bmp|tiff?)$/i;
+      VIDEO_EXTENSIONS = /\.(mp4|m4v|mov|webm|ogv)$/i;
+      HEIC = /^image\/hei[cf]/i;
+      HEIC_EXTENSIONS = /\.hei[cf]$/i;
     }
   });
 
@@ -3017,7 +3029,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     const total = Math.round(seconds);
     return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
   }
-  var PANES, SettingsPanel;
+  var PASTE_LABEL, PANES, SettingsPanel;
   var init_settings_panel = __esm({
     "src/components/settings-panel.ts"() {
       "use strict";
@@ -3032,6 +3044,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_icons();
       init_search_box();
       init_ui_layer();
+      PASTE_LABEL = SHORTCUT_LABEL === "\u2318K" ? "\u2318V" : "Ctrl+V";
       PANES = [
         ["appearance", "\u5916\u89C2"],
         ["widgets", "\u7EC4\u4EF6"],
@@ -3049,6 +3062,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         connectedCallback() {
           super.connectedCallback();
           this.stopWatchingDisplay = onHdrDisplayChange(() => this.syncHdrDescription());
+          document.addEventListener("paste", this.onPaste);
         }
         open() {
           if (this.openState) return;
@@ -3076,6 +3090,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           super.disconnectedCallback();
           this.stopWatchingDisplay?.();
           this.stopWatchingDisplay = null;
+          document.removeEventListener("paste", this.onPaste);
           if (this.previewUrl) URL.revokeObjectURL(this.previewUrl);
         }
         handleStoreChange() {
@@ -3152,7 +3167,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         wallpaperPane({ wallpaper }) {
           return pane("wallpaper", "\u58C1\u7EB8", `
-            <div class="settings-group wallpaper-card setting-row" data-search="\u58C1\u7EB8 \u89C6\u9891 \u56FE\u7247 \u5728\u7EBF \u9009\u62E9 \u6062\u590D\u9ED8\u8BA4">
+            <div class="settings-group wallpaper-card setting-row" data-search="\u58C1\u7EB8 \u89C6\u9891 \u56FE\u7247 \u7167\u7247 \u5728\u7EBF \u9009\u62E9 \u62D6\u653E \u7C98\u8D34 \u6062\u590D\u9ED8\u8BA4">
                 <div class="wallpaper-preview" aria-hidden="true"><div class="wallpaper-preview-media"></div><span class="wallpaper-duration" hidden></span></div>
                 <div class="wallpaper-info">
                     <strong class="wallpaper-name"></strong>
@@ -3162,6 +3177,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                         <button class="pill-button random-wallpaper" type="button">\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8</button>
                         <button class="pill-button reset-wallpaper" type="button">\u6062\u590D\u9ED8\u8BA4</button>
                     </div>
+                    <span class="row-sub wallpaper-hint">\u4E5F\u53EF\u4EE5\u628A\u7167\u7247\u6216\u89C6\u9891\u62D6\u5230\u8FD9\u91CC\uFF0C\u6216\u590D\u5236\u540E\u6309 ${PASTE_LABEL} \u7C98\u8D34</span>
                 </div>
             </div>
             ${group("\u663E\u793A", `
@@ -3257,6 +3273,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             if (file) void this.withBusy(upload.closest("label"), () => useLocalWallpaper(file));
           });
           this.querySelector(".random-wallpaper")?.addEventListener("click", (event) => void this.withBusy(event.currentTarget, useOnlineWallpaper));
+          const windowElement = this.querySelector(".settings-window");
+          windowElement.addEventListener("dragover", this.onDragOver);
+          windowElement.addEventListener("dragleave", this.onDragLeave);
+          windowElement.addEventListener("drop", this.onDrop);
           this.querySelector(".reset-wallpaper")?.addEventListener("click", () => void resetWallpaper().catch(notifyError));
           this.querySelector(".export-data")?.addEventListener("click", () => void backupService.createBackup().catch(notifyError));
           this.querySelector(".import-data input")?.addEventListener("change", (event) => {
@@ -3428,6 +3448,49 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             notifyError(error);
           }
         }
+        /** True while the wallpaper card is on screen (its pane, or a settings search that shows it). */
+        get wallpaperCardVisible() {
+          const card = this.querySelector(".wallpaper-card");
+          return this.openState && Boolean(card?.getClientRects().length);
+        }
+        useWallpaperFile(file) {
+          void this.withBusy(this.querySelector(".upload-wallpaper"), () => useLocalWallpaper(file));
+        }
+        /**
+         * Files dropped anywhere on the settings window are caught so Chrome does not
+         * navigate away to them; only the wallpaper pane takes the drop.
+         */
+        onDragOver = (event) => {
+          if (!event.dataTransfer?.types.includes("Files")) return;
+          event.preventDefault();
+          const accepts = this.wallpaperCardVisible && Boolean(event.target.closest('.settings-pane[data-pane="wallpaper"]'));
+          event.dataTransfer.dropEffect = accepts ? "copy" : "none";
+          this.querySelector(".wallpaper-card")?.classList.toggle("is-drop-target", accepts);
+        };
+        onDragLeave = (event) => {
+          const windowElement = this.querySelector(".settings-window");
+          if (windowElement?.contains(event.relatedTarget)) return;
+          this.querySelector(".wallpaper-card")?.classList.remove("is-drop-target");
+        };
+        onDrop = (event) => {
+          if (!event.dataTransfer?.types.includes("Files")) return;
+          event.preventDefault();
+          const card = this.querySelector(".wallpaper-card");
+          const accepts = card?.classList.contains("is-drop-target");
+          card?.classList.remove("is-drop-target");
+          if (!accepts) return;
+          const files = [...event.dataTransfer.files];
+          const file = files.find((item) => mediaKindOf(item)) ?? files[0];
+          if (file) this.useWallpaperFile(file);
+        };
+        /** A picture copied in Photos (⌘C) and pasted while the wallpaper card is on screen becomes the wallpaper. */
+        onPaste = (event) => {
+          if (!this.wallpaperCardVisible) return;
+          const file = [...event.clipboardData?.files ?? []].find((item) => mediaKindOf(item));
+          if (!file) return;
+          event.preventDefault();
+          this.useWallpaperFile(file);
+        };
         /** The type control is a shortcut: video and image open the file picker, online fetches a new picture. */
         pickWallpaper(kind) {
           if (kind === "online") {

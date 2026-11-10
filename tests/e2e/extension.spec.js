@@ -398,6 +398,67 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     expect(errors).toEqual([]);
 });
 
+const PIXEL_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+/** A DataTransfer holding one file, as Photos hands over a dragged or copied picture. */
+function fileTransfer(page, { name, type, base64 }) {
+    return page.evaluateHandle(({ name, type, base64 }) => {
+        const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([bytes], name, { type }));
+        return transfer;
+    }, { name, type, base64 });
+}
+
+test('takes a wallpaper dropped onto or pasted into the wallpaper settings', async ({ page }) => {
+    const errors = await openExtension(page);
+    await openSettings(page, 'wallpaper');
+    const card = page.locator('.wallpaper-card');
+    await expect(page.locator('.wallpaper-hint')).toContainText('拖到这里');
+
+    // A drop outside the wallpaper pane is caught (no navigation) but ignored.
+    await page.locator('.settings-nav-item[data-pane="data"]').click();
+    let transfer = await fileTransfer(page, { name: 'photo.png', type: 'image/png', base64: PIXEL_PNG });
+    await page.locator('.settings-pane[data-pane="data"]').dispatchEvent('dragover', { dataTransfer: transfer });
+    await page.locator('.settings-pane[data-pane="data"]').dispatchEvent('drop', { dataTransfer: transfer });
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('gradient');
+    await expect(page).toHaveURL(/\/newtab\.html$/);
+
+    // Dragging over the card highlights it; dropping saves the picture.
+    await page.locator('.settings-nav-item[data-pane="wallpaper"]').click();
+    await card.dispatchEvent('dragover', { dataTransfer: transfer });
+    await expect(card).toHaveClass(/is-drop-target/);
+    await card.dispatchEvent('drop', { dataTransfer: transfer });
+    await expect(card).not.toHaveClass(/is-drop-target/);
+    await expect.poll(() => page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('local');
+    await expect(page.locator('.wallpaper-name')).toHaveText('本地图片');
+    const dropped = await page.evaluate(() => window.__readMockSync().settings.wallpaper.value);
+
+    // A picture copied in Photos (⌘C) arrives as a pasted image file.
+    transfer = await fileTransfer(page, { name: 'image.png', type: 'image/png', base64: PIXEL_PNG });
+    await page.evaluate((clipboardData) => {
+        document.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+    }, transfer);
+    await expect.poll(() => page.evaluate(() => window.__readMockSync().settings.wallpaper.value)).not.toBe(dropped);
+
+    // HEIC photos get a way out instead of a decoding error.
+    transfer = await fileTransfer(page, { name: 'IMG_0001.HEIC', type: '', base64: PIXEL_PNG });
+    await card.dispatchEvent('dragover', { dataTransfer: transfer });
+    await card.dispatchEvent('drop', { dataTransfer: transfer });
+    await expect(page.locator('.toast.is-error')).toContainText('HEIC');
+
+    // Text still pastes into the settings search.
+    await page.locator('.settings-search input').focus();
+    await page.evaluate(() => {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData('text/plain', '暗化');
+        document.activeElement.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+    });
+    expect(await page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('local');
+    expect(errors).toEqual([]);
+});
+
 test('moves through the wallpaper type buttons without opening anything', async ({ page }) => {
     const errors = await openExtension(page);
     await openSettings(page, 'wallpaper');
