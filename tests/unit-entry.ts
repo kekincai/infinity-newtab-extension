@@ -181,6 +181,40 @@ assert.equal(rankSites([
     { url: 'https://github.com/a/b', title: 'a/b · GitHub', visitCount: 9 },
     { url: 'https://github.com/c/d', title: 'Issues · c/d · GitHub', visitCount: 4 }
 ])[0].url, 'https://github.com/', '首页访问过时仍打开首页');
+// Real GitHub titles end with the repository, not the site: the brand wins.
+assert.equal(rankSites([
+    { url: 'https://github.com/vercel/next.js/issues', title: 'Issues · vercel/next.js', visitCount: 5 },
+    { url: 'https://github.com/vercel/next.js/pulls', title: 'Pull requests · vercel/next.js', visitCount: 4 },
+    { url: 'https://github.com/vercel/next.js/pull/1', title: 'fix · Pull Request #1 · vercel/next.js', visitCount: 3 }
+])[0].title, 'GitHub', '知名网站用品牌名，不被页面标题的共同结尾盖掉');
+// A home page title still beats the shared ending (docs whose pages end in a section name).
+assert.equal(rankSites([
+    { url: 'https://docs.example.com/', title: 'Example Docs', visitCount: 1 },
+    { url: 'https://docs.example.com/install', title: 'Install - Getting Started', visitCount: 5 },
+    { url: 'https://docs.example.com/configure', title: 'Configure - Getting Started', visitCount: 5 }
+])[0].title, 'Example Docs');
+// Only ever opened with a query: the folder it lives in is the way in.
+assert.equal(rankSites([
+    { url: 'https://nas.local:5001/photo/?album=1', visitCount: 6 },
+    { url: 'https://nas.local:5001/photo/?album=2', visitCount: 3 }
+])[0].url, 'https://nas.local:5001/photo/');
+assert.equal(rankSites([{ url: 'https://nas.local:5001/web/index.html', visitCount: 4 }])[0].url, 'https://nas.local:5001/web/index.html');
+// A video page is never the way in, whatever else is missing.
+assert.equal(rankSites([{ url: 'https://www.youtube.com/watch?v=1', visitCount: 4 }])[0].url, 'https://www.youtube.com/');
+// A brand names the main domain only; a subdomain keeps its own home page title.
+assert.equal(rankSites([{ url: 'https://t.bilibili.com/', title: '动态首页-哔哩哔哩', visitCount: 3 }])[0].title, '动态首页-哔哩哔哩');
+assert.equal(siteLabel('docs.github.com'), 'GitHub', '没有标题时子域名仍用品牌名');
+// Two untitled apps on one machine are told apart by their port.
+const ports = rankSites([
+    { url: 'http://192.168.1.1:8080/', visitCount: 4 },
+    { url: 'http://192.168.1.1:9000/', visitCount: 2 }
+]);
+assert.deepEqual(ports.map((site) => site.title), ['192.168.1.1:8080', '192.168.1.1:9000']);
+// The path comes from the origin that is opened, never stitched from another.
+assert.equal(rankSites([
+    { url: 'https://shop.com/item?id=1', visitCount: 9 },
+    { url: 'https://www.shop.com/store/', visitCount: 2 }
+])[0].url, 'https://shop.com/');
 assert.equal(siteLabel('www.example.co.uk'), 'Example', '两段式后缀应整体去掉');
 assert.equal(siteLabel('docs.python.org'), 'Python');
 assert.equal(siteLabel('localhost'), 'localhost');

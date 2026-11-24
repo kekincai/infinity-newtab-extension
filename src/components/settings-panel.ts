@@ -246,17 +246,23 @@ export class SettingsPanel extends StoreElement {
             input.addEventListener('change', () => void this.applyToggle(input.dataset.toggle ?? '', input.checked));
         });
         this.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach((input) => {
-            input.addEventListener('input', () => {
+            input.addEventListener('input', (event) => {
                 const output = input.closest('.setting-row')?.querySelector('output');
                 if (output) output.textContent = `${input.value}${input.dataset.unit ?? ''}`;
                 syncSlider(input);
+                // A value synced from the store (reset, import, another tab) is already on the wallpaper; only the user's own drag previews.
+                if (!event.isTrusted) return;
                 // Preview live; persisted on release to spare sync write quota.
                 const surface = document.querySelector<WallpaperSurface>('wallpaper-surface');
                 if (input.name === 'blur') surface?.previewBlur(Number(input.value));
                 else surface?.previewOverlay(Number(input.value));
             });
+            // Released on its starting value, a slider sends no change event; the live preview still ends.
+            const endPreview = () => document.querySelector<WallpaperSurface>('wallpaper-surface')?.endPreview();
+            input.addEventListener('pointerup', endPreview);
+            input.addEventListener('blur', endPreview);
             input.addEventListener('change', () => {
-                document.querySelector<WallpaperSurface>('wallpaper-surface')?.endPreview();
+                endPreview();
                 void appStore.updateSettings('wallpaper', { [input.name]: Number(input.value) }).catch(notifyError);
             });
         });
@@ -268,7 +274,12 @@ export class SettingsPanel extends StoreElement {
         });
         // A real button opens each hidden file picker, so both can be reached from the keyboard.
         this.querySelectorAll<HTMLElement>('.file-pick').forEach((pick) => {
-            pick.querySelector('button')?.addEventListener('click', () => pick.querySelector<HTMLInputElement>('input[type="file"]')?.click());
+            const button = pick.querySelector('button');
+            button?.addEventListener('click', () => {
+                // Enter and Space still reach a busy button; a second file chosen now would only be dropped.
+                if (button.classList.contains('is-busy')) return;
+                pick.querySelector<HTMLInputElement>('input[type="file"]')?.click();
+            });
         });
         this.querySelector('.random-wallpaper')?.addEventListener('click', (event) => void this.withBusy(event.currentTarget as HTMLElement, useOnlineWallpaper));
         const windowElement = this.querySelector<HTMLElement>('.settings-window')!;
@@ -276,7 +287,11 @@ export class SettingsPanel extends StoreElement {
         windowElement.addEventListener('dragleave', this.onDragLeave);
         windowElement.addEventListener('drop', this.onDrop);
         this.querySelector('.reset-wallpaper')?.addEventListener('click', () => void resetWallpaper().catch(notifyError));
-        this.querySelector('.reset-framing')?.addEventListener('click', () => document.querySelector<WallpaperSurface>('wallpaper-surface')?.resetFraming());
+        this.querySelector('.reset-framing')?.addEventListener('click', () => {
+            document.querySelector<WallpaperSurface>('wallpaper-surface')?.resetFraming();
+            // The button hides once the framing is back to default; focus moves to its neighbour rather than being lost.
+            this.querySelector<HTMLButtonElement>('.upload-wallpaper button')?.focus();
+        });
         this.querySelector('.export-data')?.addEventListener('click', () => void backupService.createBackup().catch(notifyError));
         this.querySelector<HTMLInputElement>('.import-data input')?.addEventListener('change', (event) => {
             const input = event.target as HTMLInputElement;
