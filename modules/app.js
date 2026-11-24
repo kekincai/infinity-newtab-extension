@@ -1374,15 +1374,15 @@
       layers = [];
       FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
       document.addEventListener("keydown", (event) => {
-        const top = layers.at(-1);
-        if (!top) return;
+        const top2 = layers.at(-1);
+        if (!top2) return;
         if (event.key === "Escape") {
           event.preventDefault();
           event.stopPropagation();
-          top.close();
+          top2.close();
           return;
         }
-        if (event.key === "Tab") trapFocus(top.element, event);
+        if (event.key === "Tab") trapFocus(top2.element, event);
       }, true);
     }
   });
@@ -1732,43 +1732,90 @@
   });
 
   // src/core/history.ts
+  function siteKey(url) {
+    try {
+      return new URL(url).host.toLowerCase().replace(/^www\./, "");
+    } catch {
+      return "";
+    }
+  }
   function rankSites(items) {
-    const hosts = /* @__PURE__ */ new Map();
+    const sites = /* @__PURE__ */ new Map();
     items.forEach((item) => {
       try {
         const url = new URL(String(item.url ?? ""));
         if (!["http:", "https:"].includes(url.protocol)) return;
-        const hostname = url.hostname.toLowerCase();
-        const host = hostname.replace(/^www\./, "");
-        if (!host || host === "newtab" || /(^|\.)google\.[a-z.]+$/.test(host)) return;
+        const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+        if (!hostname || hostname === "newtab" || /(^|\.)google\.[a-z.]+$/.test(hostname)) return;
+        const host = siteKey(url.href);
         const visits = Math.max(1, Number(item.visitCount) || 1);
-        const stats = hosts.get(host) ?? {
+        const stats = sites.get(host) ?? {
           host,
+          hostname,
           url: "",
           title: "",
           count: 0,
           lastVisit: 0,
-          hostnames: /* @__PURE__ */ new Map(),
-          rootTitle: ""
+          origins: /* @__PURE__ */ new Map(),
+          pages: /* @__PURE__ */ new Map(),
+          rootTitle: "",
+          titles: /* @__PURE__ */ new Set()
         };
         stats.count += visits;
         stats.lastVisit = Math.max(stats.lastVisit, Number(item.lastVisitTime) || 0);
-        stats.hostnames.set(`${url.protocol}//${hostname}`, (stats.hostnames.get(`${url.protocol}//${hostname}`) ?? 0) + visits);
+        add(stats.origins, url.origin, visits);
+        if (!url.search) add(stats.pages, url.pathname, visits);
         const title = typeof item.title === "string" ? item.title.trim() : "";
+        if (title) stats.titles.add(title);
         if (url.pathname === "/" && !url.search && title && !stats.rootTitle) stats.rootTitle = title;
-        hosts.set(host, stats);
+        sites.set(host, stats);
       } catch {
       }
     });
-    return [...hosts.values()].sort((left, right) => right.count - left.count || right.lastVisit - left.lastVisit).slice(0, 20).map(({ hostnames, rootTitle, ...site }) => {
-      const origin = [...hostnames.entries()].sort((left, right) => right[1] - left[1])[0][0];
-      return { ...site, url: `${origin}/`, title: siteName(site.host, rootTitle) };
-    });
+    return [...sites.values()].sort((left, right) => right.count - left.count || right.lastVisit - left.lastVisit).slice(0, 20).map(({ origins, pages, rootTitle, titles, hostname, ...site }) => ({
+      ...site,
+      url: `${top(origins)}${entryPath(pages)}`,
+      title: siteName(hostname, rootTitle, titles)
+    }));
   }
-  function siteName(host, rootTitle) {
-    const cleaned = rootTitle.replace(/^\(\d+\+?\)\s*/, "").split(/\s+[-|–—·]\s+/)[0].trim();
-    if (cleaned && cleaned.length <= 18 && !isAddressLike(cleaned)) return cleaned;
-    return siteLabel(host);
+  function add(counts, key, visits) {
+    counts.set(key, (counts.get(key) ?? 0) + visits);
+  }
+  function top(counts) {
+    return [...counts.entries()].sort((left, right) => right[1] - left[1])[0][0];
+  }
+  function entryPath(pages) {
+    if (pages.has("/") || !pages.size) return "/";
+    const sections = /* @__PURE__ */ new Map();
+    pages.forEach((visits, path) => {
+      const section2 = path.split("/")[1];
+      if (section2) add(sections, section2, visits);
+    });
+    if (!sections.size) return "/";
+    const section = top(sections);
+    const forms = [`/${section}/`, `/${section}`].filter((path) => pages.has(path));
+    if (!forms.length) return "/";
+    return forms.sort((left, right) => (pages.get(right) ?? 0) - (pages.get(left) ?? 0))[0];
+  }
+  function siteName(hostname, rootTitle, titles) {
+    const shared = sharedSuffix(titles);
+    if (shared) return shared;
+    const cleaned = rootTitle.replace(/^\(\d+\+?\)\s*/, "").split(TITLE_SEPARATOR)[0].trim();
+    if (readable(cleaned)) return cleaned;
+    return siteLabel(hostname);
+  }
+  function sharedSuffix(titles) {
+    const suffixes = /* @__PURE__ */ new Map();
+    titles.forEach((title) => {
+      const parts = title.split(TITLE_SEPARATOR);
+      if (parts.length > 1) add(suffixes, parts[parts.length - 1].trim(), 1);
+    });
+    if (!suffixes.size) return "";
+    const [suffix, pages] = [...suffixes.entries()].sort((left, right) => right[1] - left[1])[0];
+    return pages >= 2 && pages * 2 >= titles.size && readable(suffix) ? suffix : "";
+  }
+  function readable(name) {
+    return Boolean(name) && name.length <= 18 && !isAddressLike(name);
   }
   function loadRecentSites() {
     if (!recentSites) {
@@ -1788,11 +1835,12 @@
     }
     return recentSites;
   }
-  var recentSites;
+  var TITLE_SEPARATOR, recentSites;
   var init_history = __esm({
     "src/core/history.ts"() {
       "use strict";
       init_utils();
+      TITLE_SEPARATOR = /\s+[-|–—·]\s+/;
       recentSites = null;
     }
   });
@@ -1949,7 +1997,7 @@
         recentTemplate() {
           const { sites, state } = this.recent;
           const items = state === "ready" ? sites.slice(0, RECENT_LIMIT).map((site, index) => `
-                <li><a class="index-link" href="${escapeHtml(site.url)}" ${this.target()} rel="noopener noreferrer" data-recent-index="${index}" title="${escapeHtml(hostOf(site.url))}">
+                <li><a class="index-link" href="${escapeHtml(site.url)}" ${this.target()} rel="noopener noreferrer" data-recent-index="${index}" title="${escapeHtml(site.host)}">
                     ${siteIcon({ url: site.url, name: site.title }, "index-icon", ICON_SIZE)}<span class="index-name">${escapeHtml(site.title)}</span>
                 </a></li>`).join("") : "";
           const note = state === "error" ? escapeHtml(this.recent.error) : state === "ready" && !items ? "\u6700\u8FD1 30 \u5929\u6CA1\u6709\u8BB0\u5F55" : state === "ready" ? "" : "\u6B63\u5728\u6574\u7406\u2026";
@@ -2000,9 +2048,9 @@
         };
         onClick = (event) => {
           const target = event.target;
-          const add = target.closest("[data-add-folder]");
-          if (add) {
-            openBookmarkDialog(this, { folder: add.dataset.addFolder ?? ROOT_FOLDER });
+          const add2 = target.closest("[data-add-folder]");
+          if (add2) {
+            openBookmarkDialog(this, { folder: add2.dataset.addFolder ?? ROOT_FOLDER });
             return;
           }
           const more = target.closest(".index-more");
@@ -2030,14 +2078,14 @@
           else if (group2 && !group2.classList.contains("is-recent")) this.openFolderMenu(group2.dataset.folder ?? ROOT_FOLDER, at);
         };
         openFolderMenu(folder, at) {
-          const add = { label: "\u6DFB\u52A0\u4E66\u7B7E\u2026", icon: ICONS.plus, action: () => openBookmarkDialog(this, { folder }) };
+          const add2 = { label: "\u6DFB\u52A0\u4E66\u7B7E\u2026", icon: ICONS.plus, action: () => openBookmarkDialog(this, { folder }) };
           const create = { label: "\u65B0\u5EFA\u6587\u4EF6\u5939\u2026", icon: ICONS.folderPlus, action: () => void createFolder() };
           if (folder === ROOT_FOLDER) {
-            openMenu([add, create], at);
+            openMenu([add2, create], at);
             return;
           }
           openMenu([
-            add,
+            add2,
             { label: "\u91CD\u547D\u540D\u2026", icon: ICONS.edit, action: () => void renameFolder(folder) },
             create,
             { separator: true },
@@ -2536,10 +2584,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       for (let x = 0; x < canvasWidth; x += 1) {
         const left = x < scaledRadius;
         const right = x >= canvasWidth - scaledRadius;
-        const top = y < scaledRadius;
+        const top2 = y < scaledRadius;
         const bottom = y >= canvasHeight - scaledRadius;
         const offsetX = left ? x - scaledRadius : right ? x - scaledRadius - middleWidth : 0;
-        const offsetY = top ? y - scaledRadius : bottom ? y - scaledRadius - middleHeight : 0;
+        const offsetY = top2 ? y - scaledRadius : bottom ? y - scaledRadius - middleHeight : 0;
         const distanceSquared = offsetX * offsetX + offsetY * offsetY;
         if (distanceSquared > outerSquared || distanceSquared < innerSquared) continue;
         const distance = Math.sqrt(distanceSquared);
@@ -2593,8 +2641,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       opacity *= Number(style.opacity);
     }
     if (opacity <= 0.02) return null;
-    const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    if (!top || !(element.contains(top) || top.contains(element))) return null;
+    const top2 = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    if (!top2 || !(element.contains(top2) || top2.contains(element))) return null;
     const scale = rect.width / Math.max(1, element.offsetWidth);
     const radius = cornerRadius(getComputedStyle(element).borderTopLeftRadius, element.offsetWidth, element.offsetHeight) * scale;
     return { x: rect.left, y: rect.top, width: rect.width, height: rect.height, radius, opacity, glint: 0 };
@@ -2971,7 +3019,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             bookmark
           }));
           if (showSites) {
-            const bookmarkedHosts = new Set(bookmarks.map(({ bookmark }) => hostOf(bookmark.url)));
+            const bookmarkedHosts = new Set(bookmarks.map(({ bookmark }) => siteKey(bookmark.url)));
             this.sites.filter((site) => !bookmarkedHosts.has(site.host) && matchScore(query, site.title, site.url) > 0).slice(0, 3).forEach((site) => rows.push(siteRow(site)));
           }
           rows.push({ kind: "web", title: raw, subtitle: `\u5728 ${engine} \u4E2D\u641C\u7D22`, query: raw });
@@ -3408,10 +3456,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         coverage() {
           const box = this.box();
           const left = Math.max(0, box.left + this.view.x);
-          const top = Math.max(0, box.top + this.view.y);
+          const top2 = Math.max(0, box.top + this.view.y);
           const right = Math.min(innerWidth, box.left + this.view.x + box.width * this.view.scale);
           const bottom = Math.min(innerHeight, box.top + this.view.y + box.height * this.view.scale);
-          return Math.max(0, right - left) * Math.max(0, bottom - top) / (innerWidth * innerHeight);
+          return Math.max(0, right - left) * Math.max(0, bottom - top2) / (innerWidth * innerHeight);
         }
         settleTo(target) {
           window.clearTimeout(this.gestureTimer);

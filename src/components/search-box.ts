@@ -1,4 +1,4 @@
-import { loadRecentSites } from '../core/history';
+import { loadRecentSites, siteKey } from '../core/history';
 import { appStore } from '../core/store';
 import type { Bookmark, RecentSite, SearchEngineKey } from '../core/types';
 import { escapeHtml, normalizeUrl } from '../core/utils';
@@ -196,7 +196,7 @@ export class SearchBox extends StoreElement {
             bookmark
         }));
         if (showSites) {
-            const bookmarkedHosts = new Set(bookmarks.map(({ bookmark }) => hostOf(bookmark.url)));
+            const bookmarkedHosts = new Set(bookmarks.map(({ bookmark }) => siteKey(bookmark.url)));
             this.sites
                 .filter((site) => !bookmarkedHosts.has(site.host) && matchScore(query, site.title, site.url) > 0)
                 .slice(0, 3)
