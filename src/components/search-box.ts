@@ -151,6 +151,11 @@ export class SearchBox extends StoreElement {
             input.value += this.ghostRest();
             this.selected = 0;
             this.renderResults();
+        } else if (event.key === 'Delete' && event.shiftKey && this.rows[this.selected]?.kind === 'recent') {
+            // Shift+Delete forgets the highlighted recent search, as in Chrome's own address bar.
+            event.preventDefault();
+            const row = this.rows[this.selected];
+            if (row.kind === 'recent') void appStore.removeRecentSearch(row.query).then(() => this.renderResults());
         } else if (event.key === 'Escape') {
             event.preventDefault();
             if (input.value) {
@@ -217,7 +222,7 @@ export class SearchBox extends StoreElement {
                 <div class="search-row" role="option" id="search-option-${index}" data-index="${index}" aria-selected="false">
                     ${rowIcon(row)}
                     <span class="row-text"><strong>${escapeHtml(row.title)}</strong>${row.subtitle ? `<small>${escapeHtml(row.subtitle)}</small>` : ''}</span>
-                    ${row.kind === 'recent' ? '<button class="row-remove" type="button" tabindex="-1" aria-label="删除这条记录">删除</button>' : ''}
+                    ${row.kind === 'recent' ? '<button class="row-remove" type="button" tabindex="-1" aria-label="删除这条记录" aria-keyshortcuts="Shift+Delete" title="删除（Shift+Delete）">删除</button>' : ''}
                 </div>`;
         }).join('');
         this.results.hidden = !this.rows.length;

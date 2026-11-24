@@ -42,6 +42,8 @@ export class GlassSystem extends HTMLElement {
     /** Until then every frame re-measures where the controls are. */
     private measureUntil = 0;
     private frame = 0;
+    /** Time of the last tick, so the easing below covers the same ground per second at 60 Hz and at 120 Hz. */
+    private lastTick = 0;
     private nextFilterId = 1;
 
     connectedCallback(): void {
@@ -171,14 +173,19 @@ export class GlassSystem extends HTMLElement {
     private readonly tick = (time: number): void => {
         this.frame = 0;
         if (!this.hdr.active) return;
-        this.smoothPointer.x += (this.pointer.x - this.smoothPointer.x) * 0.35;
-        this.smoothPointer.y += (this.pointer.y - this.smoothPointer.y) * 0.35;
+        // The easing factors were tuned per 60 Hz frame; scale them to the time that has actually passed.
+        const frames = this.lastTick ? Math.min(Math.max((time - this.lastTick) / (1000 / 60), 0), 6) : 1;
+        this.lastTick = time;
+        const follow = 1 - (1 - 0.35) ** frames;
+        const fade = 1 - (1 - 0.2) ** frames;
+        this.smoothPointer.x += (this.pointer.x - this.smoothPointer.x) * follow;
+        this.smoothPointer.y += (this.pointer.y - this.smoothPointer.y) * follow;
         let moving = Math.abs(this.pointer.x - this.smoothPointer.x) + Math.abs(this.pointer.y - this.smoothPointer.y) > 0.5;
         const remeasure = time < this.measureUntil;
         const rims: GlassRim[] = [];
         this.tracked.forEach((state, element) => {
             const target = element === this.hovered ? 1 : 0;
-            state.glint += (target - state.glint) * 0.2;
+            state.glint += (target - state.glint) * fade;
             if (Math.abs(target - state.glint) > 0.01) moving = true;
             if (rims.length >= MAX_RIMS) return;
             if (remeasure || state.rim === undefined) state.rim = measure(element);
@@ -186,6 +193,7 @@ export class GlassSystem extends HTMLElement {
         });
         this.hdr.update(rims, this.smoothPointer);
         if (moving || time < this.settleUntil || remeasure) this.frame = requestAnimationFrame(this.tick);
+        else this.lastTick = 0;
     };
 }
 

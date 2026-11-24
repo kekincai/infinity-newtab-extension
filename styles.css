@@ -235,7 +235,7 @@ bookmark-dialog {
 }
 
 button.glass:active {
-    transform: scale(0.94);
+    transform: scale(0.96);
     transition-duration: 200ms, 160ms;
 }
 
@@ -342,6 +342,16 @@ glass-system {
 
 .pill-button:active {
     transform: scale(0.97);
+    transition-duration: 160ms, 120ms;
+    transition-timing-function: ease, var(--ease-out);
+}
+
+.pill-button:disabled,
+.pill-button[aria-disabled="true"] {
+    cursor: default;
+    opacity: 0.45;
+    pointer-events: none;
+    transform: none;
 }
 
 .pill-button.primary {
@@ -358,8 +368,22 @@ glass-system {
 }
 
 .pill-button.is-busy {
+    gap: 6px;
     cursor: progress;
-    opacity: 0.6;
+    opacity: 0.75;
+    pointer-events: none;
+}
+
+/* A small spinner says the wait is real, not a dead button. */
+.pill-button.is-busy::before {
+    width: 11px;
+    height: 11px;
+    flex: none;
+    border: 1.5px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    content: "";
+    animation: spin 800ms linear infinite;
 }
 
 /* The selected option sits on a thumb that slides between options. */
@@ -391,7 +415,7 @@ glass-system {
 }
 
 .segmented.is-placed::before {
-    transition: transform 420ms var(--spring), width 420ms var(--spring);
+    transition: transform 220ms var(--ease-out), width 220ms var(--ease-out);
 }
 
 .segmented button {
@@ -450,7 +474,7 @@ glass-system {
     border-radius: 999px;
     background: #fff;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
-    transition: transform 380ms var(--spring), width 220ms var(--ease-out);
+    transition: transform 250ms var(--ease-out), width 200ms var(--ease-out);
 }
 
 .switch input:checked + .switch-track {
@@ -578,6 +602,8 @@ wallpaper-surface {
     /* wallpaper-surface.ts sizes this box to the picture's proportions; this inset is only the first-paint fallback. */
     position: absolute;
     inset: calc(-1 * var(--wallpaper-blur, 0px) - 10px);
+    /* Keeps the scene's slow push-in inside the picture when it is shown whole. */
+    overflow: hidden;
     background-position: center;
     background-size: cover;
     /* Off screen at rest; lifts the picture off the frosted backdrop once it is shown whole. */
@@ -585,6 +611,13 @@ wallpaper-surface {
     filter: blur(var(--wallpaper-blur, 0px));
     /* Framing transforms are computed from the top-left corner (see wallpaper-framing.ts). */
     transform-origin: 0 0;
+}
+
+/* Dragging the picture with the mouse: a closed hand, and no text selected along the way. */
+.is-dragging-wallpaper,
+.is-dragging-wallpaper * {
+    cursor: grabbing !important;
+    user-select: none;
 }
 
 /* Only while a pinch or its spring runs: afterwards Chrome redraws the reframed picture sharply. */
@@ -610,6 +643,11 @@ wallpaper-surface.is-framing .wallpaper-media {
     transition: background 300ms ease;
 }
 
+/* Dragging the dimming slider: the picture follows the thumb 1:1. */
+wallpaper-surface.is-adjusting .wallpaper-media::after {
+    transition: none;
+}
+
 @keyframes scene-ken-burns { from { transform: scale(1) translate3d(0, 0, 0); } to { transform: scale(1.07) translate3d(-1.2%, -0.8%, 0); } }
 @keyframes scene-drift { from { transform: translateX(-80px); } to { transform: translateX(90px); } }
 @keyframes scene-drift-slow { from { transform: translateX(60px); } to { transform: translateX(-70px); } }
@@ -617,18 +655,19 @@ wallpaper-surface.is-framing .wallpaper-media {
 @keyframes scene-twinkle { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.9; } }
 @keyframes scene-sun { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.8; } }
 
-.scene-kb {
+/* The slow push-in runs on the drawing as a whole, a box Chrome can move on the compositor without repainting the SVG. */
+.wallpaper-media .scene {
     transform-origin: 60% 60%;
     animation: scene-ken-burns 38s ease-in-out infinite alternate;
 }
 
 .scene-cloud-a { animation: scene-drift 46s ease-in-out infinite alternate; }
 .scene-cloud-b { animation: scene-drift-slow 60s ease-in-out infinite alternate; }
-.scene-glint { animation: scene-shimmer 3.6s ease-in-out infinite; }
-.scene-glint:nth-child(2n) { animation-duration: 4.8s; animation-delay: -1.2s; }
-.scene-glint:nth-child(3n) { animation-duration: 2.9s; animation-delay: -2s; }
-.scene-star { animation: scene-twinkle 5s ease-in-out infinite; }
-.scene-star:nth-child(2n) { animation-delay: -2.4s; }
+/* Stars and glints twinkle in two groups each, out of step, rather than one animation per shape. */
+.scene-glints { animation: scene-shimmer 3.6s ease-in-out infinite; }
+.scene-glints + .scene-glints { animation-duration: 4.8s; animation-delay: -1.2s; }
+.scene-stars { animation: scene-twinkle 5s ease-in-out infinite; }
+.scene-stars + .scene-stars { animation-delay: -2.4s; }
 .scene-halo { animation: scene-sun 9s ease-in-out infinite; }
 
 wallpaper-surface.is-paused .scene,
@@ -684,6 +723,8 @@ status-strip {
     border-radius: 999px;
     font-size: 13px;
     font-weight: 600;
+    /* Battery and download counts refresh in place; fixed-width digits keep the capsules beside them still. */
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
 
@@ -693,7 +734,7 @@ status-strip {
 }
 
 .battery-capsule.is-low {
-    color: #ff8a80;
+    color: var(--danger-ink);
 }
 
 .media-capsule {
@@ -795,7 +836,7 @@ status-strip {
 }
 
 dashboard-header {
-    transition: opacity 600ms ease;
+    transition: opacity 180ms var(--ease-out);
 }
 
 .hero-date {
@@ -925,7 +966,6 @@ search-box:focus-within .search-shortcut {
     overflow-y: auto;
     padding: 6px;
     border-radius: 14px;
-    animation: drop-in 220ms var(--ease-out) both;
     scrollbar-width: thin;
 }
 
@@ -1114,14 +1154,22 @@ bookmark-index {
 }
 
 .index-action {
+    position: relative;
     display: grid;
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     place-items: center;
     border-radius: 6px;
     color: var(--fg-2);
     opacity: 0;
     transition: opacity 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+/* A larger hit area that stops short of the neighbouring button (they sit 4px apart). */
+.index-action::before {
+    position: absolute;
+    inset: -6px -2px;
+    content: "";
 }
 
 .index-action .icon {
@@ -1198,6 +1246,17 @@ body.theme-dark .index-icon > img {
     filter: drop-shadow(0 0 0.5px rgba(255, 255, 255, 0.6));
 }
 
+/* And a faint dark rim keeps white favicons visible on a bright picture. */
+body.theme-light .index-icon > img,
+body.theme-light .search-row .row-icon > img {
+    filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.35));
+}
+
+/* The links sit flush with the scrolling index's edge, which would clip a ring drawn outside them. */
+.index-link:focus-visible {
+    outline-offset: -2px;
+}
+
 .index-icon .app-letter {
     font-size: 0.62em;
 }
@@ -1221,10 +1280,17 @@ body.theme-dark .index-icon > img {
     opacity: 0.4;
 }
 
-/* Dropping on a bookmark puts the dragged one above it. */
+/* The line shows where the dragged bookmark will land: above the upper half, below the lower half. */
 .index-link.drop-target {
     background: var(--fill-3);
+}
+
+.index-link.drop-before {
     box-shadow: inset 0 2px 0 var(--fg);
+}
+
+.index-link.drop-after {
+    box-shadow: inset 0 -2px 0 var(--fg);
 }
 
 .index-group.drop-target {
@@ -1249,23 +1315,43 @@ wallpaper-badge .round-button {
     height: 32px;
 }
 
-/* Idle: only the clock stays. */
+/* Idle: only the clock stays. Each piece of glass fades on itself: an ancestor
+   below full opacity would cut the glass off from the wallpaper behind it, so
+   its blur would vanish for the whole fade. It drifts away slowly and comes
+   back at once, since moving the pointer means the user is about to click. */
 .top-bar,
 search-box,
-.home-footer {
-    transition: opacity 600ms ease, transform 600ms ease;
+.home-footer,
+backup-toast {
+    --idle-fade: opacity 180ms var(--ease-out);
+    transition: transform 180ms var(--ease-out);
+}
+
+.top-bar .glass,
+search-box :is(.glass, .glass-panel),
+bookmark-index,
+wallpaper-badge .glass,
+.backup-toast {
+    /* Opacity goes last so the shorter press timings on button.glass:active still land on background and transform. */
+    transition: background-color 200ms ease, transform 420ms var(--spring), var(--idle-fade);
 }
 
 body.is-idle {
     cursor: none;
 }
 
-body.is-idle .top-bar,
-body.is-idle search-box,
-body.is-idle .home-footer,
-body.is-idle backup-toast {
-    opacity: 0;
+body.is-idle :is(.top-bar, search-box, .home-footer, backup-toast) {
+    --idle-fade: opacity 600ms ease;
     pointer-events: none;
+    transition-duration: 600ms;
+}
+
+body.is-idle .top-bar .glass,
+body.is-idle search-box :is(.glass, .glass-panel),
+body.is-idle bookmark-index,
+body.is-idle wallpaper-badge .glass,
+body.is-idle .backup-toast {
+    opacity: 0;
 }
 
 body.is-idle .home-footer {
@@ -1274,6 +1360,7 @@ body.is-idle .home-footer {
 
 body.is-idle dashboard-header {
     opacity: 0.85;
+    transition-duration: 600ms;
 }
 
 
@@ -1402,6 +1489,16 @@ settings-panel {
 
 .settings-search input::placeholder {
     color: var(--fg-3);
+}
+
+/* Chrome's own grey clear button, redrawn in the panel's colours. */
+.settings-search input::-webkit-search-cancel-button {
+    width: 14px;
+    height: 14px;
+    background: var(--fg-3);
+    cursor: pointer;
+    -webkit-appearance: none;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M7 0a7 7 0 1 1 0 14A7 7 0 0 1 7 0Zm-2.3 3.6-1.1 1.1L5.9 7 3.6 9.3l1.1 1.1L7 8.1l2.3 2.3 1.1-1.1L8.1 7l2.3-2.3-1.1-1.1L7 5.9 4.7 3.6Z'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .settings-search .icon {
@@ -1546,6 +1643,10 @@ label.setting-row {
     white-space: nowrap;
 }
 
+.row-sub {
+    text-wrap: pretty;
+}
+
 .range-control {
     display: flex;
     flex: none;
@@ -1633,6 +1734,11 @@ label.setting-row {
     font-weight: 600;
 }
 
+/* A real button for each hidden file input; the wrapper takes no space of its own. */
+.file-pick {
+    display: contents;
+}
+
 .wallpaper-actions {
     display: flex;
     flex-wrap: wrap;
@@ -1668,7 +1774,15 @@ label.setting-row {
     display: grid;
     place-items: center;
     padding: 16px;
+}
+
+/* The dimming fades on its own layer: fading the backdrop itself would cut the dialog's blur off until it ended. */
+.modal-backdrop::before {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
     background: rgba(0, 0, 0, 0.22);
+    content: "";
     animation: fade-in 160ms ease both;
 }
 
@@ -1684,12 +1798,14 @@ label.setting-row {
 .modal-header h2 {
     font-size: 15px;
     font-weight: 600;
+    text-wrap: balance;
 }
 
 .modal-body {
     color: var(--fg-2);
     font-size: 13px;
     line-height: 1.5;
+    text-wrap: pretty;
 }
 
 .modal-actions {
@@ -1904,8 +2020,17 @@ label.setting-row {
     border-radius: 999px;
     font-size: 13px;
     font-weight: 500;
-    animation: toast-in 320ms var(--spring) both;
     pointer-events: auto;
+    /* Transitions rather than a keyframe: a finished keyframe holds opacity and would swallow the exit below. */
+    transition: opacity 320ms var(--ease-out), transform 320ms var(--spring);
+}
+
+@starting-style {
+    .toast,
+    .backup-toast {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
 }
 
 .toast.is-error {
@@ -1915,7 +2040,8 @@ label.setting-row {
 .toast.is-leaving {
     opacity: 0;
     transform: translateY(-6px);
-    transition: opacity 200ms ease, transform 200ms ease;
+    transition-duration: 200ms;
+    transition-timing-function: ease;
 }
 
 /* Top-right under the buttons, clear of the clock and the bookmarks. */
@@ -1926,7 +2052,6 @@ backup-toast {
     right: 24px;
     display: block;
     max-width: min(420px, calc(100vw - 48px));
-    transition: opacity 600ms ease;
 }
 
 .backup-toast {
@@ -1934,9 +2059,13 @@ backup-toast {
     align-items: center;
     gap: 14px;
     padding: 8px 8px 8px 16px;
-    border-radius: 14px;
+    /* Concentric with the 28px pills inside: their 14px radius plus the 8px padding. */
+    border-radius: 22px;
     font-size: 13px;
-    animation: toast-in 320ms var(--spring) both;
+}
+
+.backup-toast > span {
+    text-wrap: pretty;
 }
 
 .backup-actions {
@@ -2075,21 +2204,6 @@ backup-toast {
 
 /* ---- Motion ------------------------------------------------------------- */
 
-.hero {
-    animation: rise-in 480ms var(--ease-out) backwards;
-}
-
-.home-footer {
-    animation: rise-in 480ms 60ms var(--ease-out) backwards;
-}
-
-@keyframes rise-in {
-    from {
-        opacity: 0;
-        transform: translateY(8px);
-    }
-}
-
 @keyframes fade-in {
     from { opacity: 0; }
 }
@@ -2101,31 +2215,30 @@ backup-toast {
     }
 }
 
-@keyframes drop-in {
-    from {
-        opacity: 0;
-        transform: translateY(-6px) scale(0.98);
-    }
-}
-
-@keyframes toast-in {
-    from {
-        opacity: 0;
-        transform: translateY(-8px);
-    }
-}
-
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
 
+/* Reduced motion: nothing slides, scales or springs, but fades stay (softened)
+   and spinners keep turning, since a frozen spinner reads as a hang. Leaving
+   transform out of the transitions makes every move and scale land at once. */
 @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
     *::after {
         scroll-behavior: auto !important;
-        animation-duration: 1ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 1ms !important;
+        transition-property: opacity, color, background-color, border-color, box-shadow !important;
     }
+
+    .wallpaper-media .scene,
+    .scene *,
+    .equalizer span {
+        animation: none !important;
+    }
+
+    .modal,
+    .context-menu {
+        animation-name: fade-in !important;
+    }
+
 }

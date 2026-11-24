@@ -149,7 +149,10 @@ export class HdrRimLayer {
         this.rims = rims.slice(0, MAX_RIMS);
         this.pointer = pointer;
         this.canvas.dataset.hdrCount = String(this.rims.length);
-        this.scheduleDraw();
+        // Called from the glass system's own animation frame: drawing now keeps the rims in step with the controls, a frame sooner.
+        if (this.drawFrame) cancelAnimationFrame(this.drawFrame);
+        this.drawFrame = 0;
+        this.draw();
     }
 
     private readonly onDisplayChange = (): void => {

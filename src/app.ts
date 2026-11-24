@@ -2,7 +2,7 @@ import { appStore } from './core/store';
 import { installChromeFallback } from './core/chrome-fallback';
 import type { ResolvedTheme } from './core/types';
 import { escapeHtml } from './core/utils';
-import { useOnlineWallpaper } from './core/wallpaper-service';
+import { mediaKindOf, useLocalWallpaper, useOnlineWallpaper } from './core/wallpaper-service';
 import { BackupToast } from './components/backup-toast';
 import { BookmarkDialog } from './components/bookmark-dialog';
 import { BookmarkIndex } from './components/bookmark-index';
@@ -50,6 +50,8 @@ class InfinityNewTabApp extends HTMLElement {
             appStore.addEventListener('change', this.onStoreChange);
             this.render();
             window.addEventListener('keydown', this.onKeyDown);
+            window.addEventListener('dragover', this.onFileDragOver);
+            window.addEventListener('drop', this.onFileDrop);
             ['pointermove', 'pointerdown', 'keydown', 'wheel', 'focusin'].forEach((type) => {
                 window.addEventListener(type, this.wake, { passive: true, capture: true });
             });
@@ -62,6 +64,8 @@ class InfinityNewTabApp extends HTMLElement {
     disconnectedCallback(): void {
         appStore.removeEventListener('change', this.onStoreChange);
         window.removeEventListener('keydown', this.onKeyDown);
+        window.removeEventListener('dragover', this.onFileDragOver);
+        window.removeEventListener('drop', this.onFileDrop);
         ['pointermove', 'pointerdown', 'keydown', 'wheel', 'focusin'].forEach((type) => {
             window.removeEventListener(type, this.wake, true);
         });
@@ -124,7 +128,8 @@ class InfinityNewTabApp extends HTMLElement {
      * only records its time; the one pending timer checks it when it fires.
      */
     private readonly wake = (): void => {
-        document.body.classList.remove('is-idle');
+        // Only when it changes: even a no-op classList.remove queues a mutation record, and the glass system wakes on every one.
+        if (document.body.classList.contains('is-idle')) document.body.classList.remove('is-idle');
         this.lastActivity = Date.now();
         if (!appStore.state.settings.wallpaper.idleHide) {
             window.clearTimeout(this.idleTimer);
@@ -147,6 +152,26 @@ class InfinityNewTabApp extends HTMLElement {
             return;
         }
         document.body.classList.add('is-idle');
+    };
+
+    /**
+     * A photo or video dropped on the home screen becomes the wallpaper, instead
+     * of Chrome leaving the new tab to open the file. The settings window handles
+     * its own drops first.
+     */
+    private readonly onFileDragOver = (event: DragEvent): void => {
+        if (event.defaultPrevented || !event.dataTransfer?.types.includes('Files')) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = hasOpenLayer() ? 'none' : 'copy';
+    };
+
+    private readonly onFileDrop = (event: DragEvent): void => {
+        if (event.defaultPrevented || !event.dataTransfer?.types.includes('Files')) return;
+        event.preventDefault();
+        if (hasOpenLayer()) return;
+        const files = [...event.dataTransfer.files];
+        const file = files.find((item) => mediaKindOf(item)) ?? files[0];
+        if (file) void useLocalWallpaper(file).catch(notifyError);
     };
 
     private readonly onWallpaperTone = (event: CustomEvent<{ tone: ResolvedTheme }>): void => {
