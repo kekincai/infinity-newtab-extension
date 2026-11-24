@@ -10,8 +10,6 @@ const PINCH_UNITS = 100;
 const MAX_PINCH_STEP = 30;
 /** No pinch or scroll for this long ends the gesture; the framing then settles and is saved. */
 const GESTURE_END_MS = 140;
-/** A mouse press moves this far before it counts as dragging the picture rather than a click. */
-const DRAG_THRESHOLD = 4;
 /** How far past the limits a pinch can stretch, as log-scale headroom: 35% over the top, 25% under the whole picture. */
 const STRETCH_OVER = Math.log(1.35);
 const STRETCH_UNDER = Math.log(1 / 0.75);
@@ -57,8 +55,6 @@ export class WallpaperFramer {
     /** Coasting carried the picture past an edge: the rest of the coast is swallowed while it springs back. */
     private coasting = false;
     private coastTimer = 0;
-    /** A mouse press on an empty part of the screen that may turn into a drag. */
-    private press: { id: number; target: Element; x: number; y: number; dragging: boolean } | null = null;
     private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
     constructor(private readonly surface: HTMLElement, private readonly callbacks: FramingCallbacks) {}
@@ -66,14 +62,11 @@ export class WallpaperFramer {
     connect(): void {
         window.addEventListener('wheel', this.onWheel, { passive: false, capture: true });
         document.addEventListener('dblclick', this.onDoubleClick);
-        document.addEventListener('pointerdown', this.onPointerDown);
     }
 
     disconnect(): void {
         window.removeEventListener('wheel', this.onWheel, true);
         document.removeEventListener('dblclick', this.onDoubleClick);
-        document.removeEventListener('pointerdown', this.onPointerDown);
-        this.endPress();
         window.clearTimeout(this.coastTimer);
         this.stop();
     }
@@ -188,59 +181,6 @@ export class WallpaperFramer {
         const { x, y } = this.view;
         return (x > rangeX.max + 0.5 && dx > 0) || (x < rangeX.min - 0.5 && dx < 0)
             || (y > rangeY.max + 0.5 && dy > 0) || (y < rangeY.min - 0.5 && dy < 0);
-    }
-
-    /**
-     * With a mouse, pressing on an empty part of the screen and dragging moves
-     * the picture (once it is larger than the window). The press only becomes a
-     * drag after a few pixels, so clicks and double-clicks keep their meaning.
-     */
-    private readonly onPointerDown = (event: PointerEvent): void => {
-        if (event.pointerType !== 'mouse' || event.button !== 0 || this.press || hasOpenLayer() || isControl(event.target)) return;
-        if (!this.canPan()) return;
-        this.press = { id: event.pointerId, target: event.target as Element, x: event.clientX, y: event.clientY, dragging: false };
-        window.addEventListener('pointermove', this.onPointerMove);
-        window.addEventListener('pointerup', this.onPointerUp);
-        window.addEventListener('pointercancel', this.onPointerUp);
-        window.addEventListener('blur', this.onPointerUp);
-    };
-
-    private readonly onPointerMove = (event: PointerEvent): void => {
-        const press = this.press;
-        if (!press || event.pointerId !== press.id) return;
-        const dx = event.clientX - press.x;
-        const dy = event.clientY - press.y;
-        if (!press.dragging) {
-            if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
-            press.dragging = true;
-            this.beginGesture();
-            // Keeps the drag when the pointer leaves the window, and stops text from being selected under it.
-            press.target.setPointerCapture?.(event.pointerId);
-            press.target.addEventListener('lostpointercapture', this.onPointerUp);
-            document.documentElement.classList.add('is-dragging-wallpaper');
-        }
-        press.x = event.clientX;
-        press.y = event.clientY;
-        this.panBy(dx, dy);
-        this.apply();
-    };
-
-    private readonly onPointerUp = (): void => {
-        const dragged = this.press?.dragging;
-        this.endPress();
-        if (dragged) this.endGesture();
-    };
-
-    private endPress(): void {
-        const press = this.press;
-        this.press = null;
-        window.removeEventListener('pointermove', this.onPointerMove);
-        window.removeEventListener('pointerup', this.onPointerUp);
-        window.removeEventListener('pointercancel', this.onPointerUp);
-        window.removeEventListener('blur', this.onPointerUp);
-        press?.target.removeEventListener('lostpointercapture', this.onPointerUp);
-        document.documentElement.classList.remove('is-dragging-wallpaper');
-        if (press?.dragging && press.target.hasPointerCapture?.(press.id)) press.target.releasePointerCapture(press.id);
     }
 
     /** Double-clicking an empty part of the screen returns to the default framing. */

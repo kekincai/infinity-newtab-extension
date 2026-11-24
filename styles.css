@@ -613,13 +613,6 @@ wallpaper-surface {
     transform-origin: 0 0;
 }
 
-/* Dragging the picture with the mouse: a closed hand, and no text selected along the way. */
-.is-dragging-wallpaper,
-.is-dragging-wallpaper * {
-    cursor: grabbing !important;
-    user-select: none;
-}
-
 /* Only while a pinch or its spring runs: afterwards Chrome redraws the reframed picture sharply. */
 wallpaper-surface.is-framing .wallpaper-media {
     will-change: transform;

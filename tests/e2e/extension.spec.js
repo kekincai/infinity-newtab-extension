@@ -869,21 +869,20 @@ test('reframes the wallpaper in place and keeps the framing', async ({ page }) =
     expect(errors).toEqual([]);
 });
 
-test('drags the wallpaper with the mouse and resets the framing from settings', async ({ page }) => {
+test('resets the framing from settings, and a mouse drag leaves the wallpaper alone', async ({ page }) => {
     const errors = await openExtension(page);
+    // At the default framing the picture is wider than the window, yet a mouse drag on an empty spot must not move it.
+    const resting = await mediaRect(page);
     await page.mouse.move(900, 450);
+    await page.mouse.down();
+    await page.mouse.move(820, 380, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    expect(await mediaRect(page)).toEqual(resting);
+
     await pinch(page, 20, -6);
     await expect.poll(() => zoomOf(page)).toBeGreaterThan(1.5);
     await expect.poll(async () => (await savedFraming(page))?.scale ?? 1).toBeGreaterThan(1.5);
-
-    // A press on an empty part of the screen that moves past a few pixels drags the picture with it.
-    const start = await mediaRect(page);
-    await page.mouse.move(900, 450);
-    await page.mouse.down();
-    await page.mouse.move(860, 440, { steps: 4 });
-    await page.mouse.move(800, 420, { steps: 4 });
-    await page.mouse.up();
-    await expect.poll(async () => Math.round((await mediaRect(page)).left - start.left)).toBeLessThan(-50);
 
     // The settings window offers a reset while the framing is not the default.
     await openSettings(page, 'wallpaper');
