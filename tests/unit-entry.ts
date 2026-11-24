@@ -162,6 +162,25 @@ assert.equal(ranked[0].count, 13);
 assert.equal(ranked[0].title, 'YouTube', '首页标题可用时应作为网站名');
 assert.equal(ranked[1].title, 'V2EX', '没有首页标题时显示去掉后缀的网站名');
 assert.equal(rankSites([{ url: 'https://news.ycombinator.com/item?id=1', visitCount: 3 }])[0].title, 'Hacker News');
+
+// An app on its own port, used under a path and never at the root (a NAS gallery).
+const gallery = rankSites([
+    { url: 'https://minipc.local:8443/gallery/', title: '图库 · 美图', visitCount: 1368, lastVisitTime: 400 },
+    { url: 'https://minipc.local:8443/gallery', title: '图库 · 美图', visitCount: 802, lastVisitTime: 410 },
+    { url: 'https://minipc.local:8443/gallery/folders', title: '文件夹 · 美图', visitCount: 741, lastVisitTime: 300 },
+    { url: 'https://minipc.local:8443/gallery/?view=years', title: '图库 · 美图', visitCount: 180, lastVisitTime: 200 },
+    { url: 'http://minipc.local:3000/', title: 'Other app', visitCount: 5, lastVisitTime: 100 }
+]);
+assert.equal(gallery.length, 2, '同一台机器不同端口是不同的网站');
+assert.equal(gallery[0].host, 'minipc.local:8443', '分组和显示都应带端口');
+assert.equal(gallery[0].url, 'https://minipc.local:8443/gallery/', '应保留端口，并打开实际进入的路径，而不是从没访问过的根路径');
+assert.equal(gallery[0].title, '美图', '各页面标题共同的结尾就是网站名');
+assert.equal(gallery[1].url, 'http://minipc.local:3000/');
+assert.equal(rankSites([
+    { url: 'https://github.com/', title: 'GitHub', visitCount: 2 },
+    { url: 'https://github.com/a/b', title: 'a/b · GitHub', visitCount: 9 },
+    { url: 'https://github.com/c/d', title: 'Issues · c/d · GitHub', visitCount: 4 }
+])[0].url, 'https://github.com/', '首页访问过时仍打开首页');
 assert.equal(siteLabel('www.example.co.uk'), 'Example', '两段式后缀应整体去掉');
 assert.equal(siteLabel('docs.python.org'), 'Python');
 assert.equal(siteLabel('localhost'), 'localhost');

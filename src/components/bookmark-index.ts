@@ -19,7 +19,7 @@ import {
     siteMenu
 } from './bookmark-actions';
 import { ICONS } from './icons';
-import { bindSiteIcons, hostOf, siteIcon } from './site-icon';
+import { bindSiteIcons, siteIcon } from './site-icon';
 import { type MenuAnchor, openMenu } from './ui-layer';
 
 /** Rows every column starts with; more are added only when the columns would not fit the width. */
@@ -117,7 +117,7 @@ export class BookmarkIndex extends StoreElement {
         const { sites, state } = this.recent;
         const items = state === 'ready'
             ? sites.slice(0, RECENT_LIMIT).map((site, index) => `
-                <li><a class="index-link" href="${escapeHtml(site.url)}" ${this.target()} rel="noopener noreferrer" data-recent-index="${index}" title="${escapeHtml(hostOf(site.url))}">
+                <li><a class="index-link" href="${escapeHtml(site.url)}" ${this.target()} rel="noopener noreferrer" data-recent-index="${index}" title="${escapeHtml(site.host)}">
                     ${siteIcon({ url: site.url, name: site.title }, 'index-icon', ICON_SIZE)}<span class="index-name">${escapeHtml(site.title)}</span>
                 </a></li>`).join('')
             : '';
