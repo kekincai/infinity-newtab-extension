@@ -10,6 +10,8 @@ const PINCH_UNITS = 100;
 const MAX_PINCH_STEP = 30;
 /** No pinch or scroll for this long ends the gesture; the framing then settles and is saved. */
 const GESTURE_END_MS = 140;
+/** Scroll steps that must shrink in a row before they are taken for the trackpad coasting after a flick. */
+const COAST_STEPS = 3;
 /** How far past the limits a pinch can stretch, as log-scale headroom: 35% over the top, 25% under the whole picture. */
 const STRETCH_OVER = Math.log(1.35);
 const STRETCH_UNDER = Math.log(1 / 0.75);
@@ -52,6 +54,8 @@ export class WallpaperFramer {
     private interacting = false;
     /** Size of the last two-finger scroll step, to tell the trackpad's coasting (shrinking steps) from the fingers. */
     private lastPan = 0;
+    /** How many steps in a row have shrunk; one alone is just an uneven finger. */
+    private shrinkingSteps = 0;
     /** Coasting carried the picture past an edge: the rest of the coast is swallowed while it springs back. */
     private coasting = false;
     private coastTimer = 0;
@@ -134,6 +138,7 @@ export class WallpaperFramer {
         this.apply();
         this.gestureTimer = window.setTimeout(() => {
             this.lastPan = 0;
+            this.shrinkingSteps = 0;
             this.endGesture();
         }, GESTURE_END_MS);
     };
@@ -147,7 +152,8 @@ export class WallpaperFramer {
      */
     private coastsOutward(event: WheelEvent): boolean {
         const size = Math.hypot(event.deltaX, event.deltaY);
-        const shrinking = size > 0 && size <= this.lastPan * 1.05;
+        const shrinking = size > 0 && size < this.lastPan;
+        this.shrinkingSteps = shrinking ? this.shrinkingSteps + 1 : 0;
         this.lastPan = size;
         if (this.coasting) {
             // A step that grows again is the fingers back on the trackpad.
@@ -159,7 +165,8 @@ export class WallpaperFramer {
             this.restartCoastTimer();
             return true;
         }
-        if (!this.interacting || !shrinking || !this.pushesOutward(-event.deltaX, -event.deltaY)) return false;
+        // Fingers moving steadily (or a little unevenly) never shrink several steps running; a coast does.
+        if (!this.interacting || this.shrinkingSteps < COAST_STEPS || !this.pushesOutward(-event.deltaX, -event.deltaY)) return false;
         this.coasting = true;
         this.restartCoastTimer();
         window.clearTimeout(this.gestureTimer);
@@ -172,15 +179,21 @@ export class WallpaperFramer {
         this.coastTimer = window.setTimeout(() => {
             this.coasting = false;
             this.lastPan = 0;
+            this.shrinkingSteps = 0;
         }, GESTURE_END_MS);
     }
 
-    /** True when the picture is already past an edge and this step would take it further. */
+    /**
+     * True when the picture is already past an edge along the direction this
+     * step mostly travels, and the step would take it further. A small sideways
+     * drift does not count: it never moves an axis without slack (see `resist`).
+     */
     private pushesOutward(dx: number, dy: number): boolean {
         const [rangeX, rangeY] = this.ranges(this.view.scale);
         const { x, y } = this.view;
-        return (x > rangeX.max + 0.5 && dx > 0) || (x < rangeX.min - 0.5 && dx < 0)
-            || (y > rangeY.max + 0.5 && dy > 0) || (y < rangeY.min - 0.5 && dy < 0);
+        return Math.abs(dx) >= Math.abs(dy)
+            ? (x > rangeX.max + 0.5 && dx > 0) || (x < rangeX.min - 0.5 && dx < 0)
+            : (y > rangeY.max + 0.5 && dy > 0) || (y < rangeY.min - 0.5 && dy < 0);
     }
 
     /** Double-clicking an empty part of the screen returns to the default framing. */
@@ -378,6 +391,13 @@ function round(value: number): number {
 
 /** Movement away from the allowed range is damped more the further out it already is. */
 function resist(value: number, delta: number, range: Range, size: number): number {
+    // An axis where the picture just fits has nowhere to go: a slightly diagonal
+    // two-finger scroll must not stretch it and let it spring back (a wobble).
+    // It may still come back if it is out of place.
+    if (range.max - range.min < 1) {
+        const inward = (value > range.max && delta < 0) || (value < range.min && delta > 0);
+        return inward ? Math.sign(delta) * Math.min(Math.abs(delta), Math.abs(value - range.max)) : 0;
+    }
     const outward = (value >= range.max && delta > 0) || (value <= range.min && delta < 0);
     if (!outward) return delta;
     const overshoot = value > range.max ? value - range.max : value < range.min ? range.min - value : 0;

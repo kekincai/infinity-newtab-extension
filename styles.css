@@ -2220,7 +2220,10 @@ backup-toast {
     *::before,
     *::after {
         scroll-behavior: auto !important;
-        transition-property: opacity, color, background-color, border-color, box-shadow !important;
+        transition-property: opacity, background-color !important;
+        /* Each rule's own timings would pair up with the wrong properties once the list above replaces its own. */
+        transition-duration: 200ms !important;
+        transition-timing-function: ease !important;
     }
 
     .wallpaper-media .scene,

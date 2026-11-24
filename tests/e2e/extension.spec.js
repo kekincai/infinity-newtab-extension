@@ -317,11 +317,15 @@ test('moves and reorders bookmarks without duplication', async ({ page }) => {
     await expect(pom.locator('[data-bookmark-id]').first()).toHaveAttribute('data-bookmark-id', '3');
     await expect.poll(async () => pomOrderOf(await page.evaluate(() => window.__readMockSync()))).toEqual(['3', '1']);
 
-    // The context menu reorders without a mouse drag.
-    await pom.locator('[data-bookmark-id="1"]').click({ button: 'right' });
+    // The context menu reorders from the keyboard, and the bookmark keeps focus for the next step.
+    await pom.locator('[data-bookmark-id="1"]').focus();
+    // What Shift+F10 sends (Playwright's keyboard does not): a contextmenu event at 0,0 on the focused link.
+    await pom.locator('[data-bookmark-id="1"]').dispatchEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 0, clientY: 0 });
     await expect(page.getByRole('menuitem', { name: '下移' })).toHaveCount(0);
-    await page.getByRole('menuitem', { name: '上移' }).click();
+    await page.getByRole('menuitem', { name: '上移' }).press('Enter');
     await expect.poll(async () => pomOrderOf(await page.evaluate(() => window.__readMockSync()))).toEqual(['1', '3']);
+    await expect(pom.locator('[data-bookmark-id]').first()).toHaveAttribute('data-bookmark-id', '1');
+    await expect(pom.locator('[data-bookmark-id="1"]')).toBeFocused();
     expect(errors).toEqual([]);
 });
 
@@ -879,6 +883,12 @@ test('resets the framing from settings, and a mouse drag leaves the wallpaper al
     await page.mouse.up();
     await page.waitForTimeout(300);
     expect(await mediaRect(page)).toEqual(resting);
+
+    // A two-finger scroll that drifts a little downwards still moves the picture sideways every step,
+    // and the axis with no slack does not stretch.
+    for (let step = 0; step < 12; step += 1) await page.mouse.wheel(6, 2);
+    await expect.poll(async () => Math.round(resting.left - (await mediaRect(page)).left)).toBe(72);
+    expect((await mediaRect(page)).top).toBeCloseTo(resting.top, 0);
 
     await pinch(page, 20, -6);
     await expect.poll(() => zoomOf(page)).toBeGreaterThan(1.5);

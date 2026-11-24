@@ -171,7 +171,10 @@ class InfinityNewTabApp extends HTMLElement {
         if (hasOpenLayer()) return;
         const files = [...event.dataTransfer.files];
         const file = files.find((item) => mediaKindOf(item)) ?? files[0];
-        if (file) void useLocalWallpaper(file).catch(notifyError);
+        if (!file) return;
+        // A large video takes a moment to check and store; say so, and say when it is done.
+        notify('正在设为壁纸…');
+        void useLocalWallpaper(file).then(() => notify('已设为壁纸', 'success'), notifyError);
     };
 
     private readonly onWallpaperTone = (event: CustomEvent<{ tone: ResolvedTheme }>): void => {

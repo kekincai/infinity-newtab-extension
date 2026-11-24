@@ -129,7 +129,8 @@ export class WallpaperSurface extends StoreElement {
      */
     previewBlur(blur: number): void {
         this.style.setProperty('--wallpaper-blur', `${blur}px`);
-        if (this.layoutMedia(blur)) this.framer.show(appStore.state.settings.wallpaper.framing);
+        // A reset still springing back keeps going; it lays itself out again when it settles.
+        if (this.layoutMedia(blur) && !this.framer.busy) this.framer.show(appStore.state.settings.wallpaper.framing);
     }
 
     /** Darkens live while the slider moves, following it without the usual easing. */

@@ -51,12 +51,26 @@
   }
   function siteLabel(hostname) {
     const host = hostname.toLowerCase().replace(/^www\./, "");
-    if (HOST_NAMES[host]) return HOST_NAMES[host];
+    const known = knownSiteName(host);
+    if (known) return known;
     if (!host.includes(".") || /^[\d.]+$/.test(host) || host.includes(":")) return host;
-    const parts = host.split(".");
-    const suffix = parts.length > 2 && TWO_LEVEL_SUFFIXES.has(parts.slice(-2).join(".")) ? 2 : 1;
-    const label = parts[parts.length - suffix - 1] ?? host;
+    const label = domainLabel(host);
     return BRAND_NAMES[label] ?? label.charAt(0).toUpperCase() + label.slice(1);
+  }
+  function knownSiteName(hostname) {
+    const host = hostname.toLowerCase().replace(/^www\./, "");
+    if (HOST_NAMES[host]) return HOST_NAMES[host];
+    if (!host.includes(".") || /^[\d.]+$/.test(host) || host.includes(":")) return null;
+    const parts = host.split(".");
+    if (parts.length - suffixLength(parts) !== 1) return null;
+    return BRAND_NAMES[domainLabel(host)] ?? null;
+  }
+  function suffixLength(parts) {
+    return parts.length > 2 && TWO_LEVEL_SUFFIXES.has(parts.slice(-2).join(".")) ? 2 : 1;
+  }
+  function domainLabel(host) {
+    const parts = host.split(".");
+    return parts[parts.length - suffixLength(parts) - 1] ?? host;
   }
   function isAddressLike(value) {
     return /^(https?:\/\/)?[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/i.test(value.trim());
@@ -1752,19 +1766,22 @@
         const stats = sites.get(host) ?? {
           host,
           hostname,
+          port: url.port,
           url: "",
           title: "",
           count: 0,
           lastVisit: 0,
           origins: /* @__PURE__ */ new Map(),
           pages: /* @__PURE__ */ new Map(),
+          folders: /* @__PURE__ */ new Map(),
           rootTitle: "",
           titles: /* @__PURE__ */ new Set()
         };
         stats.count += visits;
         stats.lastVisit = Math.max(stats.lastVisit, Number(item.lastVisitTime) || 0);
         add(stats.origins, url.origin, visits);
-        if (!url.search) add(stats.pages, url.pathname, visits);
+        if (!url.search) add(nested(stats.pages, url.origin), url.pathname, visits);
+        else if (url.pathname.endsWith("/")) add(nested(stats.folders, url.origin), url.pathname, visits);
         const title = typeof item.title === "string" ? item.title.trim() : "";
         if (title) stats.titles.add(title);
         if (url.pathname === "/" && !url.search && title && !stats.rootTitle) stats.rootTitle = title;
@@ -1772,14 +1789,22 @@
       } catch {
       }
     });
-    return [...sites.values()].sort((left, right) => right.count - left.count || right.lastVisit - left.lastVisit).slice(0, 20).map(({ origins, pages, rootTitle, titles, hostname, ...site }) => ({
-      ...site,
-      url: `${top(origins)}${entryPath(pages)}`,
-      title: siteName(hostname, rootTitle, titles)
-    }));
+    return [...sites.values()].sort((left, right) => right.count - left.count || right.lastVisit - left.lastVisit).slice(0, 20).map(({ origins, pages, folders, rootTitle, titles, hostname, port, ...site }) => {
+      const origin = top(origins);
+      return {
+        ...site,
+        url: `${origin}${entryPath(pages.get(origin) ?? folders.get(origin) ?? /* @__PURE__ */ new Map())}`,
+        title: siteName(hostname, port, rootTitle, titles)
+      };
+    });
   }
   function add(counts, key, visits) {
     counts.set(key, (counts.get(key) ?? 0) + visits);
+  }
+  function nested(maps, key) {
+    let map = maps.get(key);
+    if (!map) maps.set(key, map = /* @__PURE__ */ new Map());
+    return map;
   }
   function top(counts) {
     return [...counts.entries()].sort((left, right) => right[1] - left[1])[0][0];
@@ -1793,16 +1818,21 @@
     });
     if (!sections.size) return "/";
     const section = top(sections);
+    const byVisits = (left, right) => (pages.get(right) ?? 0) - (pages.get(left) ?? 0);
     const forms = [`/${section}/`, `/${section}`].filter((path) => pages.has(path));
-    if (!forms.length) return "/";
-    return forms.sort((left, right) => (pages.get(right) ?? 0) - (pages.get(left) ?? 0))[0];
+    if (forms.length) return forms.sort(byVisits)[0];
+    const entries = [...pages.keys()].filter((path) => path.startsWith(`/${section}/`) && (path.endsWith("/") || /\/index\.\w+$/i.test(path))).sort(byVisits);
+    return entries[0] ?? "/";
   }
-  function siteName(hostname, rootTitle, titles) {
-    const shared = sharedSuffix(titles);
-    if (shared) return shared;
+  function siteName(hostname, port, rootTitle, titles) {
+    const known = knownSiteName(hostname);
+    if (known) return known;
     const cleaned = rootTitle.replace(/^\(\d+\+?\)\s*/, "").split(TITLE_SEPARATOR)[0].trim();
     if (readable(cleaned)) return cleaned;
-    return siteLabel(hostname);
+    const shared = sharedSuffix(titles);
+    if (shared) return shared;
+    const label = siteLabel(hostname);
+    return port ? `${label}:${port}` : label;
   }
   function sharedSuffix(titles) {
     const suffixes = /* @__PURE__ */ new Map();
@@ -1959,6 +1989,7 @@
           if (this.hidden) return;
           if (showRecent && this.recent.state === "idle") void this.loadRecent();
           const folders = appStore.state.folders.filter((folder) => folder !== ROOT_FOLDER);
+          const focused = this.contains(document.activeElement) ? document.activeElement.closest("[data-bookmark-id]")?.dataset.bookmarkId : void 0;
           this.innerHTML = `
             <nav class="index" aria-label="\u4E66\u7B7E">
                 ${this.groupTemplate(ROOT_FOLDER)}
@@ -1968,6 +1999,7 @@
           bindSiteIcons(this);
           this.querySelector(".index")?.addEventListener("scroll", this.syncEdges, { passive: true });
           this.fit();
+          if (focused) this.querySelector(`[data-bookmark-id="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
         }
         groupTemplate(folder) {
           const bookmarks = bookmarksIn(folder);
@@ -2097,7 +2129,7 @@
           if (!link) return;
           this.draggingId = link.dataset.bookmarkId ?? null;
           event.dataTransfer?.setData(BOOKMARK_TYPE, this.draggingId ?? "");
-          if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+          if (event.dataTransfer) event.dataTransfer.effectAllowed = "copyMove";
           link.classList.add("is-dragging");
           this.classList.add("is-dragging");
         };
@@ -2114,6 +2146,7 @@
             return;
           }
           event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
           const side = target.dataset.bookmarkId ? this.dropsAfter(target, event) ? "drop-after" : "drop-before" : "";
           if (target.classList.contains("drop-target") && (!side || target.classList.contains(side))) return;
           this.clearDropTargets();
@@ -2860,6 +2893,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_bookmark_actions();
       init_base();
       init_icons();
+      init_ui_layer();
       init_site_icon();
       ENGINES = {
         google: { label: "Google", url: "https://www.google.com/search?q=" },
@@ -2940,7 +2974,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             if (!row) return;
             const item = this.rows[Number(row.dataset.index)];
             if (target.closest(".row-remove") && item?.kind === "recent") {
-              void appStore.removeRecentSearch(item.query).then(() => this.renderResults());
+              void appStore.removeRecentSearch(item.query).then(() => this.renderResults(), notifyError);
               return;
             }
             this.activate(Number(row.dataset.index), event.metaKey || event.ctrlKey);
@@ -2984,7 +3018,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           } else if (event.key === "Delete" && event.shiftKey && this.rows[this.selected]?.kind === "recent") {
             event.preventDefault();
             const row = this.rows[this.selected];
-            if (row.kind === "recent") void appStore.removeRecentSearch(row.query).then(() => this.renderResults());
+            if (row.kind === "recent") void appStore.removeRecentSearch(row.query).then(() => this.renderResults(), notifyError);
           } else if (event.key === "Escape") {
             event.preventDefault();
             if (input.value) {
@@ -3135,6 +3169,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     return Math.round(value * 1e4) / 1e4;
   }
   function resist(value, delta, range, size) {
+    if (range.max - range.min < 1) {
+      const inward = value > range.max && delta < 0 || value < range.min && delta > 0;
+      return inward ? Math.sign(delta) * Math.min(Math.abs(delta), Math.abs(value - range.max)) : 0;
+    }
     const outward = value >= range.max && delta > 0 || value <= range.min && delta < 0;
     if (!outward) return delta;
     const overshoot = value > range.max ? value - range.max : value < range.min ? range.min - value : 0;
@@ -3160,7 +3198,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   function isControl(target) {
     return target instanceof Element && Boolean(target.closest("a, button, input, label, select, textarea, [data-glass], bookmark-index, search-box, status-strip, dashboard-header, backup-toast, settings-panel, bookmark-dialog, .context-menu, .modal-backdrop"));
   }
-  var MAX_SCALE, SNAP, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperFramer;
+  var MAX_SCALE, SNAP, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, COAST_STEPS, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperFramer;
   var init_wallpaper_framing = __esm({
     "src/components/wallpaper-framing.ts"() {
       "use strict";
@@ -3170,6 +3208,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       PINCH_UNITS = 100;
       MAX_PINCH_STEP = 30;
       GESTURE_END_MS = 140;
+      COAST_STEPS = 3;
       STRETCH_OVER = Math.log(1.35);
       STRETCH_UNDER = Math.log(1 / 0.75);
       STIFFNESS = 260;
@@ -3193,6 +3232,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         interacting = false;
         /** Size of the last two-finger scroll step, to tell the trackpad's coasting (shrinking steps) from the fingers. */
         lastPan = 0;
+        /** How many steps in a row have shrunk; one alone is just an uneven finger. */
+        shrinkingSteps = 0;
         /** Coasting carried the picture past an edge: the rest of the coast is swallowed while it springs back. */
         coasting = false;
         coastTimer = 0;
@@ -3264,6 +3305,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.apply();
           this.gestureTimer = window.setTimeout(() => {
             this.lastPan = 0;
+            this.shrinkingSteps = 0;
             this.endGesture();
           }, GESTURE_END_MS);
         };
@@ -3276,7 +3318,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
          */
         coastsOutward(event) {
           const size = Math.hypot(event.deltaX, event.deltaY);
-          const shrinking = size > 0 && size <= this.lastPan * 1.05;
+          const shrinking = size > 0 && size < this.lastPan;
+          this.shrinkingSteps = shrinking ? this.shrinkingSteps + 1 : 0;
           this.lastPan = size;
           if (this.coasting) {
             if (!shrinking) {
@@ -3287,7 +3330,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.restartCoastTimer();
             return true;
           }
-          if (!this.interacting || !shrinking || !this.pushesOutward(-event.deltaX, -event.deltaY)) return false;
+          if (!this.interacting || this.shrinkingSteps < COAST_STEPS || !this.pushesOutward(-event.deltaX, -event.deltaY)) return false;
           this.coasting = true;
           this.restartCoastTimer();
           window.clearTimeout(this.gestureTimer);
@@ -3299,13 +3342,18 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.coastTimer = window.setTimeout(() => {
             this.coasting = false;
             this.lastPan = 0;
+            this.shrinkingSteps = 0;
           }, GESTURE_END_MS);
         }
-        /** True when the picture is already past an edge and this step would take it further. */
+        /**
+         * True when the picture is already past an edge along the direction this
+         * step mostly travels, and the step would take it further. A small sideways
+         * drift does not count: it never moves an axis without slack (see `resist`).
+         */
         pushesOutward(dx, dy) {
           const [rangeX, rangeY] = this.ranges(this.view.scale);
           const { x, y } = this.view;
-          return x > rangeX.max + 0.5 && dx > 0 || x < rangeX.min - 0.5 && dx < 0 || y > rangeY.max + 0.5 && dy > 0 || y < rangeY.min - 0.5 && dy < 0;
+          return Math.abs(dx) >= Math.abs(dy) ? x > rangeX.max + 0.5 && dx > 0 || x < rangeX.min - 0.5 && dx < 0 : y > rangeY.max + 0.5 && dy > 0 || y < rangeY.min - 0.5 && dy < 0;
         }
         /** Double-clicking an empty part of the screen returns to the default framing. */
         onDoubleClick = (event) => {
@@ -3759,16 +3807,20 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             input.addEventListener("change", () => void this.applyToggle(input.dataset.toggle ?? "", input.checked));
           });
           this.querySelectorAll('input[type="range"]').forEach((input) => {
-            input.addEventListener("input", () => {
+            input.addEventListener("input", (event) => {
               const output = input.closest(".setting-row")?.querySelector("output");
               if (output) output.textContent = `${input.value}${input.dataset.unit ?? ""}`;
               syncSlider(input);
+              if (!event.isTrusted) return;
               const surface = document.querySelector("wallpaper-surface");
               if (input.name === "blur") surface?.previewBlur(Number(input.value));
               else surface?.previewOverlay(Number(input.value));
             });
+            const endPreview = () => document.querySelector("wallpaper-surface")?.endPreview();
+            input.addEventListener("pointerup", endPreview);
+            input.addEventListener("blur", endPreview);
             input.addEventListener("change", () => {
-              document.querySelector("wallpaper-surface")?.endPreview();
+              endPreview();
               void appStore.updateSettings("wallpaper", { [input.name]: Number(input.value) }).catch(notifyError);
             });
           });
@@ -3779,7 +3831,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             if (file) this.useWallpaperFile(file);
           });
           this.querySelectorAll(".file-pick").forEach((pick) => {
-            pick.querySelector("button")?.addEventListener("click", () => pick.querySelector('input[type="file"]')?.click());
+            const button = pick.querySelector("button");
+            button?.addEventListener("click", () => {
+              if (button.classList.contains("is-busy")) return;
+              pick.querySelector('input[type="file"]')?.click();
+            });
           });
           this.querySelector(".random-wallpaper")?.addEventListener("click", (event) => void this.withBusy(event.currentTarget, useOnlineWallpaper));
           const windowElement = this.querySelector(".settings-window");
@@ -3787,7 +3843,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           windowElement.addEventListener("dragleave", this.onDragLeave);
           windowElement.addEventListener("drop", this.onDrop);
           this.querySelector(".reset-wallpaper")?.addEventListener("click", () => void resetWallpaper().catch(notifyError));
-          this.querySelector(".reset-framing")?.addEventListener("click", () => document.querySelector("wallpaper-surface")?.resetFraming());
+          this.querySelector(".reset-framing")?.addEventListener("click", () => {
+            document.querySelector("wallpaper-surface")?.resetFraming();
+            this.querySelector(".upload-wallpaper button")?.focus();
+          });
           this.querySelector(".export-data")?.addEventListener("click", () => void backupService.createBackup().catch(notifyError));
           this.querySelector(".import-data input")?.addEventListener("change", (event) => {
             const input = event.target;
@@ -4424,7 +4483,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
          */
         previewBlur(blur) {
           this.style.setProperty("--wallpaper-blur", `${blur}px`);
-          if (this.layoutMedia(blur)) this.framer.show(appStore.state.settings.wallpaper.framing);
+          if (this.layoutMedia(blur) && !this.framer.busy) this.framer.show(appStore.state.settings.wallpaper.framing);
         }
         /** Darkens live while the slider moves, following it without the usual easing. */
         previewOverlay(overlay) {
@@ -4802,7 +4861,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (hasOpenLayer()) return;
           const files = [...event.dataTransfer.files];
           const file = files.find((item) => mediaKindOf(item)) ?? files[0];
-          if (file) void useLocalWallpaper(file).catch(notifyError);
+          if (!file) return;
+          notify("\u6B63\u5728\u8BBE\u4E3A\u58C1\u7EB8\u2026");
+          void useLocalWallpaper(file).then(() => notify("\u5DF2\u8BBE\u4E3A\u58C1\u7EB8", "success"), notifyError);
         };
         onWallpaperTone = (event) => {
           this.wallpaperTone = event.detail.tone;

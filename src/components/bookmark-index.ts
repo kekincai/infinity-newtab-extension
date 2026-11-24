@@ -72,6 +72,10 @@ export class BookmarkIndex extends StoreElement {
         if (this.hidden) return;
         if (showRecent && this.recent.state === 'idle') void this.loadRecent();
         const folders = appStore.state.folders.filter((folder) => folder !== ROOT_FOLDER);
+        // A redraw replaces every link; the focused bookmark keeps focus, so moving it from the keyboard can go on step by step.
+        const focused = this.contains(document.activeElement)
+            ? (document.activeElement as HTMLElement).closest<HTMLElement>('[data-bookmark-id]')?.dataset.bookmarkId
+            : undefined;
         this.innerHTML = `
             <nav class="index" aria-label="书签">
                 ${this.groupTemplate(ROOT_FOLDER)}
@@ -81,6 +85,7 @@ export class BookmarkIndex extends StoreElement {
         bindSiteIcons(this);
         this.querySelector('.index')?.addEventListener('scroll', this.syncEdges, { passive: true });
         this.fit();
+        if (focused) this.querySelector<HTMLElement>(`[data-bookmark-id="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
     }
 
     private groupTemplate(folder: string): string {
@@ -231,7 +236,8 @@ export class BookmarkIndex extends StoreElement {
         if (!link) return;
         this.draggingId = link.dataset.bookmarkId ?? null;
         event.dataTransfer?.setData(BOOKMARK_TYPE, this.draggingId ?? '');
-        if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+        // Copy and link let other apps take the address; inside the index the drop is always a move.
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove';
         link.classList.add('is-dragging');
         this.classList.add('is-dragging');
     };
@@ -249,6 +255,7 @@ export class BookmarkIndex extends StoreElement {
             return;
         }
         event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
         const side = target.dataset.bookmarkId ? (this.dropsAfter(target, event) ? 'drop-after' : 'drop-before') : '';
         if (target.classList.contains('drop-target') && (!side || target.classList.contains(side))) return;
         this.clearDropTargets();

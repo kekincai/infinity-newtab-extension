@@ -5,6 +5,7 @@ import { escapeHtml, normalizeUrl } from '../core/utils';
 import { ROOT_FOLDER, bookmarkName, folderLabel, openInNewTab } from './bookmark-actions';
 import { StoreElement } from './base';
 import { ICONS } from './icons';
+import { notifyError } from './ui-layer';
 import { bindSiteIcons, hostOf, siteIcon } from './site-icon';
 
 export const ENGINES: Record<SearchEngineKey, { label: string; url: string }> = {
@@ -108,7 +109,7 @@ export class SearchBox extends StoreElement {
             if (!row) return;
             const item = this.rows[Number(row.dataset.index)];
             if (target.closest('.row-remove') && item?.kind === 'recent') {
-                void appStore.removeRecentSearch(item.query).then(() => this.renderResults());
+                void appStore.removeRecentSearch(item.query).then(() => this.renderResults(), notifyError);
                 return;
             }
             this.activate(Number(row.dataset.index), event.metaKey || event.ctrlKey);
@@ -155,7 +156,7 @@ export class SearchBox extends StoreElement {
             // Shift+Delete forgets the highlighted recent search, as in Chrome's own address bar.
             event.preventDefault();
             const row = this.rows[this.selected];
-            if (row.kind === 'recent') void appStore.removeRecentSearch(row.query).then(() => this.renderResults());
+            if (row.kind === 'recent') void appStore.removeRecentSearch(row.query).then(() => this.renderResults(), notifyError);
         } else if (event.key === 'Escape') {
             event.preventDefault();
             if (input.value) {

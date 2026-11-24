@@ -101,12 +101,34 @@ const BRAND_NAMES: Record<string, string> = {
 /** “www.github.com” → “GitHub”, “example.co.uk” → “Example”: a site's name without its domain suffix. */
 export function siteLabel(hostname: string): string {
     const host = hostname.toLowerCase().replace(/^www\./, '');
-    if (HOST_NAMES[host]) return HOST_NAMES[host];
+    const known = knownSiteName(host);
+    if (known) return known;
     if (!host.includes('.') || /^[\d.]+$/.test(host) || host.includes(':')) return host;
-    const parts = host.split('.');
-    const suffix = parts.length > 2 && TWO_LEVEL_SUFFIXES.has(parts.slice(-2).join('.')) ? 2 : 1;
-    const label = parts[parts.length - suffix - 1] ?? host;
+    const label = domainLabel(host);
     return BRAND_NAMES[label] ?? label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+/**
+ * The name of a well-known site (GitHub, 知乎, Gmail), or null for any other
+ * host. A brand only names its main domain: t.bilibili.com is a part of the
+ * site with its own name, not a second “Bilibili”.
+ */
+export function knownSiteName(hostname: string): string | null {
+    const host = hostname.toLowerCase().replace(/^www\./, '');
+    if (HOST_NAMES[host]) return HOST_NAMES[host];
+    if (!host.includes('.') || /^[\d.]+$/.test(host) || host.includes(':')) return null;
+    const parts = host.split('.');
+    if (parts.length - suffixLength(parts) !== 1) return null;
+    return BRAND_NAMES[domainLabel(host)] ?? null;
+}
+
+function suffixLength(parts: string[]): number {
+    return parts.length > 2 && TWO_LEVEL_SUFFIXES.has(parts.slice(-2).join('.')) ? 2 : 1;
+}
+
+function domainLabel(host: string): string {
+    const parts = host.split('.');
+    return parts[parts.length - suffixLength(parts) - 1] ?? host;
 }
 
 /** True for names that are only an address, such as “www.google.com” or “https://v2ex.com/”. */
