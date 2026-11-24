@@ -105,13 +105,6 @@ async function openExtension(page, seed = initialData, options = {}) {
     return errors;
 }
 
-/** Waits for the home screen's entrance animation, so measured boxes stop moving. */
-async function settleEntrance(page) {
-    await page.evaluate(() => Promise.all(document.getAnimations()
-        .filter((animation) => animation.animationName === 'rise-in')
-        .map((animation) => animation.finished)));
-}
-
 /** Reports an emulated HDR screen so the WebGPU rim layer starts on an SDR test display. */
 async function emulateHdrScreen(page) {
     await page.addInitScript(() => {
@@ -248,7 +241,6 @@ test('gives every glass control a refraction filter sized to it', async ({ page 
 
 test('bends the backdrop at the rim of the glass', async ({ page }) => {
     const errors = await openExtension(page);
-    await settleEntrance(page);
     await page.addStyleTag({ content: `
         body { background: repeating-linear-gradient(90deg, #101828 0 6px, #ff3f9f 6px 12px, #61d8ff 12px 18px) !important; }
         wallpaper-surface { display: none !important; }
@@ -270,7 +262,6 @@ test('bends the backdrop at the rim of the glass', async ({ page }) => {
 
 test('lights the glass under the pointer', async ({ page }) => {
     const errors = await openExtension(page);
-    await settleEntrance(page);
     const field = page.locator('.search-field');
     const box = await field.boundingBox();
     await page.mouse.move(box.x + 60, box.y + 12);
@@ -318,8 +309,25 @@ test('moves and reorders bookmarks without duplication', async ({ page }) => {
     const pomOrder = stored.bookmarks.filter((bookmark) => bookmark.folder === 'POM').sort((a, b) => a.order - b.order).map((bookmark) => String(bookmark.id));
     expect(pomOrder).toEqual(['1', '3']);
     expect(new Set(stored.bookmarks.map((bookmark) => String(bookmark.id))).size).toBe(3);
+
+    // Dropping on the lower half of the next bookmark moves the dragged one below it.
+    const below = pom.locator('[data-bookmark-id="3"]');
+    const box = await below.boundingBox();
+    await pom.locator('[data-bookmark-id="1"]').dragTo(below, { targetPosition: { x: 12, y: box.height - 3 } });
+    await expect(pom.locator('[data-bookmark-id]').first()).toHaveAttribute('data-bookmark-id', '3');
+    await expect.poll(async () => pomOrderOf(await page.evaluate(() => window.__readMockSync()))).toEqual(['3', '1']);
+
+    // The context menu reorders without a mouse drag.
+    await pom.locator('[data-bookmark-id="1"]').click({ button: 'right' });
+    await expect(page.getByRole('menuitem', { name: '下移' })).toHaveCount(0);
+    await page.getByRole('menuitem', { name: '上移' }).click();
+    await expect.poll(async () => pomOrderOf(await page.evaluate(() => window.__readMockSync()))).toEqual(['1', '3']);
     expect(errors).toEqual([]);
 });
+
+function pomOrderOf(stored) {
+    return stored.bookmarks.filter((bookmark) => bookmark.folder === 'POM').sort((a, b) => a.order - b.order).map((bookmark) => String(bookmark.id));
+}
 
 test('persists layout, theme and local wallpaper controls', async ({ page }) => {
     const errors = await openExtension(page);
@@ -696,7 +704,6 @@ test('searches straight from the home field', async ({ page }) => {
     const results = page.locator('.search-results');
     await expect(results).toBeVisible();
     const fieldBox = await page.locator('.search-field').boundingBox();
-    // Measured once the drop-in animation has settled.
     await expect.poll(async () => (await results.boundingBox()).x).toBeCloseTo(fieldBox.x, 0);
     expect((await results.boundingBox()).y).toBeGreaterThan(fieldBox.y + fieldBox.height);
     await expect(page.locator('.search-row', { hasText: '二次元壁纸' })).toHaveCount(1);
@@ -781,7 +788,6 @@ const savedFraming = (page) => page.evaluate(() => window.__readMockSync().setti
 
 test('reframes the wallpaper in place and keeps the framing', async ({ page }) => {
     const errors = await openExtension(page);
-    await settleEntrance(page);
     // Text colour follows the wallpaper, so the pale backdrop can switch it.
     await openSettings(page);
     await page.locator('[data-segment="theme"] [data-value="auto"]').click();
@@ -863,6 +869,33 @@ test('reframes the wallpaper in place and keeps the framing', async ({ page }) =
     expect(errors).toEqual([]);
 });
 
+test('drags the wallpaper with the mouse and resets the framing from settings', async ({ page }) => {
+    const errors = await openExtension(page);
+    await page.mouse.move(900, 450);
+    await pinch(page, 20, -6);
+    await expect.poll(() => zoomOf(page)).toBeGreaterThan(1.5);
+    await expect.poll(async () => (await savedFraming(page))?.scale ?? 1).toBeGreaterThan(1.5);
+
+    // A press on an empty part of the screen that moves past a few pixels drags the picture with it.
+    const start = await mediaRect(page);
+    await page.mouse.move(900, 450);
+    await page.mouse.down();
+    await page.mouse.move(860, 440, { steps: 4 });
+    await page.mouse.move(800, 420, { steps: 4 });
+    await page.mouse.up();
+    await expect.poll(async () => Math.round((await mediaRect(page)).left - start.left)).toBeLessThan(-50);
+
+    // The settings window offers a reset while the framing is not the default.
+    await openSettings(page, 'wallpaper');
+    const reset = page.locator('.reset-framing');
+    await expect(reset).toBeVisible();
+    await reset.click();
+    await expect.poll(() => zoomOf(page)).toBe(1);
+    await expect.poll(() => savedFraming(page)).toEqual({ scale: 1, x: 0.5, y: 0.5 });
+    await expect(reset).toBeHidden();
+    expect(errors).toEqual([]);
+});
+
 test('fades to the clock alone when idle', async ({ page }) => {
     const seed = structuredClone(initialData);
     seed.settings.wallpaper.idleHide = true;
@@ -872,10 +905,14 @@ test('fades to the clock alone when idle', async ({ page }) => {
     await page.mouse.move(10, 10);
     await page.clock.runFor(8500);
     await expect(page.locator('body')).toHaveClass(/is-idle/);
-    await expect(page.locator('.home-footer')).toHaveCSS('opacity', '0');
+    // Each piece fades on itself, so no ancestor below full opacity cuts the glass off from its blur.
+    await expect(page.locator('bookmark-index')).toHaveCSS('opacity', '0');
+    await expect(page.locator('.search-field')).toHaveCSS('opacity', '0');
+    await expect(page.locator('.home-footer')).toHaveCSS('opacity', '1');
     await expect(page.locator('dashboard-header')).toHaveCSS('opacity', '0.85');
     await page.mouse.move(200, 200);
     await expect(page.locator('body')).not.toHaveClass(/is-idle/);
+    await expect(page.locator('.search-field')).toHaveCSS('opacity', '1');
     expect(errors).toEqual([]);
 });
 

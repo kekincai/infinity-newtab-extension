@@ -28,6 +28,8 @@ const ROW_HEIGHT = 28;
 /** The index may grow up to this share of the window before it scrolls sideways instead. */
 const MAX_HEIGHT_SHARE = 0.4;
 const RECENT_LIMIT = 8;
+/** The dragged bookmark's id travels under its own type; text/plain keeps the link's address for drops outside the page. */
+const BOOKMARK_TYPE = 'application/x-newtab-bookmark';
 /** CSS size of the favicons in the index, so the browser picks a matching resolution. */
 const ICON_SIZE = 16;
 
@@ -228,21 +230,30 @@ export class BookmarkIndex extends StoreElement {
         const link = (event.target as HTMLElement).closest<HTMLElement>('[data-bookmark-id]');
         if (!link) return;
         this.draggingId = link.dataset.bookmarkId ?? null;
-        event.dataTransfer?.setData('text/plain', this.draggingId ?? '');
+        event.dataTransfer?.setData(BOOKMARK_TYPE, this.draggingId ?? '');
         if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
         link.classList.add('is-dragging');
         this.classList.add('is-dragging');
     };
 
-    /** A bookmark under the pointer takes the drop (reorder); otherwise its whole folder group does (move). */
+    /**
+     * A bookmark under the pointer takes the drop (reorder): its upper half puts
+     * the dragged one above it, its lower half below. Elsewhere the whole folder
+     * group takes it (move to the end).
+     */
     private readonly onDragOver = (event: DragEvent): void => {
         if (this.draggingId === null) return;
         const target = this.dropTarget(event);
-        if (!target) return;
+        if (!target) {
+            this.clearDropTargets();
+            return;
+        }
         event.preventDefault();
-        if (target.classList.contains('drop-target')) return;
+        const side = target.dataset.bookmarkId ? (this.dropsAfter(target, event) ? 'drop-after' : 'drop-before') : '';
+        if (target.classList.contains('drop-target') && (!side || target.classList.contains(side))) return;
         this.clearDropTargets();
         target.classList.add('drop-target');
+        if (side) target.classList.add(side);
     };
 
     private readonly onDragLeave = (event: DragEvent): void => {
@@ -251,14 +262,48 @@ export class BookmarkIndex extends StoreElement {
 
     private readonly onDrop = (event: DragEvent): void => {
         const target = this.dropTarget(event);
-        const id = event.dataTransfer?.getData('text/plain') || this.draggingId;
+        const id = event.dataTransfer?.getData(BOOKMARK_TYPE) || this.draggingId;
         this.clearDropTargets();
         if (!target || id === null) return;
         event.preventDefault();
-        const folder = target.closest<HTMLElement>('.index-group')?.dataset.folder ?? ROOT_FOLDER;
-        const before = target.dataset.bookmarkId;
-        void moveBookmark(id, before ? findBookmark(before)?.folder ?? folder : folder, before);
+        const group = target.closest<HTMLElement>('.index-group');
+        let folder = group?.dataset.folder ?? ROOT_FOLDER;
+        let before: string | undefined;
+        if (target.dataset.bookmarkId) {
+            folder = findBookmark(target.dataset.bookmarkId)?.folder ?? folder;
+            // Below a bookmark means in front of the next one (skipping the dragged one), or at the end.
+            const links = this.bookmarkLinks(group);
+            before = this.dropsAfter(target, event)
+                ? links.slice(links.indexOf(target) + 1).find((link) => String(link.dataset.bookmarkId) !== String(id))?.dataset.bookmarkId
+                : target.dataset.bookmarkId;
+        }
+        this.placeDragged(String(id), group, before);
+        void moveBookmark(id, folder, before).then((saved) => { if (!saved) this.render(); });
     };
+
+    /** Lower half of a bookmark: the drop goes below it. */
+    private dropsAfter(link: HTMLElement, event: DragEvent): boolean {
+        const box = link.getBoundingClientRect();
+        return event.clientY > box.top + box.height / 2;
+    }
+
+    private bookmarkLinks(group: HTMLElement | null): HTMLElement[] {
+        return [...(group?.querySelectorAll<HTMLElement>('[data-bookmark-id]') ?? [])];
+    }
+
+    /**
+     * Puts the dropped row where it landed straight away, rather than leaving it
+     * at its old place until the save comes back and the index is redrawn.
+     */
+    private placeDragged(id: string, group: HTMLElement | null, before: string | undefined): void {
+        const row = this.querySelector<HTMLElement>(`[data-bookmark-id="${CSS.escape(id)}"]`)?.closest('li');
+        const list = group?.querySelector<HTMLElement>('.index-list');
+        if (!row || !list) return;
+        const anchor = before ? list.querySelector<HTMLElement>(`[data-bookmark-id="${CSS.escape(before)}"]`)?.closest('li') : null;
+        if (anchor) list.insertBefore(row, anchor);
+        else list.insertBefore(row, list.querySelector('.index-note, li:has(.index-first)'));
+        row.querySelector('.is-dragging')?.classList.remove('is-dragging');
+    }
 
     private readonly onDragEnd = (): void => {
         this.draggingId = null;
@@ -275,7 +320,7 @@ export class BookmarkIndex extends StoreElement {
     }
 
     private clearDropTargets(): void {
-        this.querySelectorAll('.drop-target').forEach((item) => item.classList.remove('drop-target'));
+        this.querySelectorAll('.drop-target').forEach((item) => item.classList.remove('drop-target', 'drop-before', 'drop-after'));
     }
 
     private async loadRecent(): Promise<void> {

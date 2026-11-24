@@ -1295,7 +1295,8 @@
     region.append(toast);
     window.setTimeout(() => {
       toast.classList.add("is-leaving");
-      window.setTimeout(() => toast.remove(), 220);
+      toast.addEventListener("transitionend", () => toast.remove(), { once: true });
+      window.setTimeout(() => toast.remove(), 260);
     }, timeout);
   }
   function notifyError(error, fallback = "\u64CD\u4F5C\u5931\u8D25") {
@@ -1315,8 +1316,11 @@
     const anchor = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
     const point = anchor ? { x: anchor.left, y: anchor.bottom + 6 } : at;
     const { width, height } = menu.getBoundingClientRect();
+    const flipsLeft = point.x > innerWidth - width - 8;
+    const flipsUp = point.y + height > innerHeight - 8;
     menu.style.left = `${Math.max(8, Math.min(point.x, innerWidth - width - 8))}px`;
-    menu.style.top = `${point.y + height > innerHeight - 8 ? Math.max(8, point.y - height - (anchor ? anchor.height + 12 : 0)) : point.y}px`;
+    menu.style.top = `${flipsUp ? Math.max(8, point.y - height - (anchor ? anchor.height + 12 : 0)) : point.y}px`;
+    menu.style.transformOrigin = `${flipsLeft ? "right" : "left"} ${flipsUp ? "bottom" : "top"}`;
     let release2 = () => {
     };
     const close = () => {
@@ -1354,7 +1358,7 @@
   }
   function afterMotion(element, run) {
     requestAnimationFrame(() => {
-      const running = element.getAnimations({ subtree: true });
+      const running = element.getAnimations({ subtree: true }).filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity);
       if (!running.length) {
         run();
         return;
@@ -1446,6 +1450,9 @@
         trash: icon('<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"></path>'),
         open: icon('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path>'),
         move: icon('<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2l2 2h7.8A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"></path><path d="M10 13.5h6M13.5 11l2.5 2.5-2.5 2.5"></path>'),
+        arrowUp: icon('<path d="M12 19V5M6 11l6-6 6 6"></path>'),
+        arrowDown: icon('<path d="M12 5v14M6 13l6 6 6-6"></path>'),
+        toTop: icon('<path d="M5 4h14M12 20V9M6.5 14.5 12 9l5.5 5.5"></path>'),
         download: icon('<path d="M12 4v12M7 11l5 5 5-5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path>'),
         pause: solid('<rect x="6" y="4.5" width="4" height="15" rx="1.3"></rect><rect x="14" y="4.5" width="4" height="15" rx="1.3"></rect>'),
         play: solid('<path d="M8 5.2v13.6a1 1 0 0 0 1.5.86l11-6.8a1 1 0 0 0 0-1.72l-11-6.8A1 1 0 0 0 8 5.2z"></path>'),
@@ -1492,9 +1499,19 @@
   }
   function bookmarkMenu(source, bookmark, at) {
     const destinations = appStore.state.folders.filter((folder) => folder !== bookmark.folder);
+    const siblings = bookmarksIn(bookmark.folder);
+    const index = siblings.findIndex((item) => String(item.id) === String(bookmark.id));
+    const reorder = [
+      ...index > 0 ? [
+        { label: "\u4E0A\u79FB", icon: ICONS.arrowUp, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index - 1].id) },
+        ...index > 1 ? [{ label: "\u79FB\u5230\u6700\u524D", icon: ICONS.toTop, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[0].id) }] : []
+      ] : [],
+      ...index >= 0 && index < siblings.length - 1 ? [{ label: "\u4E0B\u79FB", icon: ICONS.arrowDown, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index + 2]?.id) }] : []
+    ];
     openMenu([
       { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => openInNewTab(bookmark.url) },
       { label: "\u7F16\u8F91\u2026", icon: ICONS.edit, action: () => openBookmarkDialog(source, { bookmark }) },
+      ...reorder.length ? [{ separator: true }, ...reorder] : [],
       ...destinations.length ? [
         { separator: true },
         { heading: "\u79FB\u52A8\u5230\u6587\u4EF6\u5939" },
@@ -1513,8 +1530,10 @@
   async function moveBookmark(id, folder, targetId) {
     try {
       await appStore.moveBookmark(id, folder, targetId);
+      return true;
     } catch (error) {
       notifyError(error);
+      return false;
     }
   }
   async function deleteBookmark(bookmark) {
@@ -1669,6 +1688,8 @@
           });
           form.addEventListener("submit", async (event) => {
             event.preventDefault();
+            const submit = form.querySelector('button[type="submit"]');
+            if (submit.disabled) return;
             const data = new FormData(form);
             const input = {
               url: String(data.get("url") ?? ""),
@@ -1683,12 +1704,17 @@
               urlInput.focus();
               return;
             }
+            submit.disabled = true;
+            form.setAttribute("aria-busy", "true");
             try {
               if (this.editing) await appStore.updateBookmark(this.editing.id, input);
               else await appStore.addBookmark(input);
               this.close();
             } catch (saveError) {
               notifyError(saveError, "\u4FDD\u5B58\u5931\u8D25");
+            } finally {
+              submit.disabled = false;
+              form.removeAttribute("aria-busy");
             }
           });
           this.releaseLayer = pushLayer(form, () => this.close());
@@ -1835,7 +1861,7 @@
   });
 
   // src/components/bookmark-index.ts
-  var MIN_ROWS, ROW_HEIGHT, MAX_HEIGHT_SHARE, RECENT_LIMIT, ICON_SIZE, BookmarkIndex;
+  var MIN_ROWS, ROW_HEIGHT, MAX_HEIGHT_SHARE, RECENT_LIMIT, BOOKMARK_TYPE, ICON_SIZE, BookmarkIndex;
   var init_bookmark_index = __esm({
     "src/components/bookmark-index.ts"() {
       "use strict";
@@ -1851,6 +1877,7 @@
       ROW_HEIGHT = 28;
       MAX_HEIGHT_SHARE = 0.4;
       RECENT_LIMIT = 8;
+      BOOKMARK_TYPE = "application/x-newtab-bookmark";
       ICON_SIZE = 16;
       BookmarkIndex = class extends StoreElement {
         observedChanges = ["bookmarks", "folders", "settings.layout"];
@@ -2021,34 +2048,73 @@
           const link = event.target.closest("[data-bookmark-id]");
           if (!link) return;
           this.draggingId = link.dataset.bookmarkId ?? null;
-          event.dataTransfer?.setData("text/plain", this.draggingId ?? "");
+          event.dataTransfer?.setData(BOOKMARK_TYPE, this.draggingId ?? "");
           if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
           link.classList.add("is-dragging");
           this.classList.add("is-dragging");
         };
-        /** A bookmark under the pointer takes the drop (reorder); otherwise its whole folder group does (move). */
+        /**
+         * A bookmark under the pointer takes the drop (reorder): its upper half puts
+         * the dragged one above it, its lower half below. Elsewhere the whole folder
+         * group takes it (move to the end).
+         */
         onDragOver = (event) => {
           if (this.draggingId === null) return;
           const target = this.dropTarget(event);
-          if (!target) return;
+          if (!target) {
+            this.clearDropTargets();
+            return;
+          }
           event.preventDefault();
-          if (target.classList.contains("drop-target")) return;
+          const side = target.dataset.bookmarkId ? this.dropsAfter(target, event) ? "drop-after" : "drop-before" : "";
+          if (target.classList.contains("drop-target") && (!side || target.classList.contains(side))) return;
           this.clearDropTargets();
           target.classList.add("drop-target");
+          if (side) target.classList.add(side);
         };
         onDragLeave = (event) => {
           if (!this.contains(event.relatedTarget)) this.clearDropTargets();
         };
         onDrop = (event) => {
           const target = this.dropTarget(event);
-          const id = event.dataTransfer?.getData("text/plain") || this.draggingId;
+          const id = event.dataTransfer?.getData(BOOKMARK_TYPE) || this.draggingId;
           this.clearDropTargets();
           if (!target || id === null) return;
           event.preventDefault();
-          const folder = target.closest(".index-group")?.dataset.folder ?? ROOT_FOLDER;
-          const before = target.dataset.bookmarkId;
-          void moveBookmark(id, before ? findBookmark(before)?.folder ?? folder : folder, before);
+          const group2 = target.closest(".index-group");
+          let folder = group2?.dataset.folder ?? ROOT_FOLDER;
+          let before;
+          if (target.dataset.bookmarkId) {
+            folder = findBookmark(target.dataset.bookmarkId)?.folder ?? folder;
+            const links = this.bookmarkLinks(group2);
+            before = this.dropsAfter(target, event) ? links.slice(links.indexOf(target) + 1).find((link) => String(link.dataset.bookmarkId) !== String(id))?.dataset.bookmarkId : target.dataset.bookmarkId;
+          }
+          this.placeDragged(String(id), group2, before);
+          void moveBookmark(id, folder, before).then((saved) => {
+            if (!saved) this.render();
+          });
         };
+        /** Lower half of a bookmark: the drop goes below it. */
+        dropsAfter(link, event) {
+          const box = link.getBoundingClientRect();
+          return event.clientY > box.top + box.height / 2;
+        }
+        bookmarkLinks(group2) {
+          return [...group2?.querySelectorAll("[data-bookmark-id]") ?? []];
+        }
+        /**
+         * Puts the dropped row where it landed straight away, rather than leaving it
+         * at its old place until the save comes back and the index is redrawn.
+         */
+        placeDragged(id, group2, before) {
+          const row = this.querySelector(`[data-bookmark-id="${CSS.escape(id)}"]`)?.closest("li");
+          const list = group2?.querySelector(".index-list");
+          if (!row || !list) return;
+          const anchor = before ? list.querySelector(`[data-bookmark-id="${CSS.escape(before)}"]`)?.closest("li") : null;
+          if (anchor) list.insertBefore(row, anchor);
+          else list.insertBefore(row, list.querySelector(".index-note, li:has(.index-first)"));
+          row.querySelector(".is-dragging")?.classList.remove("is-dragging");
+        }
         onDragEnd = () => {
           this.draggingId = null;
           this.classList.remove("is-dragging");
@@ -2062,7 +2128,7 @@
           return target.closest(".index-group[data-folder]");
         }
         clearDropTargets() {
-          this.querySelectorAll(".drop-target").forEach((item) => item.classList.remove("drop-target"));
+          this.querySelectorAll(".drop-target").forEach((item) => item.classList.remove("drop-target", "drop-before", "drop-after"));
         }
         async loadRecent() {
           this.recent = { ...this.recent, state: "loading", error: "" };
@@ -2272,7 +2338,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.rims = rims.slice(0, MAX_RIMS);
           this.pointer = pointer;
           this.canvas.dataset.hdrCount = String(this.rims.length);
-          this.scheduleDraw();
+          if (this.drawFrame) cancelAnimationFrame(this.drawFrame);
+          this.drawFrame = 0;
+          this.draw();
         }
         onDisplayChange = () => {
           if (isHdrDisplay()) void this.initialize();
@@ -2569,6 +2637,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         /** Until then every frame re-measures where the controls are. */
         measureUntil = 0;
         frame = 0;
+        /** Time of the last tick, so the easing below covers the same ground per second at 60 Hz and at 120 Hz. */
+        lastTick = 0;
         nextFilterId = 1;
         connectedCallback() {
           this.defs.classList.add("glass-filters");
@@ -2685,14 +2755,18 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         tick = (time) => {
           this.frame = 0;
           if (!this.hdr.active) return;
-          this.smoothPointer.x += (this.pointer.x - this.smoothPointer.x) * 0.35;
-          this.smoothPointer.y += (this.pointer.y - this.smoothPointer.y) * 0.35;
+          const frames = this.lastTick ? Math.min(Math.max((time - this.lastTick) / (1e3 / 60), 0), 6) : 1;
+          this.lastTick = time;
+          const follow = 1 - (1 - 0.35) ** frames;
+          const fade = 1 - (1 - 0.2) ** frames;
+          this.smoothPointer.x += (this.pointer.x - this.smoothPointer.x) * follow;
+          this.smoothPointer.y += (this.pointer.y - this.smoothPointer.y) * follow;
           let moving = Math.abs(this.pointer.x - this.smoothPointer.x) + Math.abs(this.pointer.y - this.smoothPointer.y) > 0.5;
           const remeasure = time < this.measureUntil;
           const rims = [];
           this.tracked.forEach((state, element) => {
             const target = element === this.hovered ? 1 : 0;
-            state.glint += (target - state.glint) * 0.2;
+            state.glint += (target - state.glint) * fade;
             if (Math.abs(target - state.glint) > 0.01) moving = true;
             if (rims.length >= MAX_RIMS) return;
             if (remeasure || state.rim === void 0) state.rim = measure(element);
@@ -2700,6 +2774,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           });
           this.hdr.update(rims, this.smoothPointer);
           if (moving || time < this.settleUntil || remeasure) this.frame = requestAnimationFrame(this.tick);
+          else this.lastTick = 0;
         };
       };
     }
@@ -2858,6 +2933,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             input.value += this.ghostRest();
             this.selected = 0;
             this.renderResults();
+          } else if (event.key === "Delete" && event.shiftKey && this.rows[this.selected]?.kind === "recent") {
+            event.preventDefault();
+            const row = this.rows[this.selected];
+            if (row.kind === "recent") void appStore.removeRecentSearch(row.query).then(() => this.renderResults());
           } else if (event.key === "Escape") {
             event.preventDefault();
             if (input.value) {
@@ -2911,7 +2990,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                 <div class="search-row" role="option" id="search-option-${index}" data-index="${index}" aria-selected="false">
                     ${rowIcon(row)}
                     <span class="row-text"><strong>${escapeHtml(row.title)}</strong>${row.subtitle ? `<small>${escapeHtml(row.subtitle)}</small>` : ""}</span>
-                    ${row.kind === "recent" ? '<button class="row-remove" type="button" tabindex="-1" aria-label="\u5220\u9664\u8FD9\u6761\u8BB0\u5F55">\u5220\u9664</button>' : ""}
+                    ${row.kind === "recent" ? '<button class="row-remove" type="button" tabindex="-1" aria-label="\u5220\u9664\u8FD9\u6761\u8BB0\u5F55" aria-keyshortcuts="Shift+Delete" title="\u5220\u9664\uFF08Shift+Delete\uFF09">\u5220\u9664</button>' : ""}
                 </div>`;
           }).join("");
           this.results.hidden = !this.rows.length;
@@ -2989,6 +3068,401 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const button = this.querySelector(".search-engine");
           button.textContent = ENGINES[this.engine].label;
           button.setAttribute("aria-label", `\u641C\u7D22\u5F15\u64CE\uFF1A${ENGINES[this.engine].label}\uFF0C\u70B9\u6309\u6216\u6309 Tab \u5207\u6362`);
+        }
+      };
+    }
+  });
+
+  // src/components/wallpaper-framing.ts
+  function isDefault(framing) {
+    return Math.abs(framing.scale - 1) < 1e-3 && Math.abs(framing.x - 0.5) < 1e-3 && Math.abs(framing.y - 0.5) < 1e-3;
+  }
+  function sameFraming(left, right) {
+    return Math.abs(left.scale - right.scale) < 1e-3 && Math.abs(left.x - right.x) < 1e-3 && Math.abs(left.y - right.y) < 1e-3;
+  }
+  function clamp2(value, minimum, maximum) {
+    return Math.min(maximum, Math.max(minimum, value));
+  }
+  function round(value) {
+    return Math.round(value * 1e4) / 1e4;
+  }
+  function resist(value, delta, range, size) {
+    const outward = value >= range.max && delta > 0 || value <= range.min && delta < 0;
+    if (!outward) return delta;
+    const overshoot = value > range.max ? value - range.max : value < range.min ? range.min - value : 0;
+    return delta * 0.5 * Math.max(0, 1 - overshoot / (size * 0.3));
+  }
+  function rubberBand(requested, minimum) {
+    if (requested > MAX_SCALE) return MAX_SCALE * Math.exp(stretch(Math.log(requested / MAX_SCALE), STRETCH_OVER));
+    if (requested < minimum) return minimum * Math.exp(-stretch(Math.log(minimum / requested), STRETCH_UNDER));
+    return requested;
+  }
+  function unstretch(scale, minimum) {
+    if (scale > MAX_SCALE) return MAX_SCALE * Math.exp(release(Math.log(scale / MAX_SCALE), STRETCH_OVER));
+    if (scale < minimum) return minimum * Math.exp(-release(Math.log(minimum / scale), STRETCH_UNDER));
+    return scale;
+  }
+  function stretch(overshoot, limit) {
+    return limit * (1 - 1 / (overshoot / limit + 1));
+  }
+  function release(shown, limit) {
+    const ratio = Math.min(shown / limit, 0.999);
+    return limit * (1 / (1 - ratio) - 1);
+  }
+  function isControl(target) {
+    return target instanceof Element && Boolean(target.closest("a, button, input, label, select, textarea, [data-glass], bookmark-index, search-box, status-strip, dashboard-header, backup-toast, settings-panel, bookmark-dialog, .context-menu, .modal-backdrop"));
+  }
+  var MAX_SCALE, SNAP, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, DRAG_THRESHOLD, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperFramer;
+  var init_wallpaper_framing = __esm({
+    "src/components/wallpaper-framing.ts"() {
+      "use strict";
+      init_ui_layer();
+      MAX_SCALE = 5;
+      SNAP = 0.05;
+      PINCH_UNITS = 100;
+      MAX_PINCH_STEP = 30;
+      GESTURE_END_MS = 140;
+      DRAG_THRESHOLD = 4;
+      STRETCH_OVER = Math.log(1.35);
+      STRETCH_UNDER = Math.log(1 / 0.75);
+      STIFFNESS = 260;
+      DAMPING = 30;
+      WallpaperFramer = class {
+        constructor(surface, callbacks) {
+          this.surface = surface;
+          this.callbacks = callbacks;
+        }
+        surface;
+        callbacks;
+        view = { scale: 1, x: 0, y: 0 };
+        /** The scale the fingers ask for; the view shows it stretched by `rubberBand` past the limits. */
+        requestedScale = 1;
+        velocity = { scale: 0, x: 0, y: 0 };
+        target = null;
+        focus = { x: innerWidth / 2, y: innerHeight / 2 };
+        gestureTimer = 0;
+        frame = 0;
+        lastTime = 0;
+        interacting = false;
+        /** Size of the last two-finger scroll step, to tell the trackpad's coasting (shrinking steps) from the fingers. */
+        lastPan = 0;
+        /** Coasting carried the picture past an edge: the rest of the coast is swallowed while it springs back. */
+        coasting = false;
+        coastTimer = 0;
+        /** A mouse press on an empty part of the screen that may turn into a drag. */
+        press = null;
+        reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+        connect() {
+          window.addEventListener("wheel", this.onWheel, { passive: false, capture: true });
+          document.addEventListener("dblclick", this.onDoubleClick);
+          document.addEventListener("pointerdown", this.onPointerDown);
+        }
+        disconnect() {
+          window.removeEventListener("wheel", this.onWheel, true);
+          document.removeEventListener("dblclick", this.onDoubleClick);
+          document.removeEventListener("pointerdown", this.onPointerDown);
+          this.endPress();
+          window.clearTimeout(this.coastTimer);
+          this.stop();
+        }
+        /** Springs back to the default framing (the settings window's “重置取景”). */
+        reset() {
+          if (!isDefault(this.framing)) this.settleTo({ scale: 1, x: 0, y: 0 });
+        }
+        /** True from the first pinch or scroll until the spring has settled. */
+        get busy() {
+          return this.interacting || this.target !== null;
+        }
+        /** The current framing in window-independent terms. */
+        get framing() {
+          const box = this.box();
+          return {
+            scale: round(this.view.scale),
+            x: round(clamp2((innerWidth / 2 - box.left - this.view.x) / (this.view.scale * box.width), 0, 1)),
+            y: round(clamp2((innerHeight / 2 - box.top - this.view.y) / (this.view.scale * box.height), 0, 1))
+          };
+        }
+        /** Shows a saved framing at once, fitted to the current window and picture. */
+        show(framing) {
+          this.stop();
+          const box = this.box();
+          const scale = clamp2(framing.scale, this.minScale(), MAX_SCALE);
+          this.view = this.clamped({
+            scale,
+            x: innerWidth / 2 - box.left - framing.x * scale * box.width,
+            y: innerHeight / 2 - box.top - framing.y * scale * box.height
+          });
+          this.apply();
+          this.callbacks.coverage(this.coverage());
+        }
+        get media() {
+          return this.surface.querySelector(".wallpaper-media");
+        }
+        onWheel = (event) => {
+          if (hasOpenLayer()) return;
+          const pinch = event.ctrlKey;
+          if (!pinch && (isControl(event.target) || !this.canPan())) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (pinch) {
+            this.coasting = false;
+            this.lastPan = 0;
+          } else if (this.coastsOutward(event)) {
+            return;
+          }
+          this.beginGesture();
+          if (pinch) {
+            const step = clamp2(event.deltaY, -MAX_PINCH_STEP, MAX_PINCH_STEP);
+            this.focus = { x: event.clientX, y: event.clientY };
+            this.requestedScale *= Math.exp(-step / PINCH_UNITS);
+            this.view = this.zoomedAbout(this.view, rubberBand(this.requestedScale, this.minScale()), this.focus);
+          } else {
+            this.panBy(-event.deltaX, -event.deltaY);
+          }
+          this.apply();
+          this.gestureTimer = window.setTimeout(() => {
+            this.lastPan = 0;
+            this.endGesture();
+          }, GESTURE_END_MS);
+        };
+        /**
+         * Chrome reports no gesture phases, so a flick's coasting arrives as ordinary
+         * scroll steps that shrink one after another, for up to a second or two. Once
+         * those steps carry the picture further past an edge, the spring starts at
+         * once (as on iOS) and the remaining coast is swallowed, instead of the
+         * picture hanging stretched until the coasting ends.
+         */
+        coastsOutward(event) {
+          const size = Math.hypot(event.deltaX, event.deltaY);
+          const shrinking = size > 0 && size <= this.lastPan * 1.05;
+          this.lastPan = size;
+          if (this.coasting) {
+            if (!shrinking) {
+              this.coasting = false;
+              window.clearTimeout(this.coastTimer);
+              return false;
+            }
+            this.restartCoastTimer();
+            return true;
+          }
+          if (!this.interacting || !shrinking || !this.pushesOutward(-event.deltaX, -event.deltaY)) return false;
+          this.coasting = true;
+          this.restartCoastTimer();
+          window.clearTimeout(this.gestureTimer);
+          this.endGesture();
+          return true;
+        }
+        restartCoastTimer() {
+          window.clearTimeout(this.coastTimer);
+          this.coastTimer = window.setTimeout(() => {
+            this.coasting = false;
+            this.lastPan = 0;
+          }, GESTURE_END_MS);
+        }
+        /** True when the picture is already past an edge and this step would take it further. */
+        pushesOutward(dx, dy) {
+          const [rangeX, rangeY] = this.ranges(this.view.scale);
+          const { x, y } = this.view;
+          return x > rangeX.max + 0.5 && dx > 0 || x < rangeX.min - 0.5 && dx < 0 || y > rangeY.max + 0.5 && dy > 0 || y < rangeY.min - 0.5 && dy < 0;
+        }
+        /**
+         * With a mouse, pressing on an empty part of the screen and dragging moves
+         * the picture (once it is larger than the window). The press only becomes a
+         * drag after a few pixels, so clicks and double-clicks keep their meaning.
+         */
+        onPointerDown = (event) => {
+          if (event.pointerType !== "mouse" || event.button !== 0 || this.press || hasOpenLayer() || isControl(event.target)) return;
+          if (!this.canPan()) return;
+          this.press = { id: event.pointerId, target: event.target, x: event.clientX, y: event.clientY, dragging: false };
+          window.addEventListener("pointermove", this.onPointerMove);
+          window.addEventListener("pointerup", this.onPointerUp);
+          window.addEventListener("pointercancel", this.onPointerUp);
+          window.addEventListener("blur", this.onPointerUp);
+        };
+        onPointerMove = (event) => {
+          const press = this.press;
+          if (!press || event.pointerId !== press.id) return;
+          const dx = event.clientX - press.x;
+          const dy = event.clientY - press.y;
+          if (!press.dragging) {
+            if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+            press.dragging = true;
+            this.beginGesture();
+            press.target.setPointerCapture?.(event.pointerId);
+            press.target.addEventListener("lostpointercapture", this.onPointerUp);
+            document.documentElement.classList.add("is-dragging-wallpaper");
+          }
+          press.x = event.clientX;
+          press.y = event.clientY;
+          this.panBy(dx, dy);
+          this.apply();
+        };
+        onPointerUp = () => {
+          const dragged = this.press?.dragging;
+          this.endPress();
+          if (dragged) this.endGesture();
+        };
+        endPress() {
+          const press = this.press;
+          this.press = null;
+          window.removeEventListener("pointermove", this.onPointerMove);
+          window.removeEventListener("pointerup", this.onPointerUp);
+          window.removeEventListener("pointercancel", this.onPointerUp);
+          window.removeEventListener("blur", this.onPointerUp);
+          press?.target.removeEventListener("lostpointercapture", this.onPointerUp);
+          document.documentElement.classList.remove("is-dragging-wallpaper");
+          if (press?.dragging && press.target.hasPointerCapture?.(press.id)) press.target.releasePointerCapture(press.id);
+        }
+        /** Double-clicking an empty part of the screen returns to the default framing. */
+        onDoubleClick = (event) => {
+          if (hasOpenLayer() || isControl(event.target)) return;
+          if (isDefault(this.framing)) return;
+          this.settleTo({ scale: 1, x: 0, y: 0 });
+        };
+        /** Movement is possible on an axis where the picture is larger than the window, or while it is out of range. */
+        canPan() {
+          const [rangeX, rangeY] = this.ranges(this.view.scale);
+          const outside = (value, range) => value < range.min - 0.5 || value > range.max + 0.5;
+          return rangeX.max - rangeX.min > 1 || rangeY.max - rangeY.min > 1 || outside(this.view.x, rangeX) || outside(this.view.y, rangeY);
+        }
+        beginGesture() {
+          window.clearTimeout(this.gestureTimer);
+          cancelAnimationFrame(this.frame);
+          this.frame = 0;
+          this.target = null;
+          this.velocity = { scale: 0, x: 0, y: 0 };
+          this.requestedScale = unstretch(this.view.scale, this.minScale());
+          this.interacting = true;
+          this.surface.classList.add("is-framing");
+        }
+        endGesture = () => {
+          this.interacting = false;
+          const minimum = this.minScale();
+          let scale = clamp2(this.view.scale, minimum, MAX_SCALE);
+          if (Math.abs(scale - 1) < SNAP) scale = 1;
+          else if (scale / minimum - 1 < SNAP) scale = minimum;
+          this.settleTo(this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
+        };
+        stop() {
+          window.clearTimeout(this.gestureTimer);
+          cancelAnimationFrame(this.frame);
+          this.frame = 0;
+          this.target = null;
+          this.interacting = false;
+          this.velocity = { scale: 0, x: 0, y: 0 };
+          this.surface.classList.remove("is-framing");
+        }
+        /** The view scaled to `scale` with the point under `at` staying put. */
+        zoomedAbout(view, scale, at) {
+          const box = this.box();
+          const ratio = scale / view.scale;
+          return {
+            scale,
+            x: at.x - box.left - (at.x - box.left - view.x) * ratio,
+            y: at.y - box.top - (at.y - box.top - view.y) * ratio
+          };
+        }
+        /** Panning past an edge moves less and less, so the picture resists being dragged out of view. */
+        panBy(dx, dy) {
+          const [rangeX, rangeY] = this.ranges(this.view.scale);
+          this.view = {
+            scale: this.view.scale,
+            x: this.view.x + resist(this.view.x, dx, rangeX, innerWidth),
+            y: this.view.y + resist(this.view.y, dy, rangeY, innerHeight)
+          };
+        }
+        /** The media layer's untransformed box in window coordinates. */
+        box() {
+          const media = this.media;
+          return media ? { left: media.offsetLeft, top: media.offsetTop, width: media.offsetWidth, height: media.offsetHeight } : { left: 0, top: 0, width: innerWidth, height: innerHeight };
+        }
+        /** The scale at which the whole picture fits in the window. */
+        minScale() {
+          const box = this.box();
+          return Math.min(1, innerWidth / box.width, innerHeight / box.height);
+        }
+        /**
+         * Allowed offsets on each axis at `scale`. A picture larger than the window
+         * (plus the blur margin, which must stay out of view) can move until an edge
+         * meets the window; a smaller one stays centred.
+         */
+        ranges(scale) {
+          const box = this.box();
+          const bleed = Number(this.surface.dataset.bleed) || 0;
+          const axis = (start, length, window2) => {
+            const size = length * scale;
+            if (size < window2 + bleed * 2) {
+              const centred = (window2 - size) / 2 - start;
+              return { min: centred, max: centred };
+            }
+            return { min: window2 + bleed - size - start, max: -bleed - start };
+          };
+          return [axis(box.left, box.width, innerWidth), axis(box.top, box.height, innerHeight)];
+        }
+        clamped(view) {
+          const scale = clamp2(view.scale, this.minScale(), MAX_SCALE);
+          const [rangeX, rangeY] = this.ranges(scale);
+          return { scale, x: clamp2(view.x, rangeX.min, rangeX.max), y: clamp2(view.y, rangeY.min, rangeY.max) };
+        }
+        /** Share of the window the picture covers. */
+        coverage() {
+          const box = this.box();
+          const left = Math.max(0, box.left + this.view.x);
+          const top = Math.max(0, box.top + this.view.y);
+          const right = Math.min(innerWidth, box.left + this.view.x + box.width * this.view.scale);
+          const bottom = Math.min(innerHeight, box.top + this.view.y + box.height * this.view.scale);
+          return Math.max(0, right - left) * Math.max(0, bottom - top) / (innerWidth * innerHeight);
+        }
+        settleTo(target) {
+          window.clearTimeout(this.gestureTimer);
+          this.target = target;
+          this.surface.classList.add("is-framing");
+          if (this.reducedMotion.matches) {
+            this.view = target;
+            this.finish();
+            return;
+          }
+          this.lastTime = performance.now();
+          if (!this.frame) this.frame = requestAnimationFrame(this.step);
+        }
+        step = (time) => {
+          this.frame = 0;
+          const target = this.target;
+          if (!target) return;
+          let remaining = Math.min(0.064, (time - this.lastTime) / 1e3);
+          this.lastTime = time;
+          while (remaining > 0) {
+            const dt = Math.min(remaining, 1 / 240);
+            remaining -= dt;
+            for (const key of ["scale", "x", "y"]) {
+              const force = -STIFFNESS * (this.view[key] - target[key]) - DAMPING * this.velocity[key];
+              this.velocity[key] += force * dt;
+              this.view[key] += this.velocity[key] * dt;
+            }
+          }
+          const settled = Math.abs(this.view.scale - target.scale) < 5e-4 && Math.abs(this.view.x - target.x) < 0.25 && Math.abs(this.view.y - target.y) < 0.25 && Math.abs(this.velocity.scale) < 5e-3 && Math.abs(this.velocity.x) + Math.abs(this.velocity.y) < 2;
+          if (settled) {
+            this.view = { ...target };
+            this.finish();
+            return;
+          }
+          this.apply();
+          this.frame = requestAnimationFrame(this.step);
+        };
+        finish() {
+          this.target = null;
+          this.velocity = { scale: 0, x: 0, y: 0 };
+          this.apply();
+          this.surface.classList.remove("is-framing");
+          this.callbacks.coverage(this.coverage());
+          this.callbacks.save(this.framing);
+        }
+        apply() {
+          const media = this.media;
+          const { scale, x, y } = this.view;
+          const resting = Math.abs(scale - 1) < 1e-4 && Math.abs(x) < 0.01 && Math.abs(y) < 0.01;
+          if (media) media.style.transform = resting ? "" : `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+          this.surface.dataset.zoom = scale.toFixed(3);
         }
       };
     }
@@ -3072,6 +3546,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_utils();
       init_wallpaper_service();
       init_base();
+      init_wallpaper_framing();
       init_dashboard_header();
       init_hdr_glass();
       init_icons();
@@ -3200,17 +3675,19 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         wallpaperPane({ wallpaper }) {
           return pane("wallpaper", "\u58C1\u7EB8", `
-            <div class="settings-group wallpaper-card setting-row" data-search="\u58C1\u7EB8 \u89C6\u9891 \u56FE\u7247 \u7167\u7247 \u5728\u7EBF \u9009\u62E9 \u62D6\u653E \u7C98\u8D34 \u6062\u590D\u9ED8\u8BA4">
+            <div class="settings-group wallpaper-card setting-row" data-search="\u58C1\u7EB8 \u89C6\u9891 \u56FE\u7247 \u7167\u7247 \u5728\u7EBF \u9009\u62E9 \u62D6\u653E \u7C98\u8D34 \u6062\u590D\u9ED8\u8BA4 \u53D6\u666F \u7F29\u653E \u91CD\u7F6E">
                 <div class="wallpaper-preview" aria-hidden="true"><div class="wallpaper-preview-media"></div><span class="wallpaper-duration" hidden></span></div>
                 <div class="wallpaper-info">
                     <strong class="wallpaper-name"></strong>
                     <span class="row-sub wallpaper-meta"></span>
                     <div class="wallpaper-actions">
-                        <label class="pill-button primary upload-wallpaper">\u9009\u62E9\u89C6\u9891\u6216\u56FE\u7247\u2026<input type="file" accept="image/*,video/*" hidden></label>
+                        <span class="file-pick upload-wallpaper"><button class="pill-button primary" type="button">\u9009\u62E9\u89C6\u9891\u6216\u56FE\u7247\u2026</button><input type="file" accept="image/*,video/*" hidden></span>
                         <button class="pill-button random-wallpaper" type="button">\u6362\u4E00\u4E2A\u5728\u7EBF\u58C1\u7EB8</button>
                         <button class="pill-button reset-wallpaper" type="button">\u6062\u590D\u9ED8\u8BA4</button>
+                        <button class="pill-button reset-framing" type="button" hidden>\u91CD\u7F6E\u53D6\u666F</button>
                     </div>
                     <span class="row-sub wallpaper-hint">\u4E5F\u53EF\u4EE5\u628A\u7167\u7247\u6216\u89C6\u9891\u62D6\u5230\u8FD9\u91CC\uFF0C\u6216\u590D\u5236\u540E\u6309 ${PASTE_LABEL} \u7C98\u8D34</span>
+                    <span class="row-sub framing-hint">\u5728\u4E3B\u5C4F\u7A7A\u767D\u5904\u53CC\u6307\u634F\u5408\u7F29\u653E\u3001\u53CC\u6307\u6ED1\u52A8\u6216\u6309\u4F4F\u62D6\u52A8\u6765\u8C03\u6574\u53D6\u666F\uFF0C\u53CC\u51FB\u7A7A\u767D\u5904\u590D\u539F</span>
                 </div>
             </div>
             ${group("\u663E\u793A", `
@@ -3234,7 +3711,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             `)}
             ${group("\u5907\u4EFD", `
                 ${infoRow("\u5BFC\u51FA\u5907\u4EFD", "\u4E66\u7B7E\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\uFF0C\u4E00\u4E2A JSON \u6587\u4EF6", '<button class="pill-button export-data" type="button">\u5BFC\u51FA\u2026</button>')}
-                ${infoRow("\u4ECE\u5907\u4EFD\u6062\u590D", "\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E\uFF0C\u5EFA\u8BAE\u5148\u5BFC\u51FA\u4E00\u4EFD", '<label class="pill-button import-data">\u5BFC\u5165\u2026<input type="file" accept="application/json,.json" hidden></label>')}
+                ${infoRow("\u4ECE\u5907\u4EFD\u6062\u590D", "\u4F1A\u8986\u76D6\u5F53\u524D\u6570\u636E\uFF0C\u5EFA\u8BAE\u5148\u5BFC\u51FA\u4E00\u4EFD", '<span class="file-pick import-data"><button class="pill-button" type="button">\u5BFC\u5165\u2026</button><input type="file" accept="application/json,.json" hidden></span>')}
                 ${toggleRow("backupReminder", "\u6BCF\u6708\u63D0\u9192\u6211\u5907\u4EFD")}
             `)}
             ${group("", `
@@ -3292,10 +3769,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               const output = input.closest(".setting-row")?.querySelector("output");
               if (output) output.textContent = `${input.value}${input.dataset.unit ?? ""}`;
               syncSlider(input);
-              const [property, value] = input.name === "blur" ? ["--wallpaper-blur", `${input.value}px`] : ["--wallpaper-overlay", String(Number(input.value) / 100)];
-              document.querySelector("wallpaper-surface")?.style.setProperty(property, value);
+              const surface = document.querySelector("wallpaper-surface");
+              if (input.name === "blur") surface?.previewBlur(Number(input.value));
+              else surface?.previewOverlay(Number(input.value));
             });
             input.addEventListener("change", () => {
+              document.querySelector("wallpaper-surface")?.endPreview();
               void appStore.updateSettings("wallpaper", { [input.name]: Number(input.value) }).catch(notifyError);
             });
           });
@@ -3303,7 +3782,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           upload.addEventListener("change", () => {
             const file = upload.files?.[0];
             upload.value = "";
-            if (file) void this.withBusy(upload.closest("label"), () => useLocalWallpaper(file));
+            if (file) this.useWallpaperFile(file);
+          });
+          this.querySelectorAll(".file-pick").forEach((pick) => {
+            pick.querySelector("button")?.addEventListener("click", () => pick.querySelector('input[type="file"]')?.click());
           });
           this.querySelector(".random-wallpaper")?.addEventListener("click", (event) => void this.withBusy(event.currentTarget, useOnlineWallpaper));
           const windowElement = this.querySelector(".settings-window");
@@ -3311,6 +3793,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           windowElement.addEventListener("dragleave", this.onDragLeave);
           windowElement.addEventListener("drop", this.onDrop);
           this.querySelector(".reset-wallpaper")?.addEventListener("click", () => void resetWallpaper().catch(notifyError));
+          this.querySelector(".reset-framing")?.addEventListener("click", () => document.querySelector("wallpaper-surface")?.resetFraming());
           this.querySelector(".export-data")?.addEventListener("click", () => void backupService.createBackup().catch(notifyError));
           this.querySelector(".import-data input")?.addEventListener("change", (event) => {
             const input = event.target;
@@ -3338,11 +3821,15 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
         /** Slides each visible segmented control's thumb under its selected option. */
         placeSegmentThumbs() {
-          this.querySelectorAll("[data-segment]").forEach((groupElement) => {
+          const placements = [...this.querySelectorAll("[data-segment]")].map((groupElement) => {
             const active = groupElement.querySelector(".is-active");
-            if (!active || !groupElement.offsetWidth) return;
-            groupElement.style.setProperty("--thumb-x", `${active.offsetLeft}px`);
-            groupElement.style.setProperty("--thumb-width", `${active.offsetWidth}px`);
+            return active && groupElement.offsetWidth ? { groupElement, x: active.offsetLeft, width: active.offsetWidth } : null;
+          });
+          placements.forEach((placement) => {
+            if (!placement) return;
+            const { groupElement } = placement;
+            groupElement.style.setProperty("--thumb-x", `${placement.x}px`);
+            groupElement.style.setProperty("--thumb-width", `${placement.width}px`);
             groupElement.classList.toggle("has-thumb", true);
             if (!groupElement.classList.contains("is-placed")) requestAnimationFrame(() => groupElement.classList.add("is-placed"));
           });
@@ -3454,12 +3941,15 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.placeSegmentThumbs();
           const reset = this.querySelector(".reset-wallpaper");
           if (reset) reset.hidden = wallpaper.type === "gradient";
+          const resetFraming = this.querySelector(".reset-framing");
+          if (resetFraming) resetFraming.hidden = isDefault(wallpaper.framing);
           if (this.openState) void this.refreshPreview();
         }
         async withBusy(control, task) {
           if (control.classList.contains("is-busy")) return;
           control.classList.add("is-busy");
           control.setAttribute("aria-busy", "true");
+          control.setAttribute("aria-disabled", "true");
           try {
             await task();
           } catch (error) {
@@ -3467,6 +3957,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           } finally {
             control.classList.remove("is-busy");
             control.removeAttribute("aria-busy");
+            control.removeAttribute("aria-disabled");
           }
         }
         async applySegment(name, value) {
@@ -3487,7 +3978,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           return this.openState && Boolean(card?.getClientRects().length);
         }
         useWallpaperFile(file) {
-          void this.withBusy(this.querySelector(".upload-wallpaper"), () => useLocalWallpaper(file));
+          void this.withBusy(this.querySelector(".upload-wallpaper button"), () => useLocalWallpaper(file));
         }
         /**
          * Files dropped anywhere on the settings window are caught so Chrome does not
@@ -3530,6 +4021,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             void this.withBusy(this.querySelector(".random-wallpaper"), useOnlineWallpaper);
             return;
           }
+          if (this.querySelector(".upload-wallpaper button")?.classList.contains("is-busy")) return;
           const input = this.querySelector(".upload-wallpaper input");
           input.accept = kind === "video" ? "video/*" : "image/*";
           input.click();
@@ -3795,288 +4287,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
   });
 
-  // src/components/wallpaper-framing.ts
-  function isDefault(framing) {
-    return Math.abs(framing.scale - 1) < 1e-3 && Math.abs(framing.x - 0.5) < 1e-3 && Math.abs(framing.y - 0.5) < 1e-3;
-  }
-  function sameFraming(left, right) {
-    return Math.abs(left.scale - right.scale) < 1e-3 && Math.abs(left.x - right.x) < 1e-3 && Math.abs(left.y - right.y) < 1e-3;
-  }
-  function clamp2(value, minimum, maximum) {
-    return Math.min(maximum, Math.max(minimum, value));
-  }
-  function round(value) {
-    return Math.round(value * 1e4) / 1e4;
-  }
-  function resist(value, delta, range, size) {
-    const outward = value >= range.max && delta > 0 || value <= range.min && delta < 0;
-    if (!outward) return delta;
-    const overshoot = value > range.max ? value - range.max : value < range.min ? range.min - value : 0;
-    return delta * 0.5 * Math.max(0, 1 - overshoot / (size * 0.3));
-  }
-  function rubberBand(requested, minimum) {
-    if (requested > MAX_SCALE) return MAX_SCALE * Math.exp(stretch(Math.log(requested / MAX_SCALE), STRETCH_OVER));
-    if (requested < minimum) return minimum * Math.exp(-stretch(Math.log(minimum / requested), STRETCH_UNDER));
-    return requested;
-  }
-  function unstretch(scale, minimum) {
-    if (scale > MAX_SCALE) return MAX_SCALE * Math.exp(release(Math.log(scale / MAX_SCALE), STRETCH_OVER));
-    if (scale < minimum) return minimum * Math.exp(-release(Math.log(minimum / scale), STRETCH_UNDER));
-    return scale;
-  }
-  function stretch(overshoot, limit) {
-    return limit * (1 - 1 / (overshoot / limit + 1));
-  }
-  function release(shown, limit) {
-    const ratio = Math.min(shown / limit, 0.999);
-    return limit * (1 / (1 - ratio) - 1);
-  }
-  function isControl(target) {
-    return target instanceof Element && Boolean(target.closest("a, button, input, label, select, textarea, [data-glass], bookmark-index, search-box, status-strip, dashboard-header, backup-toast, settings-panel, bookmark-dialog, .context-menu, .modal-backdrop"));
-  }
-  var MAX_SCALE, SNAP, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperFramer;
-  var init_wallpaper_framing = __esm({
-    "src/components/wallpaper-framing.ts"() {
-      "use strict";
-      init_ui_layer();
-      MAX_SCALE = 5;
-      SNAP = 0.05;
-      PINCH_UNITS = 100;
-      MAX_PINCH_STEP = 30;
-      GESTURE_END_MS = 140;
-      STRETCH_OVER = Math.log(1.35);
-      STRETCH_UNDER = Math.log(1 / 0.75);
-      STIFFNESS = 260;
-      DAMPING = 30;
-      WallpaperFramer = class {
-        constructor(surface, callbacks) {
-          this.surface = surface;
-          this.callbacks = callbacks;
-        }
-        surface;
-        callbacks;
-        view = { scale: 1, x: 0, y: 0 };
-        /** The scale the fingers ask for; the view shows it stretched by `rubberBand` past the limits. */
-        requestedScale = 1;
-        velocity = { scale: 0, x: 0, y: 0 };
-        target = null;
-        focus = { x: innerWidth / 2, y: innerHeight / 2 };
-        gestureTimer = 0;
-        frame = 0;
-        lastTime = 0;
-        interacting = false;
-        reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-        connect() {
-          window.addEventListener("wheel", this.onWheel, { passive: false, capture: true });
-          document.addEventListener("dblclick", this.onDoubleClick);
-        }
-        disconnect() {
-          window.removeEventListener("wheel", this.onWheel, true);
-          document.removeEventListener("dblclick", this.onDoubleClick);
-          this.stop();
-        }
-        /** True from the first pinch or scroll until the spring has settled. */
-        get busy() {
-          return this.interacting || this.target !== null;
-        }
-        /** The current framing in window-independent terms. */
-        get framing() {
-          const box = this.box();
-          return {
-            scale: round(this.view.scale),
-            x: round(clamp2((innerWidth / 2 - box.left - this.view.x) / (this.view.scale * box.width), 0, 1)),
-            y: round(clamp2((innerHeight / 2 - box.top - this.view.y) / (this.view.scale * box.height), 0, 1))
-          };
-        }
-        /** Shows a saved framing at once, fitted to the current window and picture. */
-        show(framing) {
-          this.stop();
-          const box = this.box();
-          const scale = clamp2(framing.scale, this.minScale(), MAX_SCALE);
-          this.view = this.clamped({
-            scale,
-            x: innerWidth / 2 - box.left - framing.x * scale * box.width,
-            y: innerHeight / 2 - box.top - framing.y * scale * box.height
-          });
-          this.apply();
-          this.callbacks.coverage(this.coverage());
-        }
-        get media() {
-          return this.surface.querySelector(".wallpaper-media");
-        }
-        onWheel = (event) => {
-          if (hasOpenLayer()) return;
-          const pinch = event.ctrlKey;
-          if (!pinch && (isControl(event.target) || !this.canPan())) return;
-          event.preventDefault();
-          event.stopPropagation();
-          this.beginGesture();
-          if (pinch) {
-            const step = clamp2(event.deltaY, -MAX_PINCH_STEP, MAX_PINCH_STEP);
-            this.focus = { x: event.clientX, y: event.clientY };
-            this.requestedScale *= Math.exp(-step / PINCH_UNITS);
-            this.view = this.zoomedAbout(this.view, rubberBand(this.requestedScale, this.minScale()), this.focus);
-          } else {
-            this.panBy(-event.deltaX, -event.deltaY);
-          }
-          this.apply();
-          this.gestureTimer = window.setTimeout(this.endGesture, GESTURE_END_MS);
-        };
-        /** Double-clicking an empty part of the screen returns to the default framing. */
-        onDoubleClick = (event) => {
-          if (hasOpenLayer() || isControl(event.target)) return;
-          if (isDefault(this.framing)) return;
-          this.settleTo({ scale: 1, x: 0, y: 0 });
-        };
-        /** Movement is possible on an axis where the picture is larger than the window, or while it is out of range. */
-        canPan() {
-          const [rangeX, rangeY] = this.ranges(this.view.scale);
-          const outside = (value, range) => value < range.min - 0.5 || value > range.max + 0.5;
-          return rangeX.max - rangeX.min > 1 || rangeY.max - rangeY.min > 1 || outside(this.view.x, rangeX) || outside(this.view.y, rangeY);
-        }
-        beginGesture() {
-          window.clearTimeout(this.gestureTimer);
-          cancelAnimationFrame(this.frame);
-          this.frame = 0;
-          this.target = null;
-          this.velocity = { scale: 0, x: 0, y: 0 };
-          this.requestedScale = unstretch(this.view.scale, this.minScale());
-          this.interacting = true;
-          this.surface.classList.add("is-framing");
-        }
-        endGesture = () => {
-          this.interacting = false;
-          const minimum = this.minScale();
-          let scale = clamp2(this.view.scale, minimum, MAX_SCALE);
-          if (Math.abs(scale - 1) < SNAP) scale = 1;
-          else if (scale / minimum - 1 < SNAP) scale = minimum;
-          this.settleTo(this.clamped(this.zoomedAbout(this.view, scale, this.focus)));
-        };
-        stop() {
-          window.clearTimeout(this.gestureTimer);
-          cancelAnimationFrame(this.frame);
-          this.frame = 0;
-          this.target = null;
-          this.interacting = false;
-          this.velocity = { scale: 0, x: 0, y: 0 };
-          this.surface.classList.remove("is-framing");
-        }
-        /** The view scaled to `scale` with the point under `at` staying put. */
-        zoomedAbout(view, scale, at) {
-          const box = this.box();
-          const ratio = scale / view.scale;
-          return {
-            scale,
-            x: at.x - box.left - (at.x - box.left - view.x) * ratio,
-            y: at.y - box.top - (at.y - box.top - view.y) * ratio
-          };
-        }
-        /** Panning past an edge moves less and less, so the picture resists being dragged out of view. */
-        panBy(dx, dy) {
-          const [rangeX, rangeY] = this.ranges(this.view.scale);
-          this.view = {
-            scale: this.view.scale,
-            x: this.view.x + resist(this.view.x, dx, rangeX, innerWidth),
-            y: this.view.y + resist(this.view.y, dy, rangeY, innerHeight)
-          };
-        }
-        /** The media layer's untransformed box in window coordinates. */
-        box() {
-          const media = this.media;
-          return media ? { left: media.offsetLeft, top: media.offsetTop, width: media.offsetWidth, height: media.offsetHeight } : { left: 0, top: 0, width: innerWidth, height: innerHeight };
-        }
-        /** The scale at which the whole picture fits in the window. */
-        minScale() {
-          const box = this.box();
-          return Math.min(1, innerWidth / box.width, innerHeight / box.height);
-        }
-        /**
-         * Allowed offsets on each axis at `scale`. A picture larger than the window
-         * (plus the blur margin, which must stay out of view) can move until an edge
-         * meets the window; a smaller one stays centred.
-         */
-        ranges(scale) {
-          const box = this.box();
-          const bleed = Number(this.surface.dataset.bleed) || 0;
-          const axis = (start, length, window2) => {
-            const size = length * scale;
-            if (size < window2 + bleed * 2) {
-              const centred = (window2 - size) / 2 - start;
-              return { min: centred, max: centred };
-            }
-            return { min: window2 + bleed - size - start, max: -bleed - start };
-          };
-          return [axis(box.left, box.width, innerWidth), axis(box.top, box.height, innerHeight)];
-        }
-        clamped(view) {
-          const scale = clamp2(view.scale, this.minScale(), MAX_SCALE);
-          const [rangeX, rangeY] = this.ranges(scale);
-          return { scale, x: clamp2(view.x, rangeX.min, rangeX.max), y: clamp2(view.y, rangeY.min, rangeY.max) };
-        }
-        /** Share of the window the picture covers. */
-        coverage() {
-          const box = this.box();
-          const left = Math.max(0, box.left + this.view.x);
-          const top = Math.max(0, box.top + this.view.y);
-          const right = Math.min(innerWidth, box.left + this.view.x + box.width * this.view.scale);
-          const bottom = Math.min(innerHeight, box.top + this.view.y + box.height * this.view.scale);
-          return Math.max(0, right - left) * Math.max(0, bottom - top) / (innerWidth * innerHeight);
-        }
-        settleTo(target) {
-          window.clearTimeout(this.gestureTimer);
-          this.target = target;
-          this.surface.classList.add("is-framing");
-          if (this.reducedMotion.matches) {
-            this.view = target;
-            this.finish();
-            return;
-          }
-          this.lastTime = performance.now();
-          if (!this.frame) this.frame = requestAnimationFrame(this.step);
-        }
-        step = (time) => {
-          this.frame = 0;
-          const target = this.target;
-          if (!target) return;
-          let remaining = Math.min(0.064, (time - this.lastTime) / 1e3);
-          this.lastTime = time;
-          while (remaining > 0) {
-            const dt = Math.min(remaining, 1 / 240);
-            remaining -= dt;
-            for (const key of ["scale", "x", "y"]) {
-              const force = -STIFFNESS * (this.view[key] - target[key]) - DAMPING * this.velocity[key];
-              this.velocity[key] += force * dt;
-              this.view[key] += this.velocity[key] * dt;
-            }
-          }
-          const settled = Math.abs(this.view.scale - target.scale) < 5e-4 && Math.abs(this.view.x - target.x) < 0.25 && Math.abs(this.view.y - target.y) < 0.25 && Math.abs(this.velocity.scale) < 5e-3 && Math.abs(this.velocity.x) + Math.abs(this.velocity.y) < 2;
-          if (settled) {
-            this.view = { ...target };
-            this.finish();
-            return;
-          }
-          this.apply();
-          this.frame = requestAnimationFrame(this.step);
-        };
-        finish() {
-          this.target = null;
-          this.velocity = { scale: 0, x: 0, y: 0 };
-          this.apply();
-          this.surface.classList.remove("is-framing");
-          this.callbacks.coverage(this.coverage());
-          this.callbacks.save(this.framing);
-        }
-        apply() {
-          const media = this.media;
-          const { scale, x, y } = this.view;
-          const resting = Math.abs(scale - 1) < 1e-4 && Math.abs(x) < 0.01 && Math.abs(y) < 0.01;
-          if (media) media.style.transform = resting ? "" : `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
-          this.surface.dataset.zoom = scale.toFixed(3);
-        }
-      };
-    }
-  });
-
   // src/components/wallpaper-surface.ts
   function applySound(video, sound) {
     if (!sound) {
@@ -4196,10 +4406,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
          * window is cropped by the surface, not by the layer, so zooming out can
          * bring it back.
          */
-        layoutMedia() {
+        layoutMedia(blur = appStore.state.settings.wallpaper.blur) {
           const media = this.querySelector(".wallpaper-media");
           if (!media) return false;
-          const bleed = appStore.state.settings.wallpaper.blur + BLEED;
+          const bleed = blur + BLEED;
           const { width, height } = this.naturalSize;
           const key = `${innerWidth}x${innerHeight}|${width}x${height}|${bleed}`;
           if (key === this.layoutKey) return false;
@@ -4212,6 +4422,28 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           media.style.height = `${h}px`;
           this.dataset.bleed = String(bleed);
           return true;
+        }
+        /**
+         * Shows a blur the settings slider is still being dragged through. The margin
+         * past the window grows with it, so a blurred edge never shows the pale
+         * backdrop, and releasing the slider lands without the picture jumping.
+         */
+        previewBlur(blur) {
+          this.style.setProperty("--wallpaper-blur", `${blur}px`);
+          if (this.layoutMedia(blur)) this.framer.show(appStore.state.settings.wallpaper.framing);
+        }
+        /** Darkens live while the slider moves, following it without the usual easing. */
+        previewOverlay(overlay) {
+          this.classList.add("is-adjusting");
+          this.style.setProperty("--wallpaper-overlay", String(overlay / 100));
+        }
+        /** Springs the picture back to the default framing; the settled framing is saved as usual. */
+        resetFraming() {
+          this.framer.reset();
+        }
+        /** The slider was released: the eased dimming change comes back. */
+        endPreview() {
+          this.classList.remove("is-adjusting");
         }
         /** The saved framing is window-independent, so a resized window shows the same part of the picture. */
         onResize = () => {
@@ -4370,18 +4602,20 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             <stop offset="1" stop-color="#b47a8e"></stop>
         </linearGradient>
     </defs>
-    <g class="scene-kb">
+    <g>
         <rect width="1440" height="720" fill="url(#scene-sky)"></rect>
-        <g fill="#fff">
-            <circle class="scene-star" cx="180" cy="80" r="1.4"></circle>
-            <circle class="scene-star" cx="340" cy="150" r="1"></circle>
-            <circle class="scene-star" cx="520" cy="60" r="1.2"></circle>
-            <circle class="scene-star" cx="760" cy="110" r="0.9"></circle>
-            <circle class="scene-star" cx="1010" cy="70" r="1.3"></circle>
-            <circle class="scene-star" cx="1180" cy="160" r="1"></circle>
-            <circle class="scene-star" cx="1320" cy="90" r="1.4"></circle>
-            <circle class="scene-star" cx="90" cy="210" r="0.8"></circle>
-            <circle class="scene-star" cx="1260" cy="240" r="0.8"></circle>
+        <g class="scene-stars" fill="#fff">
+            <circle cx="180" cy="80" r="1.4"></circle>
+            <circle cx="520" cy="60" r="1.2"></circle>
+            <circle cx="1010" cy="70" r="1.3"></circle>
+            <circle cx="1320" cy="90" r="1.4"></circle>
+            <circle cx="1260" cy="240" r="0.8"></circle>
+        </g>
+        <g class="scene-stars" fill="#fff">
+            <circle cx="340" cy="150" r="1"></circle>
+            <circle cx="760" cy="110" r="0.9"></circle>
+            <circle cx="1180" cy="160" r="1"></circle>
+            <circle cx="90" cy="210" r="0.8"></circle>
         </g>
         <circle class="scene-halo" cx="930" cy="612" r="260" fill="url(#scene-sun-glow)" opacity="0.7"></circle>
         <circle cx="930" cy="640" r="64" fill="#fff0d2"></circle>
@@ -4399,14 +4633,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         <path d="M0 640 L90 612 L210 650 L330 596 L440 640 L560 618 L680 664 L780 640 L900 676 L1040 630 L1160 668 L1290 620 L1440 650 L1440 712 L0 712 Z" fill="#4a3b6a"></path>
         <path d="M0 690 L140 660 L260 684 L400 650 L520 690 L1000 694 L1120 662 L1260 684 L1440 664 L1440 720 L0 720 Z" fill="#26234a"></path>
         <rect y="712" width="1440" height="188" fill="url(#scene-water)"></rect>
-        <g fill="#fff3dc">
-            <rect class="scene-glint" x="870" y="726" width="120" height="3" rx="1.5"></rect>
-            <rect class="scene-glint" x="890" y="744" width="84" height="2.5" rx="1.2"></rect>
-            <rect class="scene-glint" x="850" y="764" width="160" height="2" rx="1"></rect>
-            <rect class="scene-glint" x="900" y="786" width="62" height="2" rx="1"></rect>
-            <rect class="scene-glint" x="866" y="810" width="128" height="1.6" rx="0.8"></rect>
-            <rect class="scene-glint" x="910" y="838" width="44" height="1.6" rx="0.8"></rect>
-            <rect class="scene-glint" x="820" y="866" width="210" height="1.4" rx="0.7"></rect>
+        <g class="scene-glints" fill="#fff3dc">
+            <rect x="870" y="726" width="120" height="3" rx="1.5"></rect>
+            <rect x="850" y="764" width="160" height="2" rx="1"></rect>
+            <rect x="866" y="810" width="128" height="1.6" rx="0.8"></rect>
+            <rect x="820" y="866" width="210" height="1.4" rx="0.7"></rect>
+        </g>
+        <g class="scene-glints" fill="#fff3dc">
+            <rect x="890" y="744" width="84" height="2.5" rx="1.2"></rect>
+            <rect x="900" y="786" width="62" height="2" rx="1"></rect>
+            <rect x="910" y="838" width="44" height="1.6" rx="0.8"></rect>
         </g>
         <path d="M0 760 C200 748 360 772 560 760 C760 748 980 776 1180 760 C1300 752 1380 756 1440 760" stroke="#ffd2b8" stroke-opacity="0.18" stroke-width="1.2" fill="none"></path>
         <path d="M0 820 C240 808 420 832 660 820 C880 808 1080 836 1300 820 C1360 816 1410 818 1440 820" stroke="#ffd2b8" stroke-opacity="0.12" stroke-width="1" fill="none"></path>
@@ -4462,6 +4698,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             appStore.addEventListener("change", this.onStoreChange);
             this.render();
             window.addEventListener("keydown", this.onKeyDown);
+            window.addEventListener("dragover", this.onFileDragOver);
+            window.addEventListener("drop", this.onFileDrop);
             ["pointermove", "pointerdown", "keydown", "wheel", "focusin"].forEach((type) => {
               window.addEventListener(type, this.wake, { passive: true, capture: true });
             });
@@ -4473,6 +4711,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         disconnectedCallback() {
           appStore.removeEventListener("change", this.onStoreChange);
           window.removeEventListener("keydown", this.onKeyDown);
+          window.removeEventListener("dragover", this.onFileDragOver);
+          window.removeEventListener("drop", this.onFileDrop);
           ["pointermove", "pointerdown", "keydown", "wheel", "focusin"].forEach((type) => {
             window.removeEventListener(type, this.wake, true);
           });
@@ -4530,7 +4770,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
          * only records its time; the one pending timer checks it when it fires.
          */
         wake = () => {
-          document.body.classList.remove("is-idle");
+          if (document.body.classList.contains("is-idle")) document.body.classList.remove("is-idle");
           this.lastActivity = Date.now();
           if (!appStore.state.settings.wallpaper.idleHide) {
             window.clearTimeout(this.idleTimer);
@@ -4551,6 +4791,24 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             return;
           }
           document.body.classList.add("is-idle");
+        };
+        /**
+         * A photo or video dropped on the home screen becomes the wallpaper, instead
+         * of Chrome leaving the new tab to open the file. The settings window handles
+         * its own drops first.
+         */
+        onFileDragOver = (event) => {
+          if (event.defaultPrevented || !event.dataTransfer?.types.includes("Files")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = hasOpenLayer() ? "none" : "copy";
+        };
+        onFileDrop = (event) => {
+          if (event.defaultPrevented || !event.dataTransfer?.types.includes("Files")) return;
+          event.preventDefault();
+          if (hasOpenLayer()) return;
+          const files = [...event.dataTransfer.files];
+          const file = files.find((item) => mediaKindOf(item)) ?? files[0];
+          if (file) void useLocalWallpaper(file).catch(notifyError);
         };
         onWallpaperTone = (event) => {
           this.wallpaperTone = event.detail.tone;

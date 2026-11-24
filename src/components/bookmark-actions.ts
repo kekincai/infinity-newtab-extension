@@ -2,7 +2,7 @@ import { appStore } from '../core/store';
 import type { Bookmark, RecentSite } from '../core/types';
 import { ROOT_FOLDER, cleanText, compareBookmarks, isAddressLike, siteLabel } from '../core/utils';
 import { ICONS } from './icons';
-import { type MenuAnchor, confirmAction, notifyError, openMenu, promptText } from './ui-layer';
+import { type MenuAnchor, type MenuItem, confirmAction, notifyError, openMenu, promptText } from './ui-layer';
 
 export { ROOT_FOLDER };
 
@@ -45,9 +45,22 @@ export function openBookmarkDialog(source: HTMLElement, detail: BookmarkDialogDe
 
 export function bookmarkMenu(source: HTMLElement, bookmark: Bookmark, at: MenuAnchor): void {
     const destinations = appStore.state.folders.filter((folder) => folder !== bookmark.folder);
+    // Reordering within the folder without a mouse (the menu opens with Shift+F10 or the context key too).
+    const siblings = bookmarksIn(bookmark.folder);
+    const index = siblings.findIndex((item) => String(item.id) === String(bookmark.id));
+    const reorder: MenuItem[] = [
+        ...(index > 0 ? [
+            { label: '上移', icon: ICONS.arrowUp, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index - 1].id) },
+            ...(index > 1 ? [{ label: '移到最前', icon: ICONS.toTop, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[0].id) }] : [])
+        ] : []),
+        ...(index >= 0 && index < siblings.length - 1
+            ? [{ label: '下移', icon: ICONS.arrowDown, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index + 2]?.id) }]
+            : [])
+    ];
     openMenu([
         { label: '在新标签页打开', icon: ICONS.open, action: () => openInNewTab(bookmark.url) },
         { label: '编辑…', icon: ICONS.edit, action: () => openBookmarkDialog(source, { bookmark }) },
+        ...(reorder.length ? [{ separator: true } as const, ...reorder] : []),
         ...(destinations.length ? [
             { separator: true } as const,
             { heading: '移动到文件夹' } as const,
@@ -65,8 +78,15 @@ export function siteMenu(source: HTMLElement, site: RecentSite, at: MenuAnchor):
     ], at);
 }
 
-export async function moveBookmark(id: Bookmark['id'], folder: string, targetId?: Bookmark['id']): Promise<void> {
-    try { await appStore.moveBookmark(id, folder, targetId); } catch (error) { notifyError(error); }
+/** Moves a bookmark in front of another (or to the end of the folder); resolves false if saving failed. */
+export async function moveBookmark(id: Bookmark['id'], folder: string, targetId?: Bookmark['id']): Promise<boolean> {
+    try {
+        await appStore.moveBookmark(id, folder, targetId);
+        return true;
+    } catch (error) {
+        notifyError(error);
+        return false;
+    }
 }
 
 export async function deleteBookmark(bookmark: Bookmark): Promise<void> {

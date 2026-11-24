@@ -86,6 +86,9 @@ export class BookmarkDialog extends HTMLElement {
         backdrop.addEventListener('pointerdown', (event) => { if (event.target === backdrop) this.close(); });
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
+            const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+            // A second Enter while the first save is still writing would store the bookmark twice.
+            if (submit.disabled) return;
             const data = new FormData(form);
             const input = {
                 url: String(data.get('url') ?? ''),
@@ -100,12 +103,17 @@ export class BookmarkDialog extends HTMLElement {
                 urlInput.focus();
                 return;
             }
+            submit.disabled = true;
+            form.setAttribute('aria-busy', 'true');
             try {
                 if (this.editing) await appStore.updateBookmark(this.editing.id, input);
                 else await appStore.addBookmark(input);
                 this.close();
             } catch (saveError) {
                 notifyError(saveError, '保存失败');
+            } finally {
+                submit.disabled = false;
+                form.removeAttribute('aria-busy');
             }
         });
         this.releaseLayer = pushLayer(form, () => this.close());

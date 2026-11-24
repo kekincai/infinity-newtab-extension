@@ -104,10 +104,10 @@ export class WallpaperSurface extends StoreElement {
      * window is cropped by the surface, not by the layer, so zooming out can
      * bring it back.
      */
-    private layoutMedia(): boolean {
+    private layoutMedia(blur = appStore.state.settings.wallpaper.blur): boolean {
         const media = this.querySelector<HTMLElement>('.wallpaper-media');
         if (!media) return false;
-        const bleed = appStore.state.settings.wallpaper.blur + BLEED;
+        const bleed = blur + BLEED;
         const { width, height } = this.naturalSize;
         const key = `${innerWidth}x${innerHeight}|${width}x${height}|${bleed}`;
         if (key === this.layoutKey) return false;
@@ -120,6 +120,32 @@ export class WallpaperSurface extends StoreElement {
         media.style.height = `${h}px`;
         this.dataset.bleed = String(bleed);
         return true;
+    }
+
+    /**
+     * Shows a blur the settings slider is still being dragged through. The margin
+     * past the window grows with it, so a blurred edge never shows the pale
+     * backdrop, and releasing the slider lands without the picture jumping.
+     */
+    previewBlur(blur: number): void {
+        this.style.setProperty('--wallpaper-blur', `${blur}px`);
+        if (this.layoutMedia(blur)) this.framer.show(appStore.state.settings.wallpaper.framing);
+    }
+
+    /** Darkens live while the slider moves, following it without the usual easing. */
+    previewOverlay(overlay: number): void {
+        this.classList.add('is-adjusting');
+        this.style.setProperty('--wallpaper-overlay', String(overlay / 100));
+    }
+
+    /** Springs the picture back to the default framing; the settled framing is saved as usual. */
+    resetFraming(): void {
+        this.framer.reset();
+    }
+
+    /** The slider was released: the eased dimming change comes back. */
+    endPreview(): void {
+        this.classList.remove('is-adjusting');
     }
 
     /** The saved framing is window-independent, so a resized window shows the same part of the picture. */
@@ -326,18 +352,20 @@ const SCENE = `
             <stop offset="1" stop-color="#b47a8e"></stop>
         </linearGradient>
     </defs>
-    <g class="scene-kb">
+    <g>
         <rect width="1440" height="720" fill="url(#scene-sky)"></rect>
-        <g fill="#fff">
-            <circle class="scene-star" cx="180" cy="80" r="1.4"></circle>
-            <circle class="scene-star" cx="340" cy="150" r="1"></circle>
-            <circle class="scene-star" cx="520" cy="60" r="1.2"></circle>
-            <circle class="scene-star" cx="760" cy="110" r="0.9"></circle>
-            <circle class="scene-star" cx="1010" cy="70" r="1.3"></circle>
-            <circle class="scene-star" cx="1180" cy="160" r="1"></circle>
-            <circle class="scene-star" cx="1320" cy="90" r="1.4"></circle>
-            <circle class="scene-star" cx="90" cy="210" r="0.8"></circle>
-            <circle class="scene-star" cx="1260" cy="240" r="0.8"></circle>
+        <g class="scene-stars" fill="#fff">
+            <circle cx="180" cy="80" r="1.4"></circle>
+            <circle cx="520" cy="60" r="1.2"></circle>
+            <circle cx="1010" cy="70" r="1.3"></circle>
+            <circle cx="1320" cy="90" r="1.4"></circle>
+            <circle cx="1260" cy="240" r="0.8"></circle>
+        </g>
+        <g class="scene-stars" fill="#fff">
+            <circle cx="340" cy="150" r="1"></circle>
+            <circle cx="760" cy="110" r="0.9"></circle>
+            <circle cx="1180" cy="160" r="1"></circle>
+            <circle cx="90" cy="210" r="0.8"></circle>
         </g>
         <circle class="scene-halo" cx="930" cy="612" r="260" fill="url(#scene-sun-glow)" opacity="0.7"></circle>
         <circle cx="930" cy="640" r="64" fill="#fff0d2"></circle>
@@ -355,14 +383,16 @@ const SCENE = `
         <path d="M0 640 L90 612 L210 650 L330 596 L440 640 L560 618 L680 664 L780 640 L900 676 L1040 630 L1160 668 L1290 620 L1440 650 L1440 712 L0 712 Z" fill="#4a3b6a"></path>
         <path d="M0 690 L140 660 L260 684 L400 650 L520 690 L1000 694 L1120 662 L1260 684 L1440 664 L1440 720 L0 720 Z" fill="#26234a"></path>
         <rect y="712" width="1440" height="188" fill="url(#scene-water)"></rect>
-        <g fill="#fff3dc">
-            <rect class="scene-glint" x="870" y="726" width="120" height="3" rx="1.5"></rect>
-            <rect class="scene-glint" x="890" y="744" width="84" height="2.5" rx="1.2"></rect>
-            <rect class="scene-glint" x="850" y="764" width="160" height="2" rx="1"></rect>
-            <rect class="scene-glint" x="900" y="786" width="62" height="2" rx="1"></rect>
-            <rect class="scene-glint" x="866" y="810" width="128" height="1.6" rx="0.8"></rect>
-            <rect class="scene-glint" x="910" y="838" width="44" height="1.6" rx="0.8"></rect>
-            <rect class="scene-glint" x="820" y="866" width="210" height="1.4" rx="0.7"></rect>
+        <g class="scene-glints" fill="#fff3dc">
+            <rect x="870" y="726" width="120" height="3" rx="1.5"></rect>
+            <rect x="850" y="764" width="160" height="2" rx="1"></rect>
+            <rect x="866" y="810" width="128" height="1.6" rx="0.8"></rect>
+            <rect x="820" y="866" width="210" height="1.4" rx="0.7"></rect>
+        </g>
+        <g class="scene-glints" fill="#fff3dc">
+            <rect x="890" y="744" width="84" height="2.5" rx="1.2"></rect>
+            <rect x="900" y="786" width="62" height="2" rx="1"></rect>
+            <rect x="910" y="838" width="44" height="1.6" rx="0.8"></rect>
         </g>
         <path d="M0 760 C200 748 360 772 560 760 C760 748 980 776 1180 760 C1300 752 1380 756 1440 760" stroke="#ffd2b8" stroke-opacity="0.18" stroke-width="1.2" fill="none"></path>
         <path d="M0 820 C240 808 420 832 660 820 C880 808 1080 836 1300 820 C1360 816 1410 818 1440 820" stroke="#ffd2b8" stroke-opacity="0.12" stroke-width="1" fill="none"></path>

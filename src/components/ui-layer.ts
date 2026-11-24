@@ -141,7 +141,9 @@ export function notify(message: string, kind: ToastKind = 'info', timeout = kind
     region.append(toast);
     window.setTimeout(() => {
         toast.classList.add('is-leaving');
-        window.setTimeout(() => toast.remove(), 220);
+        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+        // Reduced motion (or a tab in the background) may skip the transition; the toast still goes.
+        window.setTimeout(() => toast.remove(), 260);
     }, timeout);
 }
 
@@ -173,8 +175,12 @@ export function openMenu(items: MenuItem[], at: MenuAnchor): void {
     const anchor = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
     const point = anchor ? { x: anchor.left, y: anchor.bottom + 6 } : at as { x: number; y: number };
     const { width, height } = menu.getBoundingClientRect();
+    const flipsLeft = point.x > innerWidth - width - 8;
+    const flipsUp = point.y + height > innerHeight - 8;
     menu.style.left = `${Math.max(8, Math.min(point.x, innerWidth - width - 8))}px`;
-    menu.style.top = `${point.y + height > innerHeight - 8 ? Math.max(8, point.y - height - (anchor ? anchor.height + 12 : 0)) : point.y}px`;
+    menu.style.top = `${flipsUp ? Math.max(8, point.y - height - (anchor ? anchor.height + 12 : 0)) : point.y}px`;
+    // The menu grows out of the corner nearest the pointer or anchor, whichever way it was flipped.
+    menu.style.transformOrigin = `${flipsLeft ? 'right' : 'left'} ${flipsUp ? 'bottom' : 'top'}`;
 
     let release = () => {};
     const close = () => {
@@ -216,7 +222,9 @@ export function openMenu(items: MenuItem[], at: MenuAnchor): void {
  */
 export function afterMotion(element: Element, run: () => void): void {
     requestAnimationFrame(() => {
-        const running = element.getAnimations({ subtree: true });
+        // A busy spinner loops forever; only motion that ends is worth waiting for.
+        const running = element.getAnimations({ subtree: true })
+            .filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity);
         if (!running.length) {
             run();
             return;

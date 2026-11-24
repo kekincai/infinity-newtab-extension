@@ -5,6 +5,8 @@ import type { AppSettings } from '../core/types';
 import { escapeHtml } from '../core/utils';
 import { mediaKindOf, resetWallpaper, useLocalWallpaper, useOnlineWallpaper, wallpaperLabel } from '../core/wallpaper-service';
 import { StoreElement } from './base';
+import { isDefault } from './wallpaper-framing';
+import type { WallpaperSurface } from './wallpaper-surface';
 import { formatDate } from './dashboard-header';
 import { isHdrDisplay, onHdrDisplayChange } from './hdr-glass';
 import { ICONS, SETTINGS_GLYPHS } from './icons';
@@ -149,17 +151,19 @@ export class SettingsPanel extends StoreElement {
 
     private wallpaperPane({ wallpaper }: AppSettings): string {
         return pane('wallpaper', '壁纸', `
-            <div class="settings-group wallpaper-card setting-row" data-search="壁纸 视频 图片 照片 在线 选择 拖放 粘贴 恢复默认">
+            <div class="settings-group wallpaper-card setting-row" data-search="壁纸 视频 图片 照片 在线 选择 拖放 粘贴 恢复默认 取景 缩放 重置">
                 <div class="wallpaper-preview" aria-hidden="true"><div class="wallpaper-preview-media"></div><span class="wallpaper-duration" hidden></span></div>
                 <div class="wallpaper-info">
                     <strong class="wallpaper-name"></strong>
                     <span class="row-sub wallpaper-meta"></span>
                     <div class="wallpaper-actions">
-                        <label class="pill-button primary upload-wallpaper">选择视频或图片…<input type="file" accept="image/*,video/*" hidden></label>
+                        <span class="file-pick upload-wallpaper"><button class="pill-button primary" type="button">选择视频或图片…</button><input type="file" accept="image/*,video/*" hidden></span>
                         <button class="pill-button random-wallpaper" type="button">换一个在线壁纸</button>
                         <button class="pill-button reset-wallpaper" type="button">恢复默认</button>
+                        <button class="pill-button reset-framing" type="button" hidden>重置取景</button>
                     </div>
                     <span class="row-sub wallpaper-hint">也可以把照片或视频拖到这里，或复制后按 ${PASTE_LABEL} 粘贴</span>
+                    <span class="row-sub framing-hint">在主屏空白处双指捏合缩放、双指滑动或按住拖动来调整取景，双击空白处复原</span>
                 </div>
             </div>
             ${group('显示', `
@@ -184,7 +188,7 @@ export class SettingsPanel extends StoreElement {
             `)}
             ${group('备份', `
                 ${infoRow('导出备份', '书签、设置和本地壁纸，一个 JSON 文件', '<button class="pill-button export-data" type="button">导出…</button>')}
-                ${infoRow('从备份恢复', '会覆盖当前数据，建议先导出一份', '<label class="pill-button import-data">导入…<input type="file" accept="application/json,.json" hidden></label>')}
+                ${infoRow('从备份恢复', '会覆盖当前数据，建议先导出一份', '<span class="file-pick import-data"><button class="pill-button" type="button">导入…</button><input type="file" accept="application/json,.json" hidden></span>')}
                 ${toggleRow('backupReminder', '每月提醒我备份')}
             `)}
             ${group('', `
@@ -247,12 +251,12 @@ export class SettingsPanel extends StoreElement {
                 if (output) output.textContent = `${input.value}${input.dataset.unit ?? ''}`;
                 syncSlider(input);
                 // Preview live; persisted on release to spare sync write quota.
-                const [property, value] = input.name === 'blur'
-                    ? ['--wallpaper-blur', `${input.value}px`]
-                    : ['--wallpaper-overlay', String(Number(input.value) / 100)];
-                document.querySelector<HTMLElement>('wallpaper-surface')?.style.setProperty(property, value);
+                const surface = document.querySelector<WallpaperSurface>('wallpaper-surface');
+                if (input.name === 'blur') surface?.previewBlur(Number(input.value));
+                else surface?.previewOverlay(Number(input.value));
             });
             input.addEventListener('change', () => {
+                document.querySelector<WallpaperSurface>('wallpaper-surface')?.endPreview();
                 void appStore.updateSettings('wallpaper', { [input.name]: Number(input.value) }).catch(notifyError);
             });
         });
@@ -260,7 +264,11 @@ export class SettingsPanel extends StoreElement {
         upload.addEventListener('change', () => {
             const file = upload.files?.[0];
             upload.value = '';
-            if (file) void this.withBusy(upload.closest('label')!, () => useLocalWallpaper(file));
+            if (file) this.useWallpaperFile(file);
+        });
+        // A real button opens each hidden file picker, so both can be reached from the keyboard.
+        this.querySelectorAll<HTMLElement>('.file-pick').forEach((pick) => {
+            pick.querySelector('button')?.addEventListener('click', () => pick.querySelector<HTMLInputElement>('input[type="file"]')?.click());
         });
         this.querySelector('.random-wallpaper')?.addEventListener('click', (event) => void this.withBusy(event.currentTarget as HTMLElement, useOnlineWallpaper));
         const windowElement = this.querySelector<HTMLElement>('.settings-window')!;
@@ -268,6 +276,7 @@ export class SettingsPanel extends StoreElement {
         windowElement.addEventListener('dragleave', this.onDragLeave);
         windowElement.addEventListener('drop', this.onDrop);
         this.querySelector('.reset-wallpaper')?.addEventListener('click', () => void resetWallpaper().catch(notifyError));
+        this.querySelector('.reset-framing')?.addEventListener('click', () => document.querySelector<WallpaperSurface>('wallpaper-surface')?.resetFraming());
         this.querySelector('.export-data')?.addEventListener('click', () => void backupService.createBackup().catch(notifyError));
         this.querySelector<HTMLInputElement>('.import-data input')?.addEventListener('change', (event) => {
             const input = event.target as HTMLInputElement;
@@ -297,11 +306,16 @@ export class SettingsPanel extends StoreElement {
 
     /** Slides each visible segmented control's thumb under its selected option. */
     private placeSegmentThumbs(): void {
-        this.querySelectorAll<HTMLElement>('[data-segment]').forEach((groupElement) => {
+        // Every size is read before anything is written, so the layout is worked out once rather than once per control.
+        const placements = [...this.querySelectorAll<HTMLElement>('[data-segment]')].map((groupElement) => {
             const active = groupElement.querySelector<HTMLElement>('.is-active');
-            if (!active || !groupElement.offsetWidth) return;
-            groupElement.style.setProperty('--thumb-x', `${active.offsetLeft}px`);
-            groupElement.style.setProperty('--thumb-width', `${active.offsetWidth}px`);
+            return active && groupElement.offsetWidth ? { groupElement, x: active.offsetLeft, width: active.offsetWidth } : null;
+        });
+        placements.forEach((placement) => {
+            if (!placement) return;
+            const { groupElement } = placement;
+            groupElement.style.setProperty('--thumb-x', `${placement.x}px`);
+            groupElement.style.setProperty('--thumb-width', `${placement.width}px`);
             groupElement.classList.toggle('has-thumb', true);
             // The first placement lands without sliding in from the left edge.
             if (!groupElement.classList.contains('is-placed')) requestAnimationFrame(() => groupElement.classList.add('is-placed'));
@@ -419,6 +433,8 @@ export class SettingsPanel extends StoreElement {
         this.placeSegmentThumbs();
         const reset = this.querySelector<HTMLElement>('.reset-wallpaper');
         if (reset) reset.hidden = wallpaper.type === 'gradient';
+        const resetFraming = this.querySelector<HTMLElement>('.reset-framing');
+        if (resetFraming) resetFraming.hidden = isDefault(wallpaper.framing);
         if (this.openState) void this.refreshPreview();
     }
 
@@ -426,6 +442,7 @@ export class SettingsPanel extends StoreElement {
         if (control.classList.contains('is-busy')) return;
         control.classList.add('is-busy');
         control.setAttribute('aria-busy', 'true');
+        control.setAttribute('aria-disabled', 'true');
         try {
             await task();
         } catch (error) {
@@ -433,6 +450,7 @@ export class SettingsPanel extends StoreElement {
         } finally {
             control.classList.remove('is-busy');
             control.removeAttribute('aria-busy');
+            control.removeAttribute('aria-disabled');
         }
     }
 
@@ -454,7 +472,7 @@ export class SettingsPanel extends StoreElement {
     }
 
     private useWallpaperFile(file: File): void {
-        void this.withBusy(this.querySelector<HTMLElement>('.upload-wallpaper')!, () => useLocalWallpaper(file));
+        void this.withBusy(this.querySelector<HTMLElement>('.upload-wallpaper button')!, () => useLocalWallpaper(file));
     }
 
     /**
@@ -502,6 +520,8 @@ export class SettingsPanel extends StoreElement {
             void this.withBusy(this.querySelector<HTMLElement>('.random-wallpaper')!, useOnlineWallpaper);
             return;
         }
+        // Still reading the last file: a second picker would only have its choice dropped.
+        if (this.querySelector('.upload-wallpaper button')?.classList.contains('is-busy')) return;
         const input = this.querySelector<HTMLInputElement>('.upload-wallpaper input')!;
         input.accept = kind === 'video' ? 'video/*' : 'image/*';
         input.click();

@@ -10,10 +10,12 @@ const PINCH_UNITS = 100;
 const MAX_PINCH_STEP = 30;
 /** No pinch or scroll for this long ends the gesture; the framing then settles and is saved. */
 const GESTURE_END_MS = 140;
+/** A mouse press moves this far before it counts as dragging the picture rather than a click. */
+const DRAG_THRESHOLD = 4;
 /** How far past the limits a pinch can stretch, as log-scale headroom: 35% over the top, 25% under the whole picture. */
 const STRETCH_OVER = Math.log(1.35);
 const STRETCH_UNDER = Math.log(1 / 0.75);
-/** A slightly underdamped spring, so a settle ends with a hint of bounce. */
+/** A spring just short of critical damping: it settles quickly and without a visible bounce. */
 const STIFFNESS = 260;
 const DAMPING = 30;
 
@@ -50,6 +52,13 @@ export class WallpaperFramer {
     private frame = 0;
     private lastTime = 0;
     private interacting = false;
+    /** Size of the last two-finger scroll step, to tell the trackpad's coasting (shrinking steps) from the fingers. */
+    private lastPan = 0;
+    /** Coasting carried the picture past an edge: the rest of the coast is swallowed while it springs back. */
+    private coasting = false;
+    private coastTimer = 0;
+    /** A mouse press on an empty part of the screen that may turn into a drag. */
+    private press: { id: number; target: Element; x: number; y: number; dragging: boolean } | null = null;
     private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
     constructor(private readonly surface: HTMLElement, private readonly callbacks: FramingCallbacks) {}
@@ -57,12 +66,21 @@ export class WallpaperFramer {
     connect(): void {
         window.addEventListener('wheel', this.onWheel, { passive: false, capture: true });
         document.addEventListener('dblclick', this.onDoubleClick);
+        document.addEventListener('pointerdown', this.onPointerDown);
     }
 
     disconnect(): void {
         window.removeEventListener('wheel', this.onWheel, true);
         document.removeEventListener('dblclick', this.onDoubleClick);
+        document.removeEventListener('pointerdown', this.onPointerDown);
+        this.endPress();
+        window.clearTimeout(this.coastTimer);
         this.stop();
+    }
+
+    /** Springs back to the default framing (the settings window's “重置取景”). */
+    reset(): void {
+        if (!isDefault(this.framing)) this.settleTo({ scale: 1, x: 0, y: 0 });
     }
 
     /** True from the first pinch or scroll until the spring has settled. */
@@ -105,6 +123,12 @@ export class WallpaperFramer {
         if (!pinch && (isControl(event.target) || !this.canPan())) return;
         event.preventDefault();
         event.stopPropagation();
+        if (pinch) {
+            this.coasting = false;
+            this.lastPan = 0;
+        } else if (this.coastsOutward(event)) {
+            return;
+        }
         this.beginGesture();
         if (pinch) {
             const step = clamp(event.deltaY, -MAX_PINCH_STEP, MAX_PINCH_STEP);
@@ -115,8 +139,109 @@ export class WallpaperFramer {
             this.panBy(-event.deltaX, -event.deltaY);
         }
         this.apply();
-        this.gestureTimer = window.setTimeout(this.endGesture, GESTURE_END_MS);
+        this.gestureTimer = window.setTimeout(() => {
+            this.lastPan = 0;
+            this.endGesture();
+        }, GESTURE_END_MS);
     };
+
+    /**
+     * Chrome reports no gesture phases, so a flick's coasting arrives as ordinary
+     * scroll steps that shrink one after another, for up to a second or two. Once
+     * those steps carry the picture further past an edge, the spring starts at
+     * once (as on iOS) and the remaining coast is swallowed, instead of the
+     * picture hanging stretched until the coasting ends.
+     */
+    private coastsOutward(event: WheelEvent): boolean {
+        const size = Math.hypot(event.deltaX, event.deltaY);
+        const shrinking = size > 0 && size <= this.lastPan * 1.05;
+        this.lastPan = size;
+        if (this.coasting) {
+            // A step that grows again is the fingers back on the trackpad.
+            if (!shrinking) {
+                this.coasting = false;
+                window.clearTimeout(this.coastTimer);
+                return false;
+            }
+            this.restartCoastTimer();
+            return true;
+        }
+        if (!this.interacting || !shrinking || !this.pushesOutward(-event.deltaX, -event.deltaY)) return false;
+        this.coasting = true;
+        this.restartCoastTimer();
+        window.clearTimeout(this.gestureTimer);
+        this.endGesture();
+        return true;
+    }
+
+    private restartCoastTimer(): void {
+        window.clearTimeout(this.coastTimer);
+        this.coastTimer = window.setTimeout(() => {
+            this.coasting = false;
+            this.lastPan = 0;
+        }, GESTURE_END_MS);
+    }
+
+    /** True when the picture is already past an edge and this step would take it further. */
+    private pushesOutward(dx: number, dy: number): boolean {
+        const [rangeX, rangeY] = this.ranges(this.view.scale);
+        const { x, y } = this.view;
+        return (x > rangeX.max + 0.5 && dx > 0) || (x < rangeX.min - 0.5 && dx < 0)
+            || (y > rangeY.max + 0.5 && dy > 0) || (y < rangeY.min - 0.5 && dy < 0);
+    }
+
+    /**
+     * With a mouse, pressing on an empty part of the screen and dragging moves
+     * the picture (once it is larger than the window). The press only becomes a
+     * drag after a few pixels, so clicks and double-clicks keep their meaning.
+     */
+    private readonly onPointerDown = (event: PointerEvent): void => {
+        if (event.pointerType !== 'mouse' || event.button !== 0 || this.press || hasOpenLayer() || isControl(event.target)) return;
+        if (!this.canPan()) return;
+        this.press = { id: event.pointerId, target: event.target as Element, x: event.clientX, y: event.clientY, dragging: false };
+        window.addEventListener('pointermove', this.onPointerMove);
+        window.addEventListener('pointerup', this.onPointerUp);
+        window.addEventListener('pointercancel', this.onPointerUp);
+        window.addEventListener('blur', this.onPointerUp);
+    };
+
+    private readonly onPointerMove = (event: PointerEvent): void => {
+        const press = this.press;
+        if (!press || event.pointerId !== press.id) return;
+        const dx = event.clientX - press.x;
+        const dy = event.clientY - press.y;
+        if (!press.dragging) {
+            if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+            press.dragging = true;
+            this.beginGesture();
+            // Keeps the drag when the pointer leaves the window, and stops text from being selected under it.
+            press.target.setPointerCapture?.(event.pointerId);
+            press.target.addEventListener('lostpointercapture', this.onPointerUp);
+            document.documentElement.classList.add('is-dragging-wallpaper');
+        }
+        press.x = event.clientX;
+        press.y = event.clientY;
+        this.panBy(dx, dy);
+        this.apply();
+    };
+
+    private readonly onPointerUp = (): void => {
+        const dragged = this.press?.dragging;
+        this.endPress();
+        if (dragged) this.endGesture();
+    };
+
+    private endPress(): void {
+        const press = this.press;
+        this.press = null;
+        window.removeEventListener('pointermove', this.onPointerMove);
+        window.removeEventListener('pointerup', this.onPointerUp);
+        window.removeEventListener('pointercancel', this.onPointerUp);
+        window.removeEventListener('blur', this.onPointerUp);
+        press?.target.removeEventListener('lostpointercapture', this.onPointerUp);
+        document.documentElement.classList.remove('is-dragging-wallpaper');
+        if (press?.dragging && press.target.hasPointerCapture?.(press.id)) press.target.releasePointerCapture(press.id);
+    }
 
     /** Double-clicking an empty part of the screen returns to the default framing. */
     private readonly onDoubleClick = (event: MouseEvent): void => {
