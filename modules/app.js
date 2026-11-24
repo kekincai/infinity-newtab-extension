@@ -3160,7 +3160,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   function isControl(target) {
     return target instanceof Element && Boolean(target.closest("a, button, input, label, select, textarea, [data-glass], bookmark-index, search-box, status-strip, dashboard-header, backup-toast, settings-panel, bookmark-dialog, .context-menu, .modal-backdrop"));
   }
-  var MAX_SCALE, SNAP, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, DRAG_THRESHOLD, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperFramer;
+  var MAX_SCALE, SNAP, PINCH_UNITS, MAX_PINCH_STEP, GESTURE_END_MS, STRETCH_OVER, STRETCH_UNDER, STIFFNESS, DAMPING, WallpaperFramer;
   var init_wallpaper_framing = __esm({
     "src/components/wallpaper-framing.ts"() {
       "use strict";
@@ -3170,7 +3170,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       PINCH_UNITS = 100;
       MAX_PINCH_STEP = 30;
       GESTURE_END_MS = 140;
-      DRAG_THRESHOLD = 4;
       STRETCH_OVER = Math.log(1.35);
       STRETCH_UNDER = Math.log(1 / 0.75);
       STIFFNESS = 260;
@@ -3197,19 +3196,14 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         /** Coasting carried the picture past an edge: the rest of the coast is swallowed while it springs back. */
         coasting = false;
         coastTimer = 0;
-        /** A mouse press on an empty part of the screen that may turn into a drag. */
-        press = null;
         reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
         connect() {
           window.addEventListener("wheel", this.onWheel, { passive: false, capture: true });
           document.addEventListener("dblclick", this.onDoubleClick);
-          document.addEventListener("pointerdown", this.onPointerDown);
         }
         disconnect() {
           window.removeEventListener("wheel", this.onWheel, true);
           document.removeEventListener("dblclick", this.onDoubleClick);
-          document.removeEventListener("pointerdown", this.onPointerDown);
-          this.endPress();
           window.clearTimeout(this.coastTimer);
           this.stop();
         }
@@ -3312,54 +3306,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const [rangeX, rangeY] = this.ranges(this.view.scale);
           const { x, y } = this.view;
           return x > rangeX.max + 0.5 && dx > 0 || x < rangeX.min - 0.5 && dx < 0 || y > rangeY.max + 0.5 && dy > 0 || y < rangeY.min - 0.5 && dy < 0;
-        }
-        /**
-         * With a mouse, pressing on an empty part of the screen and dragging moves
-         * the picture (once it is larger than the window). The press only becomes a
-         * drag after a few pixels, so clicks and double-clicks keep their meaning.
-         */
-        onPointerDown = (event) => {
-          if (event.pointerType !== "mouse" || event.button !== 0 || this.press || hasOpenLayer() || isControl(event.target)) return;
-          if (!this.canPan()) return;
-          this.press = { id: event.pointerId, target: event.target, x: event.clientX, y: event.clientY, dragging: false };
-          window.addEventListener("pointermove", this.onPointerMove);
-          window.addEventListener("pointerup", this.onPointerUp);
-          window.addEventListener("pointercancel", this.onPointerUp);
-          window.addEventListener("blur", this.onPointerUp);
-        };
-        onPointerMove = (event) => {
-          const press = this.press;
-          if (!press || event.pointerId !== press.id) return;
-          const dx = event.clientX - press.x;
-          const dy = event.clientY - press.y;
-          if (!press.dragging) {
-            if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
-            press.dragging = true;
-            this.beginGesture();
-            press.target.setPointerCapture?.(event.pointerId);
-            press.target.addEventListener("lostpointercapture", this.onPointerUp);
-            document.documentElement.classList.add("is-dragging-wallpaper");
-          }
-          press.x = event.clientX;
-          press.y = event.clientY;
-          this.panBy(dx, dy);
-          this.apply();
-        };
-        onPointerUp = () => {
-          const dragged = this.press?.dragging;
-          this.endPress();
-          if (dragged) this.endGesture();
-        };
-        endPress() {
-          const press = this.press;
-          this.press = null;
-          window.removeEventListener("pointermove", this.onPointerMove);
-          window.removeEventListener("pointerup", this.onPointerUp);
-          window.removeEventListener("pointercancel", this.onPointerUp);
-          window.removeEventListener("blur", this.onPointerUp);
-          press?.target.removeEventListener("lostpointercapture", this.onPointerUp);
-          document.documentElement.classList.remove("is-dragging-wallpaper");
-          if (press?.dragging && press.target.hasPointerCapture?.(press.id)) press.target.releasePointerCapture(press.id);
         }
         /** Double-clicking an empty part of the screen returns to the default framing. */
         onDoubleClick = (event) => {
@@ -3735,7 +3681,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                         <button class="pill-button reset-framing" type="button" hidden>\u91CD\u7F6E\u53D6\u666F</button>
                     </div>
                     <span class="row-sub wallpaper-hint">\u4E5F\u53EF\u4EE5\u628A\u7167\u7247\u6216\u89C6\u9891\u62D6\u5230\u8FD9\u91CC\uFF0C\u6216\u590D\u5236\u540E\u6309 ${PASTE_LABEL} \u7C98\u8D34</span>
-                    <span class="row-sub framing-hint">\u5728\u4E3B\u5C4F\u7A7A\u767D\u5904\u53CC\u6307\u634F\u5408\u7F29\u653E\u3001\u53CC\u6307\u6ED1\u52A8\u6216\u6309\u4F4F\u62D6\u52A8\u6765\u8C03\u6574\u53D6\u666F\uFF0C\u53CC\u51FB\u7A7A\u767D\u5904\u590D\u539F</span>
+                    <span class="row-sub framing-hint">\u5728\u4E3B\u5C4F\u7A7A\u767D\u5904\u53CC\u6307\u634F\u5408\u7F29\u653E\u3001\u53CC\u6307\u6ED1\u52A8\u6765\u8C03\u6574\u53D6\u666F\uFF0C\u53CC\u51FB\u7A7A\u767D\u5904\u590D\u539F</span>
                 </div>
             </div>
             ${group("\u663E\u793A", `

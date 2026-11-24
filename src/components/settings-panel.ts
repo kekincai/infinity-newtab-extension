@@ -163,7 +163,7 @@ export class SettingsPanel extends StoreElement {
                         <button class="pill-button reset-framing" type="button" hidden>重置取景</button>
                     </div>
                     <span class="row-sub wallpaper-hint">也可以把照片或视频拖到这里，或复制后按 ${PASTE_LABEL} 粘贴</span>
-                    <span class="row-sub framing-hint">在主屏空白处双指捏合缩放、双指滑动或按住拖动来调整取景，双击空白处复原</span>
+                    <span class="row-sub framing-hint">在主屏空白处双指捏合缩放、双指滑动来调整取景，双击空白处复原</span>
                 </div>
             </div>
             ${group('显示', `
