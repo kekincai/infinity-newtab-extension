@@ -3,31 +3,65 @@ import { escapeHtml, faviconUrl, truncate } from '../core/utils';
 import { StoreElement } from './base';
 import { ICONS } from './icons';
 import { hostOf } from './site-icon';
+import { notifyError } from './ui-layer';
 
-type Media = { id: number; title: string; host: string; icon: string; muted: boolean };
+type Media = { id: number; windowId: number; title: string; host: string; icon: string; muted: boolean };
 type Status = { media: Media | null; downloads: number[]; battery: { level: number; charging: boolean } | null };
+type BatteryEvents = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>;
 
-/** Top-right capsules that only appear while media plays, files download or the laptop runs on battery. */
+/**
+ * Top-right capsules that only appear while media plays, files download or the
+ * laptop runs on battery. Chrome and battery events drive it; nothing polls.
+ */
 export class StatusStrip extends StoreElement {
     protected readonly observedChanges = ['settings.layout'] as const;
-    private timer = 0;
     private status: Status = { media: null, downloads: [], battery: null };
+    private refreshTimer = 0;
+    private refreshToken = 0;
+    private battery: BatteryEvents | null = null;
 
     connectedCallback(): void {
         super.connectedCallback();
         void this.refresh();
-        this.timer = window.setInterval(() => void this.refresh(), 5000);
         document.addEventListener('visibilitychange', this.onVisibility);
+        chrome.tabs?.onUpdated?.addListener(this.onTabUpdated);
+        chrome.tabs?.onRemoved?.addListener(this.scheduleRefresh);
+        chrome.downloads?.onCreated?.addListener(this.scheduleRefresh);
+        chrome.downloads?.onChanged?.addListener(this.scheduleRefresh);
+        void navigator.getBattery?.().then((battery) => {
+            if (!this.isConnected) return;
+            this.battery = battery as unknown as BatteryEvents;
+            this.battery.addEventListener?.('levelchange', this.scheduleRefresh);
+            this.battery.addEventListener?.('chargingchange', this.scheduleRefresh);
+        }).catch(() => undefined);
     }
 
     disconnectedCallback(): void {
         super.disconnectedCallback();
-        window.clearInterval(this.timer);
+        window.clearTimeout(this.refreshTimer);
         document.removeEventListener('visibilitychange', this.onVisibility);
+        chrome.tabs?.onUpdated?.removeListener(this.onTabUpdated);
+        chrome.tabs?.onRemoved?.removeListener(this.scheduleRefresh);
+        chrome.downloads?.onCreated?.removeListener(this.scheduleRefresh);
+        chrome.downloads?.onChanged?.removeListener(this.scheduleRefresh);
+        this.battery?.removeEventListener?.('levelchange', this.scheduleRefresh);
+        this.battery?.removeEventListener?.('chargingchange', this.scheduleRefresh);
+        this.battery = null;
     }
 
     private readonly onVisibility = (): void => {
         if (document.visibilityState === 'visible') void this.refresh();
+    };
+
+    /** Only sound starting or stopping, muting, or the playing tab's title matter; page loads elsewhere do not. */
+    private readonly onTabUpdated = (tabId: number, change: { audible?: boolean; mutedInfo?: unknown; title?: string }): void => {
+        if ('audible' in change || 'mutedInfo' in change || ('title' in change && tabId === this.status.media?.id)) this.scheduleRefresh();
+    };
+
+    /** Bursts of events (a download starting fires several) collapse into one read. */
+    private readonly scheduleRefresh = (): void => {
+        window.clearTimeout(this.refreshTimer);
+        this.refreshTimer = window.setTimeout(() => void this.refresh(), 150);
     };
 
     protected handleStoreChange(): void {
@@ -36,6 +70,10 @@ export class StatusStrip extends StoreElement {
     }
 
     protected render(): void {
+        // A redraw replaces the buttons; whichever one had focus gets it back.
+        const focused = this.contains(document.activeElement)
+            ? ['media-open', 'media-mute', 'download-capsule'].find((name) => document.activeElement?.classList.contains(name))
+            : undefined;
         this.hidden = !appStore.state.settings.layout.showStatus;
         const { media, downloads, battery } = this.status;
         const muteLabel = media?.muted ? '取消静音' : '静音';
@@ -53,31 +91,48 @@ export class StatusStrip extends StoreElement {
                     <button class="media-mute" type="button" aria-label="${muteLabel}" title="${muteLabel}">${media.muted ? ICONS.muted : ICONS.speaker}</button>
                 </div>` : '',
             downloads.length ? `<button class="glass glass-dark capsule download-capsule" type="button" data-glass title="在文件夹中显示">${ICONS.download}<span>${downloads.length} 项下载中</span></button>` : '',
-            battery ? `<span data-glass class="glass glass-dark capsule battery-capsule ${battery.level <= 0.2 && !battery.charging ? 'is-low' : ''}" title="${battery.charging ? '正在充电' : '正在使用电池'}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ''
+            battery ? `<span data-glass class="glass glass-dark capsule battery-capsule ${battery.level <= 0.2 && !battery.charging ? 'is-low' : ''}" title="${battery.charging ? '正在充电' : '正在使用电池'}">${battery.charging ? ICONS.bolt : ICONS.battery}<span class="visually-hidden">${battery.charging ? '正在充电，电量' : '正在使用电池，电量'}</span><span>${Math.round(battery.level * 100)}%</span></span>` : ''
         ].join('');
+        if (focused) this.querySelector<HTMLElement>(`.${focused}`)?.focus();
         this.querySelector('.media-open')?.addEventListener('click', () => {
-            if (media) chrome.tabs.update(media.id, { active: true });
+            if (media) void showTab(media).catch(notifyError);
         });
         this.querySelector('.media-mute')?.addEventListener('click', () => {
-            if (!media) return;
-            void Promise.resolve(chrome.tabs.update(media.id, { muted: !media.muted })).finally(() => void this.refresh());
+            if (media) void this.toggleMute(media);
         });
         this.querySelector('.download-capsule')?.addEventListener('click', () => {
-            if (downloads[0] !== undefined) chrome.downloads.show(downloads[0]);
+            if (downloads[0] === undefined) return;
+            try {
+                chrome.downloads.show(downloads[0]);
+            } catch (error) {
+                notifyError(error);
+            }
         });
+    }
+
+    private async toggleMute(media: Media): Promise<void> {
+        try {
+            await chrome.tabs.update(media.id, { muted: !media.muted });
+        } catch (error) {
+            notifyError(error);
+        }
+        await this.refresh();
     }
 
     private async refresh(): Promise<void> {
         if (document.visibilityState === 'hidden' || this.hidden) return;
+        // Reads can overlap; only the latest one may paint.
+        const token = ++this.refreshToken;
         const [tabs, downloads, battery] = await Promise.all([
-            chrome.tabs?.query ? callbackResult<any[]>((done) => chrome.tabs.query({ audible: true }, done), []) : [],
-            chrome.downloads?.search ? callbackResult<any[]>((done) => chrome.downloads.search({ state: 'in_progress' }, done), []) : [],
+            settle<any[]>(() => chrome.tabs.query({ audible: true }), []),
+            settle<any[]>(() => chrome.downloads.search({ state: 'in_progress' }), []),
             readBattery()
         ]);
         const tab = tabs[0];
         const next: Status = {
             media: tab ? {
                 id: tab.id,
+                windowId: tab.windowId,
                 title: tab.title || '正在播放',
                 host: hostOf(tab.url ?? '') || '其他',
                 icon: tab.url ? faviconUrl(tab.url, 64) : '',
@@ -86,7 +141,7 @@ export class StatusStrip extends StoreElement {
             downloads: downloads.map((item) => item.id),
             battery
         };
-        if (JSON.stringify(next) === JSON.stringify(this.status)) return;
+        if (token !== this.refreshToken || JSON.stringify(next) === JSON.stringify(this.status)) return;
         this.status = next;
         this.render();
     }
@@ -104,12 +159,17 @@ async function readBattery(): Promise<Status['battery']> {
     }
 }
 
-function callbackResult<T>(start: (done: (result: T) => void) => void, fallback: T): Promise<T> {
-    return new Promise((resolve) => {
-        try {
-            start((result) => resolve(chrome.runtime.lastError ? fallback : result));
-        } catch {
-            resolve(fallback);
-        }
-    });
+/** The playing tab may sit in another window; that window comes to the front with it. */
+async function showTab(media: Media): Promise<void> {
+    await chrome.tabs.update(media.id, { active: true });
+    await chrome.windows?.update?.(media.windowId, { focused: true });
+}
+
+/** A capsule that cannot be read (an API missing, a call refused) simply stays away. */
+async function settle<T>(read: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+        return await read() ?? fallback;
+    } catch {
+        return fallback;
+    }
 }

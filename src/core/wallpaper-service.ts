@@ -4,6 +4,9 @@ import { appStore } from './store';
 import type { ResolvedTheme, WallpaperSettings } from './types';
 
 const ONLINE_WALLPAPER = 'https://www.dmoe.cc/random.php';
+/** A stalled download would otherwise keep the shuffle button busy forever. */
+const ONLINE_TIMEOUT_MS = 20000;
+const MAX_ONLINE_BYTES = 40 * 1024 * 1024;
 const SAMPLE_SIZE = 32;
 /** Above this average luminance the page switches to dark text. */
 const LIGHT_THRESHOLD = 0.58;
@@ -13,14 +16,24 @@ const LIGHT_THRESHOLD = 0.58;
  * the same picture instantly instead of re-hitting the online API.
  */
 export async function useOnlineWallpaper(): Promise<void> {
-    let response: Response;
+    let blob: Blob;
     try {
-        response = await fetch(`${ONLINE_WALLPAPER}?t=${Date.now()}`, { cache: 'no-store' });
-    } catch {
-        throw new Error('无法连接在线壁纸服务，请检查网络');
+        // No cookies and no referrer: the picture service learns nothing about the extension or the user.
+        const response = await fetch(`${ONLINE_WALLPAPER}?t=${Date.now()}`, {
+            cache: 'no-store',
+            credentials: 'omit',
+            referrerPolicy: 'no-referrer',
+            signal: AbortSignal.timeout(ONLINE_TIMEOUT_MS)
+        });
+        if (!response.ok) throw new Error(`在线壁纸服务暂时不可用（${response.status}）`);
+        if (Number(response.headers.get('content-length')) > MAX_ONLINE_BYTES) throw new Error('在线壁纸过大，已放弃下载');
+        blob = await response.blob();
+    } catch (error) {
+        if (error instanceof DOMException && error.name === 'TimeoutError') throw new Error('在线壁纸服务响应超时，请稍后再试');
+        if (error instanceof TypeError) throw new Error('无法连接在线壁纸服务，请检查网络');
+        throw error;
     }
-    if (!response.ok) throw new Error(`在线壁纸服务暂时不可用（${response.status}）`);
-    const blob = await response.blob();
+    if (blob.size > MAX_ONLINE_BYTES) throw new Error('在线壁纸过大，已放弃下载');
     if (!blob.type.startsWith('image/')) throw new Error('在线壁纸服务返回的不是图片');
     await validateLocalMedia(blob, 'image');
     await storeWallpaper(blob, 'image', 'online');
@@ -82,7 +95,7 @@ async function storeWallpaper(blob: Blob, kind: MediaKind, source: 'local' | 'on
             if (previous) await mediaStore.set(kind, previous);
             else await mediaStore.clear(kind);
         } catch (rollbackError) {
-            throw new Error(`${errorMessage(error)}；恢复原背景也失败：${errorMessage(rollbackError)}`);
+            throw new Error(`${errorMessage(error)}；恢复原背景也失败：${errorMessage(rollbackError)}`, { cause: error });
         }
         throw error;
     }
@@ -95,8 +108,7 @@ async function storeWallpaper(blob: Blob, kind: MediaKind, source: 'local' | 'on
  * colours stay out), averaged per corner in OKLab and lifted to pale, muted
  * tints, laid out as soft corner glows over a pale base.
  */
-export function backdropOf(source: CanvasImageSource): string {
-    const data = sample(source);
+export function backdropOf(data: Uint8ClampedArray | null): string {
     if (!data) return DEFAULT_BACKDROP;
     const ring = 4;
     const corners = Array.from({ length: 4 }, () => ({ l: 0, a: 0, b: 0, n: 0 }));
@@ -166,18 +178,26 @@ function oklab(red: number, green: number, blue: number): [number, number, numbe
     ];
 }
 
-function sample(source: CanvasImageSource): Uint8ClampedArray | null {
+/**
+ * The picture shrunk to a few pixels, read once and shared by `toneOf` and
+ * `backdropOf`; null when the frame cannot be read.
+ */
+export function samplePixels(source: CanvasImageSource): Uint8ClampedArray | null {
     const canvas = document.createElement('canvas');
     canvas.width = SAMPLE_SIZE;
     canvas.height = SAMPLE_SIZE;
     const context = canvas.getContext('2d', { willReadFrequently: true });
     if (!context) return null;
-    context.drawImage(source, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-    return context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+    try {
+        context.drawImage(source, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+        return context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+    } catch {
+        // An undecodable frame: the wallpaper still shows, with the default tone and backdrop.
+        return null;
+    }
 }
 
-export function toneOf(source: CanvasImageSource): ResolvedTheme {
-    const data = sample(source);
+export function toneOf(data: Uint8ClampedArray | null): ResolvedTheme {
     if (!data) return 'dark';
     let total = 0;
     for (let index = 0; index < data.length; index += 4) {
@@ -214,23 +234,21 @@ export async function validateLocalMedia(file: Blob, kind: MediaKind): Promise<v
     }
 }
 
-function waitForVideo(video: HTMLVideoElement): Promise<void> {
-    return new Promise((resolve, reject) => {
-        let timeout = 0;
-        const finish = (error?: Error) => {
-            window.clearTimeout(timeout);
-            video.removeEventListener('canplay', onReady);
-            video.removeEventListener('error', onError);
-            if (error) reject(error);
-            else resolve();
-        };
-        const onReady = () => finish();
-        const onError = () => finish(new Error('视频文件无法解码，背景没有更改'));
-        video.addEventListener('canplay', onReady, { once: true });
-        video.addEventListener('error', onError, { once: true });
-        timeout = window.setTimeout(() => finish(new Error('读取视频超时，背景没有更改')), 10000);
-        video.load();
-    });
+async function waitForVideo(video: HTMLVideoElement): Promise<void> {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    // One signal ends both listeners and the timeout, whichever comes first.
+    const done = new AbortController();
+    const { signal } = done;
+    video.addEventListener('canplay', () => resolve(), { signal });
+    video.addEventListener('error', () => reject(new Error('视频文件无法解码，背景没有更改')), { signal });
+    const timeout = window.setTimeout(() => reject(new Error('读取视频超时，背景没有更改')), 10000);
+    signal.addEventListener('abort', () => window.clearTimeout(timeout));
+    video.load();
+    try {
+        await promise;
+    } finally {
+        done.abort();
+    }
 }
 
 function errorMessage(error: unknown): string {

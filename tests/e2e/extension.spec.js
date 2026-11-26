@@ -43,16 +43,22 @@ async function installChromeMock(page, seed = initialData, options = {}) {
             if (Array.isArray(keys)) return Object.fromEntries(keys.map((key) => [key, data[key]]));
             return {};
         };
+        // Like Chrome's own APIs: a promise, and the callback too when one is passed.
+        const reply = (value, callback) => {
+            callback?.(value);
+            return Promise.resolve(value);
+        };
         const storageArea = (key) => ({
-            get(keys, callback) { callback(selectKeys(readArea(key), keys)); },
-            set(values, callback = () => {}) { writeArea(key, { ...readArea(key), ...values }); callback(); },
-            remove(keys, callback = () => {}) {
+            get(keys, callback) { return reply(selectKeys(readArea(key), keys), callback); },
+            set(values, callback) { writeArea(key, { ...readArea(key), ...values }); return reply(undefined, callback); },
+            remove(keys, callback) {
                 const data = readArea(key);
                 for (const name of Array.isArray(keys) ? keys : [keys]) delete data[name];
                 writeArea(key, data);
-                callback();
+                return reply(undefined, callback);
             },
-            clear(callback = () => {}) { writeArea(key, {}); callback(); }
+            clear(callback) { writeArea(key, {}); return reply(undefined, callback); },
+            getBytesInUse(_keys, callback) { return reply(new TextEncoder().encode(localStorage.getItem(key) || '').length, callback); }
         });
         navigator.getBattery = async () => ({ level: 0.82, charging: false });
         if (options.failIndexedDB) {
@@ -74,12 +80,13 @@ async function installChromeMock(page, seed = initialData, options = {}) {
                 }
             },
             tabs: {
-                query(_query, callback) { callback([]); },
-                update() {},
+                query(_query, callback) { return reply([], callback); },
+                update(_id, _properties, callback) { return reply(undefined, callback); },
                 create(properties) { openedTabs.push(properties); return Promise.resolve({ id: openedTabs.length, ...properties }); }
             },
-            downloads: { search(_query, callback) { callback([]); }, show() {} },
-            history: { search(_query, callback) { callback(history); } }
+            windows: { update(_id, _properties, callback) { return reply(undefined, callback); } },
+            downloads: { search(_query, callback) { return reply([], callback); }, show() {} },
+            history: { search(_query, callback) { return reply(history, callback); } }
         };
         window.__readMockSync = () => {
             const data = readArea(syncKey);
@@ -130,7 +137,7 @@ async function glassFilter(locator) {
 
 async function openSettings(page, pane = 'appearance') {
     await page.locator('.settings-trigger').click();
-    await expect(page.locator('.settings-window')).toHaveClass(/is-open/);
+    await expect(page.locator('.settings-window')).toHaveAttribute('open');
     if (pane !== 'appearance') await page.locator(`.settings-nav-item[data-pane="${pane}"]`).click();
     await expect(page.locator(`.settings-pane[data-pane="${pane}"]`)).toBeVisible();
 }
@@ -285,7 +292,7 @@ test('draws HDR rims only for glass that is visible', async ({ page }) => {
     await expect(layer).toHaveAttribute('data-hdr-count', String(visibleGlass));
     // The settings window covers the home screen, so its controls stop drawing rims.
     await page.locator('.settings-trigger').click();
-    await expect(page.locator('.settings-window')).toHaveClass(/is-open/);
+    await expect(page.locator('.settings-window')).toHaveAttribute('open');
     await page.mouse.move(700, 400);
     await expect(layer).toHaveAttribute('data-hdr-count', '0');
     expect(errors).toEqual([]);
@@ -340,7 +347,8 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
         const sidebar = window.querySelector('.settings-sidebar').getBoundingClientRect();
         const content = window.querySelector('.settings-content').getBoundingClientRect();
         return {
-            width: window.getBoundingClientRect().width,
+            // The layout width: the window may still be scaling in, which a bounding box would include.
+            width: window.offsetWidth,
             sidebarBeside: sidebar.right <= content.left + 1,
             overflowFree: window.scrollWidth <= window.clientWidth
         };
@@ -357,11 +365,11 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
 
     await page.locator('.settings-nav-item[data-pane="appearance"]').click();
     await page.locator('[data-segment="clockFormat"] [data-value="12h"]').click();
-    await expect(page.locator('[data-segment="clockFormat"] [data-value="12h"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByRole('radio', { name: '12 小时' })).toBeChecked();
     // The thumb slides under the chosen option.
     const clock = page.locator('[data-segment="clockFormat"]');
-    const twelveHour = await clock.locator('[data-value="12h"]').evaluate((button) => button.offsetLeft);
-    await expect.poll(() => clock.evaluate((element) => Number.parseFloat(element.style.getPropertyValue('--thumb-x')))).toBe(twelveHour);
+    const twelveHour = await clock.locator('[data-value="12h"]').evaluate((label) => label.offsetLeft);
+    await expect.poll(() => clock.evaluate((element) => Number.parseFloat(getComputedStyle(element, '::before').left))).toBeCloseTo(twelveHour, 0);
     const switches = page.locator('.settings-pane[data-pane="appearance"] .switch');
     await expect(switches).toHaveCount(2);
     await switches.first().locator('input').evaluate((input) => { window.__retainedSwitch = input; });
@@ -376,7 +384,7 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     await page.locator('[data-segment="theme"] [data-value="dark"]').click();
     await expect(page.locator('body')).toHaveClass(/theme-dark/);
     await page.locator('.settings-close').click();
-    await expect(page.locator('.settings-window')).not.toHaveClass(/is-open/);
+    await expect(page.locator('.settings-window')).not.toHaveAttribute('open');
     await page.locator('.settings-trigger').click();
     // Panes are built once: reopening keeps the same controls.
     expect(await page.evaluate(() => (
@@ -398,7 +406,7 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     });
     await expect.poll(() => page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('local');
     await expect(page.locator('.wallpaper-name')).toHaveText('本地图片');
-    await expect(page.locator('[data-segment="wallpaperKind"] [data-value="image"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('[data-segment="wallpaperKind"] [data-value="image"]')).toHaveClass(/is-active/);
     await page.reload();
     await expect(page.locator('.wallpaper-media')).toHaveCSS('background-image', /blob:/);
     await expect(page.locator('.wallpaper-pause')).toBeHidden();
@@ -508,6 +516,17 @@ test('filters settings across every pane', async ({ page }) => {
     await page.locator('.settings-nav-item[data-pane="data"]').click();
     await expect(page.locator('.settings-search input')).toHaveValue('');
     await expect(page.locator('.sync-summary')).toHaveText('3 个书签 · 1 个文件夹');
+    await expect(page.getByRole('tab', { name: '数据' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tabpanel', { name: '数据' })).toBeVisible();
+
+    // Escape first empties the search, and only a second Escape closes the window.
+    await page.locator('.settings-search input').fill('暂停');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.settings-search input')).toHaveValue('');
+    await expect(page.locator('.settings-window')).toHaveAttribute('open');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.settings-window')).not.toHaveAttribute('open');
+    await expect(page.locator('.settings-trigger')).toBeFocused();
     expect(errors).toEqual([]);
 });
 
@@ -659,9 +678,9 @@ test('closes overlays with Escape and returns focus to the opener', async ({ pag
     await expect(add).toBeFocused();
 
     await page.locator('.settings-trigger').click();
-    await expect(page.locator('.settings-window')).toHaveClass(/is-open/);
+    await expect(page.locator('.settings-window')).toHaveAttribute('open');
     await page.keyboard.press('Escape');
-    await expect(page.locator('.settings-window')).not.toHaveClass(/is-open/);
+    await expect(page.locator('.settings-window')).not.toHaveAttribute('open');
     await expect(page.locator('.settings-trigger')).toBeFocused();
     expect(errors).toEqual([]);
 });
@@ -678,23 +697,55 @@ test('manages bookmarks and folders through the context menu and in-page dialogs
 
     await root.locator('.index-more').click();
     await page.getByRole('menuitem', { name: '新建文件夹…' }).click();
-    const prompt = page.getByRole('alertdialog');
+    const prompt = page.getByRole('dialog', { name: '新建文件夹' });
+    await expect(prompt.locator('input')).toBeFocused();
     await prompt.locator('input').fill('阅读');
     await prompt.getByRole('button', { name: '创建' }).click();
     await expect(page.locator('.index-group[data-folder="阅读"] .index-note')).toHaveText('拖书签到这里');
 
     await page.locator('.index-group[data-folder="POM"] .index-heading').click({ button: 'right' });
     await page.getByRole('menuitem', { name: '重命名…' }).click();
-    await page.getByRole('alertdialog').locator('input').fill('收藏');
-    await page.getByRole('alertdialog').getByRole('button', { name: '保存' }).click();
+    const rename = page.getByRole('dialog', { name: '重命名文件夹' });
+    await rename.locator('input').fill('收藏');
+    await rename.getByRole('button', { name: '保存' }).click();
     const renamed = page.locator('.index-group[data-folder="收藏"]');
     await expect(renamed.locator('.index-title')).toHaveText('收藏');
     await expect(renamed.locator('[data-bookmark-id]')).toHaveCount(2);
 
     await renamed.locator('[data-bookmark-id="3"]').click({ button: 'right' });
     await page.getByRole('menuitem', { name: '删除书签' }).click();
+    // A destructive confirmation starts on the safe choice.
+    await expect(page.getByRole('alertdialog').getByRole('button', { name: '取消' })).toBeFocused();
     await page.getByRole('alertdialog').getByRole('button', { name: '删除' }).click();
     await expect(renamed.locator('[data-bookmark-id]')).toHaveCount(1);
+    expect(errors).toEqual([]);
+});
+
+test('edits a bookmark in place and gives focus back to it', async ({ page }) => {
+    const errors = await openExtension(page);
+    const link = page.locator('[data-bookmark-id="2"]');
+    await link.focus();
+    await link.dispatchEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 0, clientY: 0 });
+    await expect(page.getByRole('menu')).toHaveAccessibleName('“GitHub”的操作');
+    await page.getByRole('menuitem', { name: '编辑…' }).press('Enter');
+    const dialog = page.getByRole('dialog', { name: '编辑书签' });
+    await expect(dialog.locator('input[name="name"]')).toBeFocused();
+    await dialog.locator('input[name="name"]').fill('GitHub 主页');
+    await dialog.getByRole('button', { name: '保存' }).click();
+    await expect(page.locator('dialog.bookmark-dialog')).toHaveCount(0);
+    // Saved over the same bookmark: no second copy.
+    const stored = await page.evaluate(() => window.__readMockSync());
+    expect(stored.bookmarks).toHaveLength(3);
+    expect(stored.bookmarks.find((bookmark) => String(bookmark.id) === '2').name).toBe('GitHub 主页');
+    await expect(page.locator('[data-bookmark-id="2"] .index-name')).toHaveText('GitHub 主页');
+    // The index was redrawn while the dialog was open; focus still lands on the bookmark.
+    await expect(page.locator('[data-bookmark-id="2"]')).toBeFocused();
+
+    // Tab leaves a menu instead of cycling inside it.
+    await page.locator('[data-bookmark-id="2"]').dispatchEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 0, clientY: 0 });
+    await expect(page.getByRole('menu')).toBeVisible();
+    for (let step = 0; step < 8; step += 1) await page.keyboard.press('Tab');
+    await expect(page.locator('.context-menu:popover-open')).toHaveCount(0);
     expect(errors).toEqual([]);
 });
 
@@ -704,7 +755,7 @@ test('searches straight from the home field', async ({ page }) => {
     const input = page.locator('.search-field input');
     await expect(input).toBeFocused();
     // No separate window: the suggestions hang under the field itself.
-    await expect(page.locator('.modal-backdrop')).toHaveCount(0);
+    await expect(page.locator('dialog.modal')).toHaveCount(0);
     const results = page.locator('.search-results');
     await expect(results).toBeVisible();
     const fieldBox = await page.locator('.search-field').boundingBox();
@@ -867,7 +918,7 @@ test('reframes the wallpaper in place and keeps the framing', async ({ page }) =
 
     // With settings open a pinch leaves the wallpaper alone.
     await page.locator('.settings-trigger').click();
-    await expect(page.locator('.settings-window')).toHaveClass(/is-open/);
+    await expect(page.locator('.settings-window')).toHaveAttribute('open');
     await pinch(page, 10, -6);
     expect(await zoomOf(page)).toBe(1);
     expect(errors).toEqual([]);

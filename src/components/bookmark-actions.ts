@@ -32,11 +32,15 @@ export function bookmarkName(bookmark: Bookmark): string {
 export function interceptExtensionLink(event: MouseEvent, url: string): void {
     if (event.defaultPrevented || new URL(url).protocol !== 'chrome-extension:') return;
     event.preventDefault();
-    openInNewTab(url);
+    void openInNewTab(url);
 }
 
-export function openInNewTab(url: string): void {
-    void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
+export async function openInNewTab(url: string): Promise<void> {
+    try {
+        await chrome.tabs.create({ url });
+    } catch (error) {
+        notifyError(error);
+    }
 }
 
 export function openBookmarkDialog(source: HTMLElement, detail: BookmarkDialogDetail): void {
@@ -48,40 +52,44 @@ export function bookmarkMenu(source: HTMLElement, bookmark: Bookmark, at: MenuAn
     // Reordering within the folder without a mouse (the menu opens with Shift+F10 or the context key too).
     const siblings = bookmarksIn(bookmark.folder);
     const index = siblings.findIndex((item) => String(item.id) === String(bookmark.id));
+    // Moves made from the keyboard are announced with the new place, since nothing else says where the bookmark went.
+    const name = bookmarkName(bookmark);
+    const total = siblings.length;
     const reorder: MenuItem[] = [
         ...(index > 0 ? [
-            { label: '上移', icon: ICONS.arrowUp, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index - 1].id) },
-            ...(index > 1 ? [{ label: '移到最前', icon: ICONS.toTop, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[0].id) }] : [])
+            { label: '上移', icon: ICONS.arrowUp, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index - 1].id, `“${name}”已上移，现在是第 ${index} 个，共 ${total} 个`) },
+            ...(index > 1 ? [{ label: '移到最前', icon: ICONS.toTop, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[0].id, `“${name}”已移到最前`) }] : [])
         ] : []),
         ...(index >= 0 && index < siblings.length - 1
-            ? [{ label: '下移', icon: ICONS.arrowDown, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index + 2]?.id) }]
+            ? [{ label: '下移', icon: ICONS.arrowDown, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index + 2]?.id, `“${name}”已下移，现在是第 ${index + 2} 个，共 ${total} 个`) }]
             : [])
     ];
     openMenu([
-        { label: '在新标签页打开', icon: ICONS.open, action: () => openInNewTab(bookmark.url) },
+        { label: '在新标签页打开', icon: ICONS.open, action: () => void openInNewTab(bookmark.url) },
         { label: '编辑…', icon: ICONS.edit, action: () => openBookmarkDialog(source, { bookmark }) },
         ...(reorder.length ? [{ separator: true } as const, ...reorder] : []),
         ...(destinations.length ? [
             { separator: true } as const,
             { heading: '移动到文件夹' } as const,
-            ...destinations.map((folder) => ({ label: folderLabel(folder), icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder) }))
+            ...destinations.map((folder) => ({ label: folderLabel(folder), icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder, undefined, `“${name}”已移到“${folderLabel(folder)}”`) }))
         ] : []),
         { separator: true },
         { label: '删除书签', icon: ICONS.trash, danger: true, action: () => void deleteBookmark(bookmark) }
-    ], at);
+    ], at, `“${name}”的操作`);
 }
 
 export function siteMenu(source: HTMLElement, site: RecentSite, at: MenuAnchor): void {
     openMenu([
-        { label: '在新标签页打开', icon: ICONS.open, action: () => openInNewTab(site.url) },
+        { label: '在新标签页打开', icon: ICONS.open, action: () => void openInNewTab(site.url) },
         { label: '添加到书签', icon: ICONS.plus, action: () => openBookmarkDialog(source, { draft: { url: site.url, name: site.title } }) }
-    ], at);
+    ], at, `“${site.title}”的操作`);
 }
 
 /** Moves a bookmark in front of another (or to the end of the folder); resolves false if saving failed. */
-export async function moveBookmark(id: Bookmark['id'], folder: string, targetId?: Bookmark['id']): Promise<boolean> {
+export async function moveBookmark(id: Bookmark['id'], folder: string, targetId?: Bookmark['id'], announcement = ''): Promise<boolean> {
     try {
         await appStore.moveBookmark(id, folder, targetId);
+        if (announcement) document.ariaNotify(announcement);
         return true;
     } catch (error) {
         notifyError(error);

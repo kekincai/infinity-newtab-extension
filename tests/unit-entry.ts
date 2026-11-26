@@ -16,35 +16,29 @@ function announceChange(keys: string[]): void {
 }
 
 const runtime = {
-    lastError: null as { message: string } | null,
     getURL: (path: string) => `chrome-extension://unit-test${path}`
 };
+/** Promise-based like Chrome's own storage areas: a refused write rejects. */
 function area(data: Record<string, unknown>) {
     return {
-        get(keys: string[] | string | null, callback: (value: Record<string, unknown>) => void) {
-            if (keys === null) callback({ ...data });
-            else if (typeof keys === 'string') callback({ [keys]: data[keys] });
-            else callback(Object.fromEntries(keys.map((key) => [key, data[key]])));
+        async get(keys: string[] | string | null): Promise<Record<string, unknown>> {
+            if (keys === null) return { ...data };
+            if (typeof keys === 'string') return { [keys]: data[keys] };
+            return Object.fromEntries(keys.map((key) => [key, data[key]]));
         },
-        set(values: Record<string, unknown>, callback: () => void) {
-            runtime.lastError = failWrites ? { message: 'quota exceeded' } : null;
-            if (!failWrites) {
-                Object.assign(data, structuredClone(values));
-                announceChange(Object.keys(values));
-            }
-            callback();
-            runtime.lastError = null;
+        async set(values: Record<string, unknown>): Promise<void> {
+            if (failWrites) throw new Error('quota exceeded');
+            Object.assign(data, structuredClone(values));
+            announceChange(Object.keys(values));
         },
-        remove(keys: string[], callback: () => void) {
+        async remove(keys: string[]): Promise<void> {
             keys.forEach((key) => delete data[key]);
             announceChange(keys);
-            callback();
         },
-        clear(callback: () => void) {
+        async clear(): Promise<void> {
             const keys = Object.keys(data);
             keys.forEach((key) => delete data[key]);
             announceChange(keys);
-            callback();
         }
     };
 }

@@ -25,23 +25,15 @@
     if (typeof value !== "string" || !value.trim()) return "";
     const text = value.trim();
     const hasScheme = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(text);
-    try {
-      let url = new URL(hasScheme ? text : `https://${text}`);
-      if (!hasScheme && LOCAL_HOST.test(url.hostname)) url = new URL(`http://${text}`);
-      return BOOKMARK_PROTOCOLS.has(url.protocol) && url.hostname ? url.href : "";
-    } catch {
-      return "";
-    }
+    let url = URL.parse(hasScheme ? text : `https://${text}`);
+    if (url && !hasScheme && LOCAL_HOST.test(url.hostname)) url = URL.parse(`http://${text}`);
+    return url && BOOKMARK_PROTOCOLS.has(url.protocol) && url.hostname ? url.href : "";
   }
   function sanitizeRemoteUrl(value, allowImageData = false) {
     if (typeof value !== "string") return "";
     if (allowImageData && value.startsWith("data:image/")) return value;
-    try {
-      const url = new URL(value);
-      return url.protocol === "https:" ? url.href : "";
-    } catch {
-      return "";
-    }
+    const url = URL.parse(value);
+    return url?.protocol === "https:" ? url.href : "";
   }
   function cleanText(value, maxLength) {
     return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -84,14 +76,12 @@
     return /^https:\/\/www\.google\.com\/s2\/favicons/i.test(icon2) || /^chrome-extension:\/\/[^/]+\/_favicon\//i.test(icon2);
   }
   function faviconUrl(pageUrl, size = 128) {
-    try {
-      const favicon = new URL(chrome.runtime.getURL("/_favicon/"));
-      favicon.searchParams.set("pageUrl", new URL(pageUrl).href);
-      favicon.searchParams.set("size", String(size));
-      return favicon.toString();
-    } catch {
-      return DEFAULT_ICON;
-    }
+    const page = URL.parse(pageUrl);
+    const favicon = URL.parse(chrome.runtime.getURL("/_favicon/"));
+    if (!page || !favicon) return DEFAULT_ICON;
+    favicon.searchParams.set("pageUrl", page.href);
+    favicon.searchParams.set("size", String(size));
+    return favicon.href;
   }
   function faviconSrcSet(pageUrl) {
     return [64, 128, 256].map((size) => `${faviconUrl(pageUrl, size)} ${size}w`).join(", ");
@@ -213,19 +203,15 @@
         order: Number.isFinite(order) ? order : index
       });
     });
-    const folders = /* @__PURE__ */ new Map();
-    bookmarks.forEach((bookmark) => {
-      const list = folders.get(bookmark.folder) ?? [];
-      list.push(bookmark);
-      folders.set(bookmark.folder, list);
-    });
-    folders.forEach((list) => {
-      list.sort(compareBookmarks);
-      list.forEach((bookmark, index) => {
+    renumberFolders(bookmarks);
+    return bookmarks;
+  }
+  function renumberFolders(bookmarks) {
+    Map.groupBy(bookmarks, (bookmark) => bookmark.folder).forEach((list) => {
+      list.sort(compareBookmarks).forEach((bookmark, index) => {
         bookmark.order = index;
       });
     });
-    return bookmarks;
   }
   function normalizeFolders(value, bookmarks) {
     const folders = /* @__PURE__ */ new Set([ROOT_FOLDER]);
@@ -288,9 +274,7 @@
     if (!payload) return null;
     const mime = header.match(/^data:([^;,]+)/)?.[1] ?? "application/octet-stream";
     try {
-      const decoded = header.includes(";base64") ? atob(payload) : decodeURIComponent(payload);
-      const bytes = new Uint8Array(decoded.length);
-      for (let index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index);
+      const bytes = header.includes(";base64") ? Uint8Array.fromBase64(payload) : new TextEncoder().encode(decodeURIComponent(payload));
       return new Blob([bytes], { type: mime });
     } catch {
       return null;
@@ -420,37 +404,28 @@
   function sync() {
     return chrome.storage.sync;
   }
-  function storageGet(keys) {
-    return new Promise((resolve, reject) => {
-      sync().get(keys, (result) => {
-        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-        else resolve(result ?? {});
-      });
-    });
+  async function storageGet(keys) {
+    return await sync().get(keys) ?? {};
   }
-  function storageSet(values) {
-    return new Promise((resolve, reject) => {
-      sync().set(values, () => {
-        if (chrome.runtime.lastError) reject(new Error(describeWriteError(chrome.runtime.lastError.message)));
-        else resolve();
-      });
-    });
+  async function storageSet(values) {
+    try {
+      await sync().set(values);
+    } catch (error) {
+      throw new Error(describeWriteError(error instanceof Error ? error.message : String(error)), { cause: error });
+    }
   }
-  function storageRemove(keys) {
-    return new Promise((resolve, reject) => {
-      sync().remove(keys, () => {
-        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-        else resolve();
-      });
-    });
+  async function storageRemove(keys) {
+    await sync().remove(keys);
   }
-  function storageClear() {
-    return new Promise((resolve, reject) => {
-      sync().clear(() => {
-        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-        else resolve();
-      });
-    });
+  async function storageClear() {
+    await sync().clear();
+  }
+  async function storageBytesInUse() {
+    try {
+      return typeof sync().getBytesInUse === "function" ? await sync().getBytesInUse(null) : null;
+    } catch {
+      return null;
+    }
   }
   function onSyncChanged(callback) {
     chrome.storage.onChanged?.addListener?.((_changes, areaName) => {
@@ -458,6 +433,7 @@
     });
   }
   function describeWriteError(message = "") {
+    if (/QUOTA_BYTES_PER_ITEM/i.test(message)) return "\u5355\u9879\u6570\u636E\u8D85\u8FC7 Chrome \u540C\u6B65\u7684 8 KB \u4E0A\u9650\uFF0C\u8BF7\u7F29\u77ED\u540D\u79F0\u6216\u6539\u7528\u56FE\u6807\u7F51\u5740\u540E\u91CD\u8BD5";
     if (/QUOTA_BYTES/i.test(message)) return "Chrome \u540C\u6B65\u7A7A\u95F4\u5DF2\u6EE1\uFF08\u4E0A\u9650\u7EA6 100 KB\uFF09\uFF0C\u8BF7\u5220\u9664\u90E8\u5206\u4E66\u7B7E\u6216\u81EA\u5B9A\u4E49\u56FE\u6807\u540E\u91CD\u8BD5";
     if (/MAX_WRITE_OPERATIONS/i.test(message)) return "\u64CD\u4F5C\u592A\u9891\u7E41\uFF0CChrome \u6682\u65F6\u9650\u5236\u4E86\u540C\u6B65\u5199\u5165\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5";
     return message || "\u4FDD\u5B58\u5931\u8D25";
@@ -477,6 +453,17 @@
       recentSearches: [],
       lastBackupPrompt: 0
     };
+  }
+  function fitRecentSearches(searches) {
+    const encoder = new TextEncoder();
+    const kept = [];
+    let size = encoder.encode("recentSearches[]").length;
+    for (const search of searches.slice(0, RECENT_SEARCH_LIMIT)) {
+      size += encoder.encode(JSON.stringify(search)).length + 1;
+      if (size > RECENT_SEARCH_BUDGET) break;
+      kept.push(search);
+    }
+    return kept;
   }
   function diff(previous, next) {
     const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
@@ -504,15 +491,12 @@
       order: state.bookmarks.filter((bookmark) => bookmark.folder === folder && String(bookmark.id) !== String(id)).length
     };
   }
-  function normalizeOrders(bookmarks) {
-    new Set(bookmarks.map((bookmark) => bookmark.folder)).forEach((folder) => normalizeFolderOrder(bookmarks, folder));
-  }
   function normalizeFolderOrder(bookmarks, folder) {
     bookmarks.filter((bookmark) => bookmark.folder === folder).sort(compareBookmarks).forEach((bookmark, index) => {
       bookmark.order = index;
     });
   }
-  var ALL_CHANGES, AppStore, appStore;
+  var ALL_CHANGES, AppStore, RECENT_SEARCH_BUDGET, RECENT_SEARCH_LIMIT, appStore;
   var init_store = __esm({
     "src/core/store.ts"() {
       "use strict";
@@ -576,7 +560,7 @@
             draft.bookmarks.forEach((bookmark) => {
               if (bookmark.folder === from) bookmark.folder = name;
             });
-            normalizeOrders(draft.bookmarks);
+            renumberFolders(draft.bookmarks);
             renamed = true;
           }, ["folders", "bookmarks"]);
           return renamed;
@@ -588,7 +572,7 @@
             draft.bookmarks.forEach((bookmark) => {
               if (bookmark.folder === folder) bookmark.folder = ROOT_FOLDER;
             });
-            normalizeOrders(draft.bookmarks);
+            renumberFolders(draft.bookmarks);
           }, ["folders", "bookmarks"]);
         }
         async addBookmark(input) {
@@ -607,13 +591,13 @@
             const next = normalizeBookmarkInput(input, draft, previous.id);
             next.order = previous.folder === next.folder ? previous.order : draft.bookmarks.filter((bookmark) => bookmark.folder === next.folder).length;
             draft.bookmarks[index] = next;
-            normalizeOrders(draft.bookmarks);
+            renumberFolders(draft.bookmarks);
           }, ["bookmarks"]);
         }
         async deleteBookmark(id) {
           await this.commit((draft) => {
             draft.bookmarks = draft.bookmarks.filter((bookmark) => String(bookmark.id) !== String(id));
-            normalizeOrders(draft.bookmarks);
+            renumberFolders(draft.bookmarks);
           }, ["bookmarks"]);
         }
         async moveBookmark(id, targetFolder, targetId) {
@@ -642,7 +626,7 @@
           const value = cleanText(query, 200);
           if (!value) return;
           await this.commit((draft) => {
-            draft.recentSearches = [value, ...draft.recentSearches.filter((item) => item !== value)].slice(0, 20);
+            draft.recentSearches = fitRecentSearches([value, ...draft.recentSearches.filter((item) => item !== value)]);
           }, ["recentSearches"]);
         }
         async setLastBackupPrompt(value = Date.now()) {
@@ -658,13 +642,12 @@
               ...encoded.values,
               folders: next.folders,
               settings: next.settings,
-              recentSearches: next.recentSearches,
+              recentSearches: fitRecentSearches(next.recentSearches),
               lastBackupPrompt: next.lastBackupPrompt
             });
-            const staleKeys = staleBookmarkKeys(this.bookmarkChunks, encoded.count);
-            if (staleKeys.length) await storageRemove(staleKeys);
-            this.bookmarkChunks = encoded.count;
             this.stateValue = structuredClone(next);
+            this.stateValue.recentSearches = fitRecentSearches(next.recentSearches);
+            await this.dropStaleBookmarkKeys(encoded.count);
             this.emit(ALL_CHANGES);
           });
         }
@@ -743,6 +726,8 @@
           this.dispatchEvent(new CustomEvent("change", { detail: { state: this.stateValue, changes } }));
         }
       };
+      RECENT_SEARCH_BUDGET = 7600;
+      RECENT_SEARCH_LIMIT = 20;
       appStore = new AppStore();
     }
   });
@@ -751,34 +736,35 @@
   function installChromeFallback() {
     if (globalThis.chrome?.storage?.sync) return;
     const syncKey = "infinity-preview-sync";
-    const makeArea = (name) => ({
-      get(keys, callback) {
-        const values = JSON.parse(localStorage.getItem(name) || "{}");
-        if (keys === null || keys === void 0) callback({ ...values });
-        else if (typeof keys === "string") callback({ [keys]: values[keys] });
-        else if (Array.isArray(keys)) callback(Object.fromEntries(keys.map((key) => [key, values[key]])));
-        else callback({});
+    const read = () => JSON.parse(localStorage.getItem(syncKey) || "{}");
+    const write = (values) => localStorage.setItem(syncKey, JSON.stringify(values));
+    const sync2 = {
+      async get(keys) {
+        const values = read();
+        if (keys === null || keys === void 0) return values;
+        if (typeof keys === "string") return { [keys]: values[keys] };
+        if (Array.isArray(keys)) return Object.fromEntries(keys.map((key) => [key, values[key]]));
+        return {};
       },
-      set(next, callback = () => void 0) {
-        const values = JSON.parse(localStorage.getItem(name) || "{}");
-        localStorage.setItem(name, JSON.stringify({ ...values, ...next }));
-        callback();
+      async set(next) {
+        write({ ...read(), ...next });
       },
-      remove(keys, callback = () => void 0) {
-        const values = JSON.parse(localStorage.getItem(name) || "{}");
+      async remove(keys) {
+        const values = read();
         (Array.isArray(keys) ? keys : [keys]).forEach((key) => delete values[key]);
-        localStorage.setItem(name, JSON.stringify(values));
-        callback();
+        write(values);
       },
-      clear(callback = () => void 0) {
-        localStorage.removeItem(name);
-        callback();
+      async clear() {
+        localStorage.removeItem(syncKey);
+      },
+      async getBytesInUse() {
+        return new TextEncoder().encode(localStorage.getItem(syncKey) ?? "").length;
       }
-    });
+    };
     globalThis.chrome = {
-      runtime: { id: "preview", lastError: null, getURL: (path) => new URL(path, location.href).href },
+      runtime: { id: "preview", getURL: (path) => new URL(path, location.href).href },
       storage: {
-        sync: makeArea(syncKey),
+        sync: sync2,
         // Other preview tabs writing to localStorage stand in for other tabs and devices.
         onChanged: {
           addListener(listener) {
@@ -789,12 +775,15 @@
         }
       },
       tabs: {
-        query: (_query, done) => done([]),
-        update: () => void 0,
-        create: ({ url }) => url ? window.open(url, "_blank", "noopener") : void 0
+        query: async () => [],
+        update: async () => void 0,
+        create: async ({ url }) => {
+          if (url) window.open(url, "_blank", "noopener");
+        }
       },
-      downloads: { search: (_query, done) => done([]), show: () => void 0 },
-      history: { search: (_query, done) => done([]) }
+      windows: { update: async () => void 0 },
+      downloads: { search: async () => [], show: () => void 0 },
+      history: { search: async () => [] }
     };
   }
   var init_chrome_fallback = __esm({
@@ -910,14 +899,23 @@
 
   // src/core/wallpaper-service.ts
   async function useOnlineWallpaper() {
-    let response;
+    let blob;
     try {
-      response = await fetch(`${ONLINE_WALLPAPER}?t=${Date.now()}`, { cache: "no-store" });
-    } catch {
-      throw new Error("\u65E0\u6CD5\u8FDE\u63A5\u5728\u7EBF\u58C1\u7EB8\u670D\u52A1\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC");
+      const response = await fetch(`${ONLINE_WALLPAPER}?t=${Date.now()}`, {
+        cache: "no-store",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+        signal: AbortSignal.timeout(ONLINE_TIMEOUT_MS)
+      });
+      if (!response.ok) throw new Error(`\u5728\u7EBF\u58C1\u7EB8\u670D\u52A1\u6682\u65F6\u4E0D\u53EF\u7528\uFF08${response.status}\uFF09`);
+      if (Number(response.headers.get("content-length")) > MAX_ONLINE_BYTES) throw new Error("\u5728\u7EBF\u58C1\u7EB8\u8FC7\u5927\uFF0C\u5DF2\u653E\u5F03\u4E0B\u8F7D");
+      blob = await response.blob();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "TimeoutError") throw new Error("\u5728\u7EBF\u58C1\u7EB8\u670D\u52A1\u54CD\u5E94\u8D85\u65F6\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5");
+      if (error instanceof TypeError) throw new Error("\u65E0\u6CD5\u8FDE\u63A5\u5728\u7EBF\u58C1\u7EB8\u670D\u52A1\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC");
+      throw error;
     }
-    if (!response.ok) throw new Error(`\u5728\u7EBF\u58C1\u7EB8\u670D\u52A1\u6682\u65F6\u4E0D\u53EF\u7528\uFF08${response.status}\uFF09`);
-    const blob = await response.blob();
+    if (blob.size > MAX_ONLINE_BYTES) throw new Error("\u5728\u7EBF\u58C1\u7EB8\u8FC7\u5927\uFF0C\u5DF2\u653E\u5F03\u4E0B\u8F7D");
     if (!blob.type.startsWith("image/")) throw new Error("\u5728\u7EBF\u58C1\u7EB8\u670D\u52A1\u8FD4\u56DE\u7684\u4E0D\u662F\u56FE\u7247");
     await validateLocalMedia(blob, "image");
     await storeWallpaper(blob, "image", "online");
@@ -961,14 +959,13 @@
         if (previous) await mediaStore.set(kind, previous);
         else await mediaStore.clear(kind);
       } catch (rollbackError) {
-        throw new Error(`${errorMessage(error)}\uFF1B\u6062\u590D\u539F\u80CC\u666F\u4E5F\u5931\u8D25\uFF1A${errorMessage(rollbackError)}`);
+        throw new Error(`${errorMessage(error)}\uFF1B\u6062\u590D\u539F\u80CC\u666F\u4E5F\u5931\u8D25\uFF1A${errorMessage(rollbackError)}`, { cause: error });
       }
       throw error;
     }
     await mediaStore.clear(kind === "video" ? "image" : "video").catch(() => void 0);
   }
-  function backdropOf(source) {
-    const data = sample(source);
+  function backdropOf(data) {
     if (!data) return DEFAULT_BACKDROP;
     const ring = 4;
     const corners = Array.from({ length: 4 }, () => ({ l: 0, a: 0, b: 0, n: 0 }));
@@ -1022,17 +1019,20 @@
       0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s
     ];
   }
-  function sample(source) {
+  function samplePixels(source) {
     const canvas = document.createElement("canvas");
     canvas.width = SAMPLE_SIZE;
     canvas.height = SAMPLE_SIZE;
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) return null;
-    context.drawImage(source, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-    return context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+    try {
+      context.drawImage(source, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+      return context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+    } catch {
+      return null;
+    }
   }
-  function toneOf(source) {
-    const data = sample(source);
+  function toneOf(data) {
     if (!data) return "dark";
     let total = 0;
     for (let index = 0; index < data.length; index += 4) {
@@ -1070,28 +1070,25 @@
       URL.revokeObjectURL(url);
     }
   }
-  function waitForVideo(video) {
-    return new Promise((resolve, reject) => {
-      let timeout = 0;
-      const finish = (error) => {
-        window.clearTimeout(timeout);
-        video.removeEventListener("canplay", onReady);
-        video.removeEventListener("error", onError);
-        if (error) reject(error);
-        else resolve();
-      };
-      const onReady = () => finish();
-      const onError = () => finish(new Error("\u89C6\u9891\u6587\u4EF6\u65E0\u6CD5\u89E3\u7801\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539"));
-      video.addEventListener("canplay", onReady, { once: true });
-      video.addEventListener("error", onError, { once: true });
-      timeout = window.setTimeout(() => finish(new Error("\u8BFB\u53D6\u89C6\u9891\u8D85\u65F6\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539")), 1e4);
-      video.load();
-    });
+  async function waitForVideo(video) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const done = new AbortController();
+    const { signal } = done;
+    video.addEventListener("canplay", () => resolve(), { signal });
+    video.addEventListener("error", () => reject(new Error("\u89C6\u9891\u6587\u4EF6\u65E0\u6CD5\u89E3\u7801\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539")), { signal });
+    const timeout = window.setTimeout(() => reject(new Error("\u8BFB\u53D6\u89C6\u9891\u8D85\u65F6\uFF0C\u80CC\u666F\u6CA1\u6709\u66F4\u6539")), 1e4);
+    signal.addEventListener("abort", () => window.clearTimeout(timeout));
+    video.load();
+    try {
+      await promise;
+    } finally {
+      done.abort();
+    }
   }
   function errorMessage(error) {
     return error instanceof Error ? error.message : "\u64CD\u4F5C\u5931\u8D25";
   }
-  var ONLINE_WALLPAPER, SAMPLE_SIZE, LIGHT_THRESHOLD, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, HEIC, HEIC_EXTENSIONS, SCENE_BACKDROP, DEFAULT_BACKDROP;
+  var ONLINE_WALLPAPER, ONLINE_TIMEOUT_MS, MAX_ONLINE_BYTES, SAMPLE_SIZE, LIGHT_THRESHOLD, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, HEIC, HEIC_EXTENSIONS, SCENE_BACKDROP, DEFAULT_BACKDROP;
   var init_wallpaper_service = __esm({
     "src/core/wallpaper-service.ts"() {
       "use strict";
@@ -1099,6 +1096,8 @@
       init_media_store();
       init_store();
       ONLINE_WALLPAPER = "https://www.dmoe.cc/random.php";
+      ONLINE_TIMEOUT_MS = 2e4;
+      MAX_ONLINE_BYTES = 40 * 1024 * 1024;
       SAMPLE_SIZE = 32;
       LIGHT_THRESHOLD = 0.58;
       IMAGE_EXTENSIONS = /\.(jpe?g|png|gif|webp|avif|bmp|tiff?)$/i;
@@ -1204,87 +1203,51 @@
   });
 
   // src/components/ui-layer.ts
-  function pushLayer(element, close) {
-    const layer = {
-      element,
-      close,
-      restoreFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null
-    };
-    layers.push(layer);
-    return () => {
-      const index = layers.indexOf(layer);
-      if (index < 0) return;
-      layers.splice(index, 1);
-      if (layer.restoreFocus?.isConnected && element.contains(document.activeElement)) layer.restoreFocus.focus();
-      else if (layer.restoreFocus?.isConnected && document.activeElement === document.body) layer.restoreFocus.focus();
-    };
-  }
   function hasOpenLayer() {
-    return layers.length > 0;
+    return document.querySelector(OPEN_OVERLAY) !== null;
   }
-  function trapFocus(container, event) {
-    const focusable = [...container.querySelectorAll(FOCUSABLE)].filter((element) => element.getClientRects().length);
-    if (!focusable.length) {
-      event.preventDefault();
+  function removeAfterExit(element) {
+    element.inert = true;
+    element.setAttribute("aria-hidden", "true");
+    const running = element.getAnimations({ subtree: true });
+    if (!running.length) {
+      element.remove();
       return;
     }
-    const first = focusable[0];
-    const last = focusable.at(-1);
-    const active = document.activeElement;
-    if (!container.contains(active)) {
-      event.preventDefault();
-      first.focus();
-    } else if (event.shiftKey && active === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault();
-      first.focus();
-    }
+    void Promise.allSettled(running.map((animation) => animation.finished)).then(() => element.remove());
   }
   function openModal(options) {
     return new Promise((resolve) => {
-      const backdrop = document.createElement("div");
-      backdrop.className = "modal-backdrop is-open";
-      backdrop.innerHTML = `
-            <form class="modal glass-panel" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
-                <header class="modal-header">
-                    <h2 id="modal-title">${escapeHtml(options.title)}</h2>
-                </header>
+      const titleId = `modal-title-${++modalCount}`;
+      const dialog = document.createElement("dialog");
+      dialog.className = "modal glass-panel";
+      if (!options.input) dialog.setAttribute("role", "alertdialog");
+      dialog.setAttribute("aria-labelledby", titleId);
+      dialog.setAttribute("closedby", "any");
+      const cancelFocus = options.danger ? "autofocus" : "";
+      const submitFocus = !options.danger && !options.input ? "autofocus" : "";
+      dialog.innerHTML = `
+            <form method="dialog">
+                <h1 class="modal-title" id="${titleId}">${escapeHtml(options.title)}</h1>
                 ${options.body ? `<p class="modal-body">${escapeHtml(options.body)}</p>` : ""}
-                ${options.input ? `<label class="field"><span>${escapeHtml(options.input.label)}</span><input name="value" type="text" autocomplete="off" maxlength="${options.input.maxLength ?? 80}" placeholder="${escapeHtml(options.input.placeholder ?? "")}" value="${escapeHtml(options.input.value ?? "")}"></label>` : ""}
+                ${options.input ? `<label class="field"><span>${escapeHtml(options.input.label)}</span><input name="value" type="text" autocomplete="off" autofocus maxlength="${options.input.maxLength ?? 80}" placeholder="${escapeHtml(options.input.placeholder ?? "")}" value="${escapeHtml(options.input.value ?? "")}"></label>` : ""}
                 <footer class="modal-actions">
-                    <button class="pill-button" type="button" data-action="cancel">${escapeHtml(options.cancelText ?? "\u53D6\u6D88")}</button>
-                    <button class="pill-button ${options.danger ? "danger" : "primary"}" type="submit">${escapeHtml(options.confirmText ?? "\u786E\u5B9A")}</button>
+                    <button class="pill-button" type="submit" value="cancel" formnovalidate ${cancelFocus}>${escapeHtml(options.cancelText ?? "\u53D6\u6D88")}</button>
+                    <button class="pill-button ${options.danger ? "danger" : "primary"}" type="submit" value="confirm" ${submitFocus}>${escapeHtml(options.confirmText ?? "\u786E\u5B9A")}</button>
                 </footer>
             </form>`;
-      document.body.append(backdrop);
-      const form = backdrop.querySelector("form");
-      const input = form.querySelector('input[name="value"]');
-      let release2 = () => {
-      };
-      const finish = (value) => {
-        release2();
-        backdrop.remove();
-        resolve(value);
-      };
-      release2 = pushLayer(form, () => finish(null));
-      form.querySelectorAll('[data-action="cancel"]').forEach((button) => button.addEventListener("click", () => finish(null)));
-      backdrop.addEventListener("pointerdown", (event) => {
-        if (event.target === backdrop) finish(null);
+      const input = dialog.querySelector('input[name="value"]');
+      dialog.querySelector("form").addEventListener("submit", (event) => {
+        if (!event.submitter) dialog.returnValue = "confirm";
       });
-      form.addEventListener("submit", (event) => {
-        event.preventDefault();
-        finish(input ? input.value.trim() : "");
-      });
-      requestAnimationFrame(() => {
-        if (input) {
-          input.focus();
-          input.select();
-        } else {
-          form.querySelector('button[type="submit"]')?.focus();
-        }
-      });
+      dialog.addEventListener("close", () => {
+        const confirmed = dialog.returnValue === "confirm";
+        resolve(confirmed ? input ? input.value.trim() : "" : null);
+        removeAfterExit(dialog);
+      }, { once: true });
+      document.body.append(dialog);
+      dialog.showModal();
+      input?.select();
     });
   }
   async function confirmAction(options) {
@@ -1299,59 +1262,70 @@
     if (!region) {
       region = document.createElement("div");
       region.className = "toast-region";
-      region.setAttribute("role", "status");
-      region.setAttribute("aria-live", "polite");
+      region.popover = "manual";
+      region.setAttribute("role", "region");
+      region.setAttribute("aria-label", "\u901A\u77E5");
       document.body.append(region);
     }
     const toast = document.createElement("div");
     toast.className = `toast glass-panel app-notice is-${kind}`;
     toast.textContent = message;
     region.append(toast);
+    raise(region);
+    document.ariaNotify(message, { priority: kind === "error" ? "high" : "normal" });
     window.setTimeout(() => {
       toast.classList.add("is-leaving");
-      toast.addEventListener("transitionend", () => toast.remove(), { once: true });
-      window.setTimeout(() => toast.remove(), 260);
+      const remove = () => {
+        toast.remove();
+        if (!region.childElementCount && region.matches(":popover-open")) region.hidePopover();
+      };
+      toast.addEventListener("transitionend", remove, { once: true });
+      window.setTimeout(remove, 260);
     }, timeout);
+  }
+  function raise(region) {
+    if (!region.matches(":popover-open")) {
+      region.showPopover();
+      return;
+    }
+    const dialogs = [...document.querySelectorAll("dialog:modal")];
+    if (dialogs.some((dialog) => region.compareDocumentPosition(dialog) & Node.DOCUMENT_POSITION_FOLLOWING || !region.dataset.raised)) {
+      region.hidePopover();
+      region.showPopover();
+    }
+    region.dataset.raised = dialogs.length ? "true" : "";
   }
   function notifyError(error, fallback = "\u64CD\u4F5C\u5931\u8D25") {
     notify(error instanceof Error && error.message ? error.message : fallback, "error");
   }
-  function openMenu(items, at) {
-    document.querySelector(".context-menu")?.dispatchEvent(new Event("menu-close"));
+  function openMenu(items, at, label) {
     const menu = document.createElement("div");
     menu.className = "context-menu glass-panel";
+    menu.popover = "auto";
     menu.setAttribute("role", "menu");
-    menu.innerHTML = items.map((item, index) => {
-      if ("separator" in item) return "<hr>";
-      if ("heading" in item) return `<span class="menu-heading">${escapeHtml(item.heading)}</span>`;
-      return `<button type="button" role="menuitem" data-index="${index}" class="${item.danger ? "danger" : ""}">${item.icon ? `<i aria-hidden="true">${item.icon}</i>` : "<i></i>"}<span>${escapeHtml(item.label)}</span></button>`;
-    }).join("");
+    menu.setAttribute("aria-label", label);
+    menu.innerHTML = menuMarkup(items);
+    menu.querySelector("button")?.setAttribute("autofocus", "");
     document.body.append(menu);
-    const anchor = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
-    const point = anchor ? { x: anchor.left, y: anchor.bottom + 6 } : at;
-    const { width, height } = menu.getBoundingClientRect();
-    const flipsLeft = point.x > innerWidth - width - 8;
-    const flipsUp = point.y + height > innerHeight - 8;
-    menu.style.left = `${Math.max(8, Math.min(point.x, innerWidth - width - 8))}px`;
-    menu.style.top = `${flipsUp ? Math.max(8, point.y - height - (anchor ? anchor.height + 12 : 0)) : point.y}px`;
-    menu.style.transformOrigin = `${flipsLeft ? "right" : "left"} ${flipsUp ? "bottom" : "top"}`;
-    let release2 = () => {
-    };
+    const source = at instanceof HTMLElement ? at : null;
+    menu.showPopover(source ? { source } : void 0);
+    place(menu, at);
+    if (source?.hasAttribute("aria-haspopup")) source.setAttribute("aria-expanded", "true");
+    const listening = new AbortController();
     const close = () => {
-      document.removeEventListener("pointerdown", onOutside, true);
-      window.removeEventListener("blur", close);
-      window.removeEventListener("resize", close);
-      release2();
-      menu.remove();
+      if (menu.matches(":popover-open")) menu.hidePopover();
     };
-    const onOutside = (event) => {
-      if (!menu.contains(event.target)) close();
-    };
-    release2 = pushLayer(menu, close);
-    menu.addEventListener("menu-close", close);
-    document.addEventListener("pointerdown", onOutside, true);
-    window.addEventListener("blur", close);
-    window.addEventListener("resize", close);
+    menu.addEventListener("toggle", (event) => {
+      if (event.newState !== "closed") return;
+      listening.abort();
+      if (source?.hasAttribute("aria-haspopup")) source.setAttribute("aria-expanded", "false");
+      removeAfterExit(menu);
+    }, { signal: listening.signal });
+    window.addEventListener("blur", close, { signal: listening.signal });
+    window.addEventListener("resize", close, { signal: listening.signal });
+    menu.addEventListener("focusout", (event) => {
+      if (!menu.contains(event.relatedTarget)) close();
+    }, { signal: listening.signal });
     const buttons = [...menu.querySelectorAll("button")];
     menu.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-index]");
@@ -1362,13 +1336,44 @@
     });
     menu.addEventListener("keydown", (event) => {
       const index = buttons.indexOf(document.activeElement);
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const step = event.key === "ArrowDown" ? 1 : -1;
-        buttons[(index + step + buttons.length) % buttons.length]?.focus();
+      const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
+      const jump = { Home: 0, End: buttons.length - 1 }[event.key];
+      if (step === void 0 && jump === void 0) return;
+      event.preventDefault();
+      buttons[jump ?? (index + step + buttons.length) % buttons.length]?.focus();
+    });
+  }
+  function menuMarkup(items) {
+    let html = "";
+    let inGroup = false;
+    const endGroup = () => {
+      if (inGroup) html += "</div>";
+      inGroup = false;
+    };
+    items.forEach((item, index) => {
+      if ("separator" in item) {
+        endGroup();
+        html += "<hr>";
+      } else if ("heading" in item) {
+        endGroup();
+        html += `<div role="group" aria-labelledby="menu-heading-${index}"><span class="menu-heading" id="menu-heading-${index}" role="presentation">${escapeHtml(item.heading)}</span>`;
+        inGroup = true;
+      } else {
+        html += `<button type="button" role="menuitem" data-index="${index}" class="${item.danger ? "danger" : ""}">${item.icon ? `<i aria-hidden="true">${item.icon}</i>` : "<i></i>"}<span>${escapeHtml(item.label)}</span></button>`;
       }
     });
-    buttons[0]?.focus({ preventScroll: true });
+    endGroup();
+    return html;
+  }
+  function place(menu, at) {
+    const anchor = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
+    const point = anchor ? { x: anchor.left, y: anchor.bottom + 6 } : at;
+    const { width, height } = menu.getBoundingClientRect();
+    const flipsLeft = point.x > innerWidth - width - 8;
+    const flipsUp = point.y + height > innerHeight - 8;
+    menu.style.left = `${Math.max(8, Math.min(point.x, innerWidth - width - 8))}px`;
+    menu.style.top = `${flipsUp ? Math.max(8, point.y - height - (anchor ? anchor.height + 12 : 0)) : point.y}px`;
+    menu.style.transformOrigin = `${flipsLeft ? "right" : "left"} ${flipsUp ? "bottom" : "top"}`;
   }
   function afterMotion(element, run) {
     requestAnimationFrame(() => {
@@ -1380,24 +1385,13 @@
       void Promise.all(running.map((animation) => animation.finished.catch(() => void 0))).then(run);
     });
   }
-  var layers, FOCUSABLE;
+  var OPEN_OVERLAY, modalCount;
   var init_ui_layer = __esm({
     "src/components/ui-layer.ts"() {
       "use strict";
       init_utils();
-      layers = [];
-      FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-      document.addEventListener("keydown", (event) => {
-        const top2 = layers.at(-1);
-        if (!top2) return;
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          top2.close();
-          return;
-        }
-        if (event.key === "Tab") trapFocus(top2.element, event);
-      }, true);
+      OPEN_OVERLAY = "dialog:modal, .context-menu:popover-open";
+      modalCount = 0;
     }
   });
 
@@ -1418,7 +1412,7 @@
           const due = Date.now() - appStore.state.lastBackupPrompt >= REMINDER_INTERVAL;
           this.hidden = !due || this.dismissed || !appStore.state.bookmarks.length || !appStore.state.settings.layout.backupReminder;
           if (this.hidden) {
-            this.innerHTML = "";
+            this.replaceChildren();
             return;
           }
           this.innerHTML = `
@@ -1503,10 +1497,14 @@
   function interceptExtensionLink(event, url) {
     if (event.defaultPrevented || new URL(url).protocol !== "chrome-extension:") return;
     event.preventDefault();
-    openInNewTab(url);
+    void openInNewTab(url);
   }
-  function openInNewTab(url) {
-    void Promise.resolve(chrome.tabs.create({ url })).catch(notifyError);
+  async function openInNewTab(url) {
+    try {
+      await chrome.tabs.create({ url });
+    } catch (error) {
+      notifyError(error);
+    }
   }
   function openBookmarkDialog(source, detail) {
     source.dispatchEvent(new CustomEvent("open-bookmark-dialog", { bubbles: true, composed: true, detail }));
@@ -1515,35 +1513,38 @@
     const destinations = appStore.state.folders.filter((folder) => folder !== bookmark.folder);
     const siblings = bookmarksIn(bookmark.folder);
     const index = siblings.findIndex((item) => String(item.id) === String(bookmark.id));
+    const name = bookmarkName(bookmark);
+    const total = siblings.length;
     const reorder = [
       ...index > 0 ? [
-        { label: "\u4E0A\u79FB", icon: ICONS.arrowUp, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index - 1].id) },
-        ...index > 1 ? [{ label: "\u79FB\u5230\u6700\u524D", icon: ICONS.toTop, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[0].id) }] : []
+        { label: "\u4E0A\u79FB", icon: ICONS.arrowUp, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index - 1].id, `\u201C${name}\u201D\u5DF2\u4E0A\u79FB\uFF0C\u73B0\u5728\u662F\u7B2C ${index} \u4E2A\uFF0C\u5171 ${total} \u4E2A`) },
+        ...index > 1 ? [{ label: "\u79FB\u5230\u6700\u524D", icon: ICONS.toTop, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[0].id, `\u201C${name}\u201D\u5DF2\u79FB\u5230\u6700\u524D`) }] : []
       ] : [],
-      ...index >= 0 && index < siblings.length - 1 ? [{ label: "\u4E0B\u79FB", icon: ICONS.arrowDown, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index + 2]?.id) }] : []
+      ...index >= 0 && index < siblings.length - 1 ? [{ label: "\u4E0B\u79FB", icon: ICONS.arrowDown, action: () => void moveBookmark(bookmark.id, bookmark.folder, siblings[index + 2]?.id, `\u201C${name}\u201D\u5DF2\u4E0B\u79FB\uFF0C\u73B0\u5728\u662F\u7B2C ${index + 2} \u4E2A\uFF0C\u5171 ${total} \u4E2A`) }] : []
     ];
     openMenu([
-      { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => openInNewTab(bookmark.url) },
+      { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => void openInNewTab(bookmark.url) },
       { label: "\u7F16\u8F91\u2026", icon: ICONS.edit, action: () => openBookmarkDialog(source, { bookmark }) },
       ...reorder.length ? [{ separator: true }, ...reorder] : [],
       ...destinations.length ? [
         { separator: true },
         { heading: "\u79FB\u52A8\u5230\u6587\u4EF6\u5939" },
-        ...destinations.map((folder) => ({ label: folderLabel(folder), icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder) }))
+        ...destinations.map((folder) => ({ label: folderLabel(folder), icon: ICONS.move, action: () => void moveBookmark(bookmark.id, folder, void 0, `\u201C${name}\u201D\u5DF2\u79FB\u5230\u201C${folderLabel(folder)}\u201D`) }))
       ] : [],
       { separator: true },
       { label: "\u5220\u9664\u4E66\u7B7E", icon: ICONS.trash, danger: true, action: () => void deleteBookmark(bookmark) }
-    ], at);
+    ], at, `\u201C${name}\u201D\u7684\u64CD\u4F5C`);
   }
   function siteMenu(source, site, at) {
     openMenu([
-      { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => openInNewTab(site.url) },
+      { label: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00", icon: ICONS.open, action: () => void openInNewTab(site.url) },
       { label: "\u6DFB\u52A0\u5230\u4E66\u7B7E", icon: ICONS.plus, action: () => openBookmarkDialog(source, { draft: { url: site.url, name: site.title } }) }
-    ], at);
+    ], at, `\u201C${site.title}\u201D\u7684\u64CD\u4F5C`);
   }
-  async function moveBookmark(id, folder, targetId) {
+  async function moveBookmark(id, folder, targetId, announcement = "") {
     try {
       await appStore.moveBookmark(id, folder, targetId);
+      if (announcement) document.ariaNotify(announcement);
       return true;
     } catch (error) {
       notifyError(error);
@@ -1623,7 +1624,6 @@
       init_ui_layer();
       BookmarkDialog = class extends HTMLElement {
         editing;
-        releaseLayer = null;
         connectedCallback() {
           document.addEventListener("open-bookmark-dialog", this.onOpen);
         }
@@ -1632,29 +1632,27 @@
           this.close();
         }
         onOpen = (event) => {
-          this.editing = event.detail.bookmark;
           this.open(event.detail);
         };
         open({ bookmark, folder = ROOT_FOLDER, draft }) {
           this.close();
+          this.editing = bookmark;
           const selected = bookmark?.folder ?? folder;
           const title = bookmark ? "\u7F16\u8F91\u4E66\u7B7E" : "\u6DFB\u52A0\u4E66\u7B7E";
           this.innerHTML = `
-            <div class="modal-backdrop dialog-backdrop is-open">
-                <form class="modal bookmark-dialog glass-panel" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
-                    <header class="modal-header">
-                        <h2>${title}</h2>
-                    </header>
+            <dialog class="modal bookmark-dialog glass-panel" aria-labelledby="bookmark-dialog-title" closedby="any">
+                <form novalidate>
+                    <h1 class="modal-title" id="bookmark-dialog-title">${title}</h1>
                     <label class="field">
                         <span>\u7F51\u5740</span>
                         <span class="field-with-icon">
                             <img class="url-preview" src="${DEFAULT_ICON}" alt="">
-                            <input name="url" type="text" inputmode="url" required autocomplete="off" spellcheck="false" placeholder="example.com" value="${escapeHtml(bookmark?.url ?? draft?.url ?? "")}">
+                            <input name="url" type="text" inputmode="url" required autocomplete="off" spellcheck="false" placeholder="example.com" ${bookmark ? "" : "autofocus"} value="${escapeHtml(bookmark?.url ?? draft?.url ?? "")}">
                         </span>
                     </label>
                     <label class="field">
                         <span>\u540D\u79F0</span>
-                        <input name="name" type="text" maxlength="160" autocomplete="off" placeholder="\u7559\u7A7A\u5219\u4F7F\u7528\u7F51\u7AD9\u540D" value="${escapeHtml(bookmark?.name ?? draft?.name ?? "")}">
+                        <input name="name" type="text" maxlength="160" autocomplete="off" placeholder="\u7559\u7A7A\u5219\u4F7F\u7528\u7F51\u7AD9\u540D" ${bookmark ? "autofocus" : ""} value="${escapeHtml(bookmark?.name ?? draft?.name ?? "")}">
                     </label>
                     <label class="field">
                         <span>\u6587\u4EF6\u5939</span>
@@ -1667,16 +1665,16 @@
                             <input name="icon" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://example.com/icon.png" value="${escapeHtml(bookmark?.icon ?? "")}">
                         </label>
                     </details>
-                    <p class="field-error" role="alert" hidden></p>
+                    <p class="field-error" id="bookmark-url-error" role="alert" hidden></p>
                     <footer class="modal-actions">
                         <button class="pill-button cancel-dialog" type="button">\u53D6\u6D88</button>
                         <button class="pill-button primary" type="submit">\u4FDD\u5B58</button>
                     </footer>
                 </form>
-            </div>
+            </dialog>
         `;
-          const backdrop = this.querySelector(".dialog-backdrop");
-          const form = this.querySelector("form");
+          const dialog = this.querySelector("dialog");
+          const form = dialog.querySelector("form");
           const urlInput = form.querySelector('input[name="url"]');
           const iconInput = form.querySelector('input[name="icon"]');
           const preview = form.querySelector(".url-preview");
@@ -1693,13 +1691,16 @@
           urlInput.addEventListener("input", () => {
             error.hidden = true;
             urlInput.removeAttribute("aria-invalid");
+            urlInput.removeAttribute("aria-describedby");
             updatePreview();
           });
           iconInput.addEventListener("change", updatePreview);
-          this.querySelector(".cancel-dialog")?.addEventListener("click", () => this.close());
-          backdrop.addEventListener("pointerdown", (event) => {
-            if (event.target === backdrop) this.close();
-          });
+          form.querySelector(".cancel-dialog")?.addEventListener("click", () => this.close());
+          dialog.addEventListener("close", () => {
+            if (this.querySelector("dialog") !== dialog) return;
+            this.editing = void 0;
+            removeAfterExit(dialog);
+          }, { once: true });
           form.addEventListener("submit", async (event) => {
             event.preventDefault();
             const submit = form.querySelector('button[type="submit"]');
@@ -1715,6 +1716,7 @@
               error.textContent = "\u8BF7\u8F93\u5165\u6709\u6548\u7684\u7F51\u5740\uFF0C\u4F8B\u5982 github.com";
               error.hidden = false;
               urlInput.setAttribute("aria-invalid", "true");
+              urlInput.setAttribute("aria-describedby", error.id);
               urlInput.focus();
               return;
             }
@@ -1725,21 +1727,20 @@
               else await appStore.addBookmark(input);
               this.close();
             } catch (saveError) {
-              notifyError(saveError, "\u4FDD\u5B58\u5931\u8D25");
+              error.textContent = saveError instanceof Error && saveError.message ? saveError.message : "\u4FDD\u5B58\u5931\u8D25";
+              error.hidden = false;
             } finally {
               submit.disabled = false;
               form.removeAttribute("aria-busy");
             }
           });
-          this.releaseLayer = pushLayer(form, () => this.close());
-          requestAnimationFrame(() => (bookmark ? form.querySelector('input[name="name"]') : urlInput)?.focus());
+          dialog.showModal();
         }
         close() {
+          const dialog = this.querySelector("dialog");
+          if (dialog?.open) dialog.close();
+          else dialog?.remove();
           this.editing = void 0;
-          this.innerHTML = "";
-          const release2 = this.releaseLayer;
-          this.releaseLayer = null;
-          release2?.();
         }
       };
     }
@@ -1747,11 +1748,7 @@
 
   // src/core/history.ts
   function siteKey(url) {
-    try {
-      return new URL(url).host.toLowerCase().replace(/^www\./, "");
-    } catch {
-      return "";
-    }
+    return URL.parse(url)?.host.toLowerCase().replace(/^www\./, "") ?? "";
   }
   function rankSites(items) {
     const sites = /* @__PURE__ */ new Map();
@@ -1848,22 +1845,20 @@
     return Boolean(name) && name.length <= 18 && !isAddressLike(name);
   }
   function loadRecentSites() {
-    if (!recentSites) {
-      recentSites = new Promise((resolve, reject) => {
-        if (!chrome.history?.search) {
-          reject(new Error("\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u5386\u53F2\u8BB0\u5F55\u8BBF\u95EE"));
-          return;
-        }
-        chrome.history.search({ text: "", startTime: Date.now() - 30 * 24 * 60 * 60 * 1e3, maxResults: 3e3 }, (items) => {
-          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-          else resolve(rankSites(items ?? []));
-        });
-      });
-      recentSites.catch(() => {
-        recentSites = null;
-      });
-    }
+    recentSites ??= searchHistory();
+    recentSites.catch(() => {
+      recentSites = null;
+    });
     return recentSites;
+  }
+  async function searchHistory() {
+    if (!chrome.history?.search) throw new Error("\u6D4F\u89C8\u5668\u672A\u5F00\u653E\u5386\u53F2\u8BB0\u5F55\u8BBF\u95EE");
+    const items = await chrome.history.search({
+      text: "",
+      startTime: Date.now() - 30 * 24 * 60 * 60 * 1e3,
+      maxResults: 3e3
+    });
+    return rankSites(items ?? []);
   }
   var TITLE_SEPARATOR, recentSites;
   var init_history = __esm({
@@ -1908,11 +1903,7 @@
     });
   }
   function hostOf(url) {
-    try {
-      return new URL(url).hostname.replace(/^www\./, "");
-    } catch {
-      return "";
-    }
+    return URL.parse(url)?.hostname.replace(/^www\./, "") ?? "";
   }
   function hash(value) {
     let result = 0;
@@ -1960,6 +1951,9 @@
       BookmarkIndex = class extends StoreElement {
         observedChanges = ["bookmarks", "folders", "settings.layout"];
         draggingId = null;
+        listeners = null;
+        /** The control that last had focus in the index, by its `data-focus-key`, and its folder. */
+        lastFocus = null;
         /** Refits when the footer gives the index a different width, e.g. once the pause button appears. */
         resizeObserver = new ResizeObserver(() => this.refit());
         /** The width and window height the rows were last fitted to. */
@@ -1974,13 +1968,22 @@
           this.addEventListener("drop", this.onDrop);
           this.addEventListener("dragend", this.onDragEnd);
           this.addEventListener("wheel", this.onWheel, { passive: false });
-          window.addEventListener("resize", this.refit);
+          this.addEventListener("focusin", this.onFocusIn);
+          this.addEventListener("focusout", this.onFocusOut);
+          this.listeners = new AbortController();
+          const { signal } = this.listeners;
+          window.addEventListener("resize", this.refit, { signal });
+          document.addEventListener("close", this.onOverlayClosed, { capture: true, signal });
+          document.addEventListener("toggle", (event) => {
+            if (event.newState === "closed") this.onOverlayClosed();
+          }, { capture: true, signal });
           this.resizeObserver.observe(this);
           super.connectedCallback();
         }
         disconnectedCallback() {
           super.disconnectedCallback();
-          window.removeEventListener("resize", this.refit);
+          this.listeners?.abort();
+          this.listeners = null;
           this.resizeObserver.disconnect();
         }
         render() {
@@ -1989,7 +1992,7 @@
           if (this.hidden) return;
           if (showRecent && this.recent.state === "idle") void this.loadRecent();
           const folders = appStore.state.folders.filter((folder) => folder !== ROOT_FOLDER);
-          const focused = this.contains(document.activeElement) ? document.activeElement.closest("[data-bookmark-id]")?.dataset.bookmarkId : void 0;
+          const focus = this.contains(document.activeElement) ? this.lastFocus : null;
           this.innerHTML = `
             <nav class="index" aria-label="\u4E66\u7B7E">
                 ${this.groupTemplate(ROOT_FOLDER)}
@@ -1997,21 +2000,51 @@
                 ${showRecent ? this.recentTemplate() : ""}
             </nav>`;
           bindSiteIcons(this);
-          this.querySelector(".index")?.addEventListener("scroll", this.syncEdges, { passive: true });
           this.fit();
-          if (focused) this.querySelector(`[data-bookmark-id="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
+          if (focus) {
+            this.lastFocus = focus;
+            this.restoreFocus();
+          }
+        }
+        /** Remembers the focused control by what it stands for, since a redraw replaces the element itself. */
+        onFocusIn = (event) => {
+          const target = event.target.closest("[data-focus-key]");
+          if (target) this.lastFocus = { key: target.dataset.focusKey, folder: target.closest(".index-group")?.dataset.folder ?? ROOT_FOLDER };
+        };
+        /** Focus that leaves for a menu or dialog it opened will come back here; leaving for anywhere else ends that. */
+        onFocusOut = (event) => {
+          const next = event.relatedTarget;
+          if (!next || !(this.contains(next) || next.closest("dialog, .context-menu"))) this.lastFocus = null;
+        };
+        /**
+         * A menu or dialog opened from the index returns focus to its opener when it
+         * closes, but a save may have redrawn the index meanwhile; focus then goes to
+         * the same control in the new index, or to its folder if that control is gone.
+         */
+        onOverlayClosed = () => {
+          requestAnimationFrame(() => {
+            if (this.lastFocus && (document.activeElement === document.body || !document.activeElement)) this.restoreFocus();
+          });
+        };
+        restoreFocus() {
+          if (!this.lastFocus) return;
+          const { key, folder } = this.lastFocus;
+          const group2 = this.querySelector(`.index-group[data-folder="${CSS.escape(folder)}"]`);
+          const target = this.querySelector(`[data-focus-key="${CSS.escape(key)}"]`) ?? group2?.querySelector("[data-bookmark-id], .index-more, [data-add-folder]") ?? this.querySelector("[data-focus-key]");
+          target?.focus({ preventScroll: true });
         }
         groupTemplate(folder) {
           const bookmarks = bookmarksIn(folder);
           const label = escapeHtml(folderLabel(folder));
-          const empty = bookmarks.length ? "" : folder === ROOT_FOLDER && !appStore.state.bookmarks.length ? `<li><button class="index-link index-first" type="button" data-add-folder="${escapeHtml(folder)}">${ICONS.plus}\u6DFB\u52A0\u7B2C\u4E00\u4E2A\u4E66\u7B7E</button></li>` : '<li class="index-note">\u62D6\u4E66\u7B7E\u5230\u8FD9\u91CC</li>';
+          const key = escapeHtml(folder);
+          const empty = bookmarks.length ? "" : folder === ROOT_FOLDER && !appStore.state.bookmarks.length ? `<li><button class="index-link index-first" type="button" data-add-folder="${key}" data-focus-key="first">${ICONS.plus}\u6DFB\u52A0\u7B2C\u4E00\u4E2A\u4E66\u7B7E</button></li>` : '<li class="index-note">\u62D6\u4E66\u7B7E\u5230\u8FD9\u91CC</li>';
           return `
-            <section class="index-group" data-folder="${escapeHtml(folder)}" aria-label="${label}">
-                <h2 class="index-heading">
-                    <span class="index-title">${label}</span>
-                    <button class="index-action" type="button" data-add-folder="${escapeHtml(folder)}" aria-label="\u6DFB\u52A0\u4E66\u7B7E\u5230\u201C${label}\u201D" title="\u6DFB\u52A0\u4E66\u7B7E">${ICONS.plus}</button>
-                    <button class="index-action index-more" type="button" aria-label="\u201C${label}\u201D\u7684\u66F4\u591A\u64CD\u4F5C" title="\u66F4\u591A\u64CD\u4F5C">${ICONS.more}</button>
-                </h2>
+            <section class="index-group" data-folder="${key}">
+                <div class="index-heading">
+                    <h2 class="index-title">${label}</h2>
+                    <button class="index-action" type="button" data-add-folder="${key}" data-focus-key="add:${key}" aria-label="\u6DFB\u52A0\u4E66\u7B7E\u5230\u201C${label}\u201D" title="\u6DFB\u52A0\u4E66\u7B7E">${ICONS.plus}</button>
+                    <button class="index-action index-more" type="button" data-focus-key="more:${key}" aria-haspopup="menu" aria-expanded="false" aria-label="\u201C${label}\u201D\u7684\u66F4\u591A\u64CD\u4F5C" title="\u66F4\u591A\u64CD\u4F5C">${ICONS.more}</button>
+                </div>
                 <ul class="index-list">
                     ${bookmarks.map((bookmark) => this.bookmarkTemplate(bookmark)).join("")}
                     ${empty}
@@ -2022,7 +2055,7 @@
           const name = bookmarkName(bookmark);
           return `
             <li><a class="index-link" href="${escapeHtml(bookmark.url)}" ${this.target()} rel="noopener noreferrer"
-                data-bookmark-id="${escapeHtml(bookmark.id)}" draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
+                data-bookmark-id="${escapeHtml(bookmark.id)}" data-focus-key="bookmark:${escapeHtml(bookmark.id)}" draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
                 ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark }, "index-icon", ICON_SIZE)}<span class="index-name">${escapeHtml(name)}</span>
             </a></li>`;
         }
@@ -2034,8 +2067,8 @@
                 </a></li>`).join("") : "";
           const note = state === "error" ? escapeHtml(this.recent.error) : state === "ready" && !items ? "\u6700\u8FD1 30 \u5929\u6CA1\u6709\u8BB0\u5F55" : state === "ready" ? "" : "\u6B63\u5728\u6574\u7406\u2026";
           return `
-            <section class="index-group is-recent" aria-label="\u5E38\u8BBF\u95EE">
-                <h2 class="index-heading"><span class="index-title">\u5E38\u8BBF\u95EE</span></h2>
+            <section class="index-group is-recent">
+                <div class="index-heading"><h2 class="index-title">\u5E38\u8BBF\u95EE</h2></div>
                 <ul class="index-list">${items}${note ? `<li class="index-note">${note}</li>` : ""}</ul>
             </section>`;
         }
@@ -2049,28 +2082,30 @@
         refit = () => {
           if (this.sizeKey() !== this.fittedSize) this.fit();
         };
-        /** Adds rows until every column fits the width, up to a share of the window; past that the index scrolls sideways. */
+        /**
+         * The fewest rows (from MIN_ROWS, up to a share of the window) at which every
+         * column fits the width; past that the index scrolls sideways. More rows only
+         * ever narrow the index, so a binary search needs a few layouts, not one per row.
+         */
         fit() {
           const index = this.querySelector(".index");
           if (!index) return;
           this.fittedSize = this.sizeKey();
           const longest = Math.max(MIN_ROWS, ...[...index.querySelectorAll(".index-list")].map((list) => list.childElementCount));
           const maxRows = Math.min(longest, Math.max(MIN_ROWS, Math.floor(window.innerHeight * MAX_HEIGHT_SHARE / ROW_HEIGHT)));
-          let rows = MIN_ROWS;
-          index.style.setProperty("--rows", String(rows));
-          while (rows < maxRows && index.scrollWidth > index.clientWidth + 1) {
-            rows += 1;
+          const fits = (rows) => {
             index.style.setProperty("--rows", String(rows));
+            return index.scrollWidth <= index.clientWidth + 1;
+          };
+          let low = MIN_ROWS;
+          let high = maxRows;
+          while (low < high) {
+            const middle = Math.floor((low + high) / 2);
+            if (fits(middle)) high = middle;
+            else low = middle + 1;
           }
-          this.syncEdges();
+          index.style.setProperty("--rows", String(low));
         }
-        /** Fades only the edges that have columns scrolled past them. */
-        syncEdges = () => {
-          const index = this.querySelector(".index");
-          if (!index) return;
-          index.classList.toggle("can-scroll-left", index.scrollLeft > 1);
-          index.classList.toggle("can-scroll-right", index.scrollLeft + index.clientWidth < index.scrollWidth - 1);
-        };
         /** A mouse wheel scrolls an overflowing index sideways. */
         onWheel = (event) => {
           const index = this.querySelector(".index");
@@ -2112,8 +2147,9 @@
         openFolderMenu(folder, at) {
           const add2 = { label: "\u6DFB\u52A0\u4E66\u7B7E\u2026", icon: ICONS.plus, action: () => openBookmarkDialog(this, { folder }) };
           const create = { label: "\u65B0\u5EFA\u6587\u4EF6\u5939\u2026", icon: ICONS.folderPlus, action: () => void createFolder() };
+          const label = `\u201C${folderLabel(folder)}\u201D\u7684\u64CD\u4F5C`;
           if (folder === ROOT_FOLDER) {
-            openMenu([add2, create], at);
+            openMenu([add2, create], at, label);
             return;
           }
           openMenu([
@@ -2122,7 +2158,7 @@
             create,
             { separator: true },
             { label: "\u5220\u9664\u6587\u4EF6\u5939", icon: ICONS.trash, danger: true, action: () => void deleteFolder(folder) }
-          ], at);
+          ], at, label);
         }
         onDragStart = (event) => {
           const link = event.target.closest("[data-bookmark-id]");
@@ -2393,6 +2429,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         drawFrame = 0;
         stopWatchingDisplay = null;
         classObserver = new MutationObserver(() => this.syncVisibility());
+        /** Uniform data for one frame, reused while the pointer moves instead of allocated per frame. */
+        frameData = new Float32Array(FRAME_FLOATS);
+        rimData = new Float32Array(MAX_RIMS * RIM_FLOATS);
         /** Ready to draw: HDR screen, the setting on and a WebGPU device. */
         get active() {
           return Boolean(this.device) && isHdrDisplay() && document.body.classList.contains("hdr-highlights");
@@ -2486,10 +2525,12 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.frameBuffer = frameBuffer;
             this.rimBuffer = rimBuffer;
             this.canvas.dataset.hdrRenderer = "webgpu";
-            void device.lost.then(() => {
+            void device.lost.then((info) => {
+              if (this.device !== device) return;
               this.device = null;
               this.canvas.dataset.hdrRenderer = "lost";
               this.syncVisibility();
+              if (info?.reason !== "destroyed") void this.initialize();
             });
             this.syncVisibility();
           } catch {
@@ -2516,22 +2557,20 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         draw() {
           if (!this.active) return;
           const scale = this.canvas.width / Math.max(1, innerWidth);
-          this.device.queue.writeBuffer(this.frameBuffer, 0, new Float32Array([
-            this.pointer.x,
-            this.pointer.y,
-            this.rims.length,
-            scale,
-            PEAK,
-            0,
-            0,
-            0
-          ]));
-          const rims = new Float32Array(MAX_RIMS * RIM_FLOATS);
-          this.rims.forEach((rim, index) => rims.set(
-            [rim.x, rim.y, rim.width, rim.height, rim.radius, rim.opacity, rim.glint, 0],
-            index * RIM_FLOATS
-          ));
-          this.device.queue.writeBuffer(this.rimBuffer, 0, rims);
+          this.frameData.set([this.pointer.x, this.pointer.y, this.rims.length, scale, PEAK]);
+          this.device.queue.writeBuffer(this.frameBuffer, 0, this.frameData);
+          const rims = this.rimData;
+          this.rims.forEach((rim, index) => {
+            const offset = index * RIM_FLOATS;
+            rims[offset] = rim.x;
+            rims[offset + 1] = rim.y;
+            rims[offset + 2] = rim.width;
+            rims[offset + 3] = rim.height;
+            rims[offset + 4] = rim.radius;
+            rims[offset + 5] = rim.opacity;
+            rims[offset + 6] = rim.glint;
+          });
+          this.device.queue.writeBuffer(this.rimBuffer, 0, rims, 0, this.rims.length * RIM_FLOATS);
           const encoder = this.device.createCommandEncoder();
           const pass = encoder.beginRenderPass({
             colorAttachments: [{
@@ -2582,12 +2621,18 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       return refracted[0] * (depth / refracted[1]);
     });
   }
+  function defaultProfile() {
+    if (!profile) {
+      const displacements = precalculateDisplacements();
+      profile = { displacements, maximumDisplacement: Math.max(...displacements.map(Math.abs)) };
+    }
+    return profile;
+  }
   function createRefractionMap(shape) {
     const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
     const radius = clamp(shape.radius, 2, Math.min(shape.width, shape.height) / 2);
     const bezelWidth = Math.max(2, radius * 0.75);
-    const displacements = precalculateDisplacements();
-    const maximumDisplacement = Math.max(...displacements.map(Math.abs));
+    const { displacements, maximumDisplacement } = defaultProfile();
     return {
       displacement: imageDataUrl(createDisplacementMap(
         shape.width,
@@ -2627,8 +2672,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         if (!distance) continue;
         const antiAlias = distanceSquared < radiusSquared ? 1 : 1 - (distance - scaledRadius);
         const distanceFromBorder = scaledRadius - distance;
-        const sample2 = Math.floor(distanceFromBorder / scaledBezel * displacements.length);
-        const magnitude = displacements[sample2] ?? 0;
+        const sample = Math.floor(distanceFromBorder / scaledBezel * displacements.length);
+        const magnitude = displacements[sample] ?? 0;
         const normalizedX = -(offsetX / distance) * magnitude / maximumDisplacement;
         const normalizedY = -(offsetY / distance) * magnitude / maximumDisplacement;
         const index = (y * canvasWidth + x) * 4;
@@ -2652,7 +2697,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
   function clamp(value, minimum, maximum) {
     return Math.min(maximum, Math.max(minimum, value));
   }
-  var REFRACTIVE_INDEX, RADIAL_SAMPLE_COUNT, DISTANCE_TO_BACKDROP, GLASS_THICKNESS;
+  var REFRACTIVE_INDEX, RADIAL_SAMPLE_COUNT, DISTANCE_TO_BACKDROP, GLASS_THICKNESS, profile;
   var init_liquid_optics = __esm({
     "src/components/liquid-optics.ts"() {
       "use strict";
@@ -2660,6 +2705,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       RADIAL_SAMPLE_COUNT = 128;
       DISTANCE_TO_BACKDROP = 55;
       GLASS_THICKNESS = 63;
+      profile = null;
     }
   });
 
@@ -2710,6 +2756,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (records.some((record) => record.type === "childList")) this.scan();
           this.wake();
         });
+        listeners = null;
         hovered = null;
         pointer = { x: -1e4, y: -1e4 };
         smoothPointer = { x: -1e4, y: -1e4 };
@@ -2729,23 +2776,23 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.hdr.connect();
           this.scan();
           this.mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "hidden"] });
-          document.addEventListener("pointermove", this.onPointerMove, { passive: true, capture: true });
-          document.addEventListener("pointerdown", this.wake, { passive: true, capture: true });
-          document.addEventListener("pointerup", this.wake, { passive: true, capture: true });
-          document.addEventListener("pointerleave", this.onPointerLeave);
-          window.addEventListener("scroll", this.wake, { passive: true, capture: true });
-          window.addEventListener("resize", this.wake);
+          this.listeners = new AbortController();
+          const { signal } = this.listeners;
+          document.addEventListener("pointermove", this.onPointerMove, { passive: true, capture: true, signal });
+          document.addEventListener("pointerdown", this.wake, { passive: true, capture: true, signal });
+          document.addEventListener("pointerup", this.wake, { passive: true, capture: true, signal });
+          document.addEventListener("pointerleave", this.onPointerLeave, { signal });
+          document.addEventListener("toggle", this.wake, { capture: true, signal });
+          document.addEventListener("close", this.wake, { capture: true, signal });
+          window.addEventListener("scroll", this.wake, { passive: true, capture: true, signal });
+          window.addEventListener("resize", this.wake, { signal });
           this.wake();
         }
         disconnectedCallback() {
           this.resizeObserver.disconnect();
           this.mutationObserver.disconnect();
-          document.removeEventListener("pointermove", this.onPointerMove, true);
-          document.removeEventListener("pointerdown", this.wake, true);
-          document.removeEventListener("pointerup", this.wake, true);
-          document.removeEventListener("pointerleave", this.onPointerLeave);
-          window.removeEventListener("scroll", this.wake, true);
-          window.removeEventListener("resize", this.wake);
+          this.listeners?.abort();
+          this.listeners = null;
           cancelAnimationFrame(this.frame);
           this.frame = 0;
           this.hdr.disconnect();
@@ -2901,7 +2948,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         baidu: { label: "\u767E\u5EA6", url: "https://www.baidu.com/s?wd=" },
         duckduckgo: { label: "DuckDuckGo", url: "https://duckduckgo.com/?q=" }
       };
-      SHORTCUT_LABEL = /Mac|iPhone|iPad/.test(navigator.platform) ? "\u2318K" : "Ctrl K";
+      SHORTCUT_LABEL = /mac|iphone|ipad|ios/i.test(navigator.userAgentData?.platform ?? navigator.platform) ? "\u2318K" : "Ctrl K";
       ENGINE_ORDER = Object.keys(ENGINES);
       GROUP_TITLES = { url: "\u7F51\u5740", bookmark: "\u4E66\u7B7E", site: "\u5E38\u8BBF\u95EE", web: "\u641C\u7D22\u7F51\u7EDC", recent: "\u6700\u8FD1\u641C\u7D22" };
       ROW_ICON_SIZE = 20;
@@ -2918,7 +2965,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.hidden = !showSearch && !this.summoned;
           if (this.querySelector(".search-field")) return;
           this.innerHTML = `
-            <div class="search-box" role="search">
+            <search class="search-box">
                 <label class="glass search-field" data-glass>
                     ${ICONS.search}
                     <span class="search-input">
@@ -2931,7 +2978,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                     <kbd class="search-shortcut">${SHORTCUT_LABEL}</kbd>
                 </label>
                 <div class="glass-panel search-results" id="search-results" role="listbox" aria-label="\u641C\u7D22\u5EFA\u8BAE" hidden></div>
-            </div>`;
+            </search>`;
           this.bind();
         }
         /** Puts the caret in the field, showing it first when the setting hides it. */
@@ -2974,7 +3021,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             if (!row) return;
             const item = this.rows[Number(row.dataset.index)];
             if (target.closest(".row-remove") && item?.kind === "recent") {
-              void appStore.removeRecentSearch(item.query).then(() => this.renderResults(), notifyError);
+              void this.forget(item.query);
               return;
             }
             this.activate(Number(row.dataset.index), event.metaKey || event.ctrlKey);
@@ -2992,12 +3039,25 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.engine = appStore.state.settings.layout.searchEngine;
           this.selected = 0;
           this.renderResults();
-          if (!appStore.state.settings.layout.showRecent || this.sites.length) return;
-          void loadRecentSites().then((sites) => {
-            this.sites = sites;
-            if (this.hasFocus) this.renderResults();
-          }).catch(() => void 0);
+          if (appStore.state.settings.layout.showRecent && !this.sites.length) void this.loadSites();
         };
+        /** Frequent sites join the suggestions once history has been read; without history access they simply stay out. */
+        async loadSites() {
+          try {
+            this.sites = await loadRecentSites();
+          } catch {
+            return;
+          }
+          if (this.hasFocus) this.renderResults();
+        }
+        async forget(query) {
+          try {
+            await appStore.removeRecentSearch(query);
+            this.renderResults();
+          } catch (error) {
+            notifyError(error);
+          }
+        }
         onKeyDown = (event) => {
           if (event.isComposing) return;
           const input = this.input;
@@ -3018,7 +3078,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           } else if (event.key === "Delete" && event.shiftKey && this.rows[this.selected]?.kind === "recent") {
             event.preventDefault();
             const row = this.rows[this.selected];
-            if (row.kind === "recent") void appStore.removeRecentSearch(row.query).then(() => this.renderResults(), notifyError);
+            if (row.kind === "recent") void this.forget(row.query);
           } else if (event.key === "Escape") {
             event.preventDefault();
             if (input.value) {
@@ -3064,17 +3124,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (!this.hasFocus) return;
           this.rows = this.buildRows();
           this.selected = Math.min(this.selected, Math.max(0, this.rows.length - 1));
-          let previous = "";
-          this.results.innerHTML = this.rows.map((row, index) => {
-            const heading = row.kind !== previous ? `<h3 class="search-heading" role="presentation">${GROUP_TITLES[row.kind]}</h3>` : "";
-            previous = row.kind;
-            return `${heading}
-                <div class="search-row" role="option" id="search-option-${index}" data-index="${index}" aria-selected="false">
-                    ${rowIcon(row)}
-                    <span class="row-text"><strong>${escapeHtml(row.title)}</strong>${row.subtitle ? `<small>${escapeHtml(row.subtitle)}</small>` : ""}</span>
-                    ${row.kind === "recent" ? '<button class="row-remove" type="button" tabindex="-1" aria-label="\u5220\u9664\u8FD9\u6761\u8BB0\u5F55" aria-keyshortcuts="Shift+Delete" title="\u5220\u9664\uFF08Shift+Delete\uFF09">\u5220\u9664</button>' : ""}
-                </div>`;
-          }).join("");
+          this.results.innerHTML = [...Map.groupBy(this.rows.entries(), ([, row]) => row.kind)].map(([kind, entries]) => `
+            <div role="group" aria-labelledby="search-group-${kind}">
+                <h3 class="search-heading" id="search-group-${kind}" role="presentation">${GROUP_TITLES[kind]}</h3>
+                ${entries.map(([index, row]) => `
+                    <div class="search-row" role="option" id="search-option-${index}" data-index="${index}" aria-selected="false">
+                        ${rowIcon(row)}
+                        <span class="row-text"><strong>${escapeHtml(row.title)}</strong>${row.subtitle ? `<small>${escapeHtml(row.subtitle)}</small>` : ""}</span>
+                        ${row.kind === "recent" ? '<button class="row-remove" type="button" tabindex="-1" aria-hidden="true" title="\u5220\u9664\uFF08Shift+Delete\uFF09">\u5220\u9664</button>' : ""}
+                    </div>`).join("")}
+            </div>`).join("");
           this.results.hidden = !this.rows.length;
           this.input.setAttribute("aria-expanded", String(!this.results.hidden));
           this.classList.toggle("is-open", !this.results.hidden);
@@ -3116,11 +3175,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const row = this.rows[index];
           if (!row) {
             const query = this.input.value.trim();
-            if (query) this.search(query, background);
+            if (query) void this.search(query, background);
             return;
           }
           if (row.kind === "web" || row.kind === "recent") {
-            this.search(row.query, background);
+            void this.search(row.query, background);
             return;
           }
           this.go(row.url, background || appStore.state.settings.layout.openInNewTab || new URL(row.url).protocol === "chrome-extension:");
@@ -3131,15 +3190,20 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             window.location.href = url;
             return;
           }
-          openInNewTab(url);
+          void openInNewTab(url);
           this.input.value = "";
           this.input.blur();
         }
         /** A failed save of the recent search never stops the search itself. */
-        search(query, newTab = false) {
+        async search(query, newTab = false) {
           const target = `${ENGINES[this.engine].url}${encodeURIComponent(query)}`;
-          const save = appStore.state.settings.layout.saveSearches ? appStore.saveRecentSearch(query) : Promise.resolve();
-          void save.catch(() => void 0).then(() => this.go(target, newTab));
+          if (appStore.state.settings.layout.saveSearches) {
+            try {
+              await appStore.saveRecentSearch(query);
+            } catch {
+            }
+          }
+          this.go(target, newTab);
         }
         cycleEngine(step) {
           const index = ENGINE_ORDER.indexOf(this.engine);
@@ -3512,42 +3576,49 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
 
   // src/components/settings-panel.ts
   function pane(name, title, body) {
-    return `<section class="settings-pane" data-pane="${name}" aria-label="${title}" hidden><h2 class="settings-pane-title">${title}</h2>${body}</section>`;
+    return `<section class="settings-pane" id="settings-pane-${name}" role="tabpanel" aria-labelledby="settings-tab-${name}" data-pane="${name}" hidden><h2 class="settings-pane-title">${title}</h2>${body}</section>`;
   }
   function group(title, body) {
     return `${title ? `<h3 class="settings-heading">${title}</h3>` : ""}<div class="settings-group">${body}</div>`;
   }
-  function rowLabel(label, sub) {
-    return `<span class="row-label"><span class="row-title">${label}</span>${sub ? `<span class="row-sub">${sub}</span>` : ""}</span>`;
+  function rowLabel(label, sub, id = "") {
+    const ids = id ? { title: ` id="${id}-title"`, sub: ` id="${id}-sub"` } : { title: "", sub: "" };
+    return `<span class="row-label"><span class="row-title"${ids.title}>${label}</span>${sub ? `<span class="row-sub"${ids.sub}>${sub}</span>` : ""}</span>`;
+  }
+  function describedBy(id, sub) {
+    return `aria-labelledby="${id}-title"${sub ? ` aria-describedby="${id}-sub"` : ""}`;
   }
   function infoRow(label, sub, control) {
     return `<div class="setting-row">${rowLabel(label, sub)}${control}</div>`;
   }
   function segmentRow(name, label, value, options, sub = "", kind = "radio") {
-    const radio = kind === "radio";
+    const id = `segment-${name}`;
+    const items = options.map(([optionValue, optionLabel], index) => {
+      const checked = optionValue === value;
+      if (kind === "radio") {
+        return `<label data-value="${optionValue}"><input class="visually-hidden" type="radio" name="${id}" value="${optionValue}" ${checked ? "checked" : ""}><span>${escapeHtml(optionLabel)}</span></label>`;
+      }
+      const focusable = checked || index === 0 && !options.some(([option]) => option === value);
+      return `<button type="button" tabindex="${focusable ? 0 : -1}" class="${checked ? "is-active" : ""}" data-value="${optionValue}">${escapeHtml(optionLabel)}</button>`;
+    }).join("");
     return `
         <div class="setting-row segment-row">
-            <span class="row-label"><span class="row-title" id="segment-${name}">${label}</span>${sub ? `<span class="row-sub">${sub}</span>` : ""}</span>
-            <div class="segmented" role="${radio ? "radiogroup" : "group"}" aria-labelledby="segment-${name}" data-segment="${name}" data-kind="${kind}">
-                ${options.map(([optionValue, optionLabel], index) => {
-      const checked = optionValue === value;
-      const focusable = checked || index === 0 && !options.some(([option]) => option === value);
-      const state = radio ? `role="radio" aria-checked="${checked}"` : `aria-pressed="${checked}"`;
-      return `<button type="button" ${state} tabindex="${focusable ? 0 : -1}" class="${checked ? "is-active" : ""}" data-value="${optionValue}">${escapeHtml(optionLabel)}</button>`;
-    }).join("")}
-            </div>
+            ${rowLabel(label, sub, id)}
+            <div class="segmented" role="${kind === "radio" ? "radiogroup" : "toolbar"}" ${describedBy(id, sub)} data-segment="${name}" data-kind="${kind}">${items}</div>
         </div>`;
   }
   function toggleRow(name, label, sub = "") {
-    return `<label class="setting-row toggle-row">${rowLabel(label, sub)}<span class="switch"><input type="checkbox" role="switch" data-toggle="${name}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></span></label>`;
+    const id = `toggle-${name}`;
+    return `<label class="setting-row toggle-row">${rowLabel(label, sub, id)}<span class="switch"><input type="checkbox" role="switch" data-toggle="${name}" ${describedBy(id, sub)}><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></span></label>`;
   }
   function rangeRow(name, label, value, min, max, unit, sub = "") {
+    const id = `range-${name}`;
     return `
         <div class="setting-row">
-            ${rowLabel(label, sub)}
+            ${rowLabel(label, sub, id)}
             <span class="range-control">
-                <input class="slider" type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}">
-                <output>${value}${unit}</output>
+                <input class="slider" type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-valuetext="${value}${unit}" ${describedBy(id, sub)}>
+                <output aria-hidden="true">${value}${unit}</output>
             </span>
         </div>`;
   }
@@ -3584,6 +3655,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       "use strict";
       init_backup_service();
       init_media_store();
+      init_storage();
       init_store();
       init_utils();
       init_wallpaper_service();
@@ -3605,9 +3677,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         observedChanges = ["settings.appearance", "settings.wallpaper", "settings.layout", "bookmarks", "folders"];
         openState = false;
         activePane = "appearance";
-        releaseLayer = null;
         previewUrl = "";
         previewToken = 0;
+        dataToken = 0;
         stopWatchingDisplay = null;
         connectedCallback() {
           super.connectedCallback();
@@ -3615,26 +3687,23 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           document.addEventListener("paste", this.onPaste);
         }
         open() {
-          if (this.openState) return;
+          const dialog = this.dialog;
+          if (this.openState || !dialog) return;
           this.openState = true;
-          this.syncOpenState();
           this.syncHdrDescription();
-          this.placeSegmentThumbs();
-          this.releaseLayer = pushLayer(this.querySelector(".settings-window"), () => this.close());
+          this.syncDateExamples();
+          dialog.showModal();
           void this.refreshPreview();
           void this.refreshData();
-          const windowElement = this.querySelector(".settings-window");
-          afterMotion(windowElement, () => {
-            if (this.openState && !windowElement.contains(document.activeElement)) this.querySelector(".settings-nav-item.is-active")?.focus();
+          afterMotion(dialog, () => {
+            if (this.openState) this.querySelector('.settings-nav-item[aria-selected="true"]')?.focus();
           });
         }
         close() {
-          if (!this.openState) return;
-          this.openState = false;
-          this.syncOpenState();
-          const release2 = this.releaseLayer;
-          this.releaseLayer = null;
-          release2?.();
+          if (this.dialog?.open) this.dialog.close();
+        }
+        get dialog() {
+          return this.querySelector("dialog.settings-window");
         }
         disconnectedCallback() {
           super.disconnectedCallback();
@@ -3650,37 +3719,35 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         render() {
           const settings = appStore.state.settings;
           this.innerHTML = `
-            <div class="settings-scrim" aria-hidden="true"></div>
-            <section class="glass-panel settings-window" role="dialog" aria-modal="true" aria-label="\u8BBE\u7F6E" aria-hidden="true" inert>
+            <dialog class="glass-panel settings-window" aria-label="\u8BBE\u7F6E" closedby="any">
                 <aside class="settings-sidebar">
                     <div class="settings-title">
                         <button class="settings-close" type="button" aria-label="\u5173\u95ED\u8BBE\u7F6E" aria-keyshortcuts="Escape" title="\u5173\u95ED\uFF08Esc\uFF09">${ICONS.close}</button>
                     </div>
                     <label class="settings-search">
                         ${ICONS.search}
-                        <input type="search" placeholder="\u641C\u7D22" aria-label="\u641C\u7D22\u8BBE\u7F6E" autocomplete="off">
+                        <input type="search" placeholder="\u641C\u7D22" aria-label="\u641C\u7D22\u8BBE\u7F6E" aria-controls="settings-content" autocomplete="off">
                     </label>
-                    <nav class="settings-nav" aria-label="\u8BBE\u7F6E\u5206\u7C7B">
+                    <div class="settings-nav" role="tablist" aria-orientation="vertical" aria-label="\u8BBE\u7F6E\u5206\u7C7B">
                         ${PANES.map(([pane2, label]) => `
-                            <button class="settings-nav-item" type="button" data-pane="${pane2}">
+                            <button class="settings-nav-item" type="button" role="tab" id="settings-tab-${pane2}" aria-controls="settings-pane-${pane2}" aria-selected="false" tabindex="-1" data-pane="${pane2}">
                                 <span class="nav-tile" data-tile="${pane2}">${SETTINGS_GLYPHS[pane2]}</span><span>${label}</span>
                             </button>`).join("")}
-                    </nav>
+                    </div>
                     <span class="settings-version">Infinity New Tab ${escapeHtml(chrome.runtime?.getManifest?.().version ?? "")}</span>
                 </aside>
-                <div class="settings-content">
+                <div class="settings-content" id="settings-content">
                     ${this.appearancePane(settings)}
                     ${this.widgetsPane(settings)}
                     ${this.wallpaperPane(settings)}
                     ${this.dataPane()}
-                    <p class="settings-empty" hidden></p>
+                    <p class="settings-empty" role="status"></p>
                 </div>
-            </section>`;
+            </dialog>`;
           this.bindChrome();
           this.bindControls();
           this.syncControls(settings);
           this.selectPane(this.activePane);
-          this.syncOpenState();
         }
         appearancePane({ appearance }) {
           const now = /* @__PURE__ */ new Date();
@@ -3762,8 +3829,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         `);
         }
         bindChrome() {
+          const dialog = this.dialog;
+          dialog.addEventListener("close", () => {
+            this.openState = false;
+          });
           this.querySelector(".settings-close")?.addEventListener("click", () => this.close());
-          this.querySelector(".settings-scrim")?.addEventListener("click", () => this.close());
           const nav = this.querySelector(".settings-nav");
           nav.addEventListener("click", (event) => {
             const button = event.target.closest("[data-pane]");
@@ -3772,35 +3842,43 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.selectPane(button.dataset.pane);
           });
           nav.addEventListener("keydown", (event) => {
-            if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-            event.preventDefault();
             const index = PANES.findIndex(([pane2]) => pane2 === this.activePane);
-            const next = PANES[(index + (event.key === "ArrowDown" ? 1 : -1) + PANES.length) % PANES.length][0];
+            const target = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: PANES.length - 1 }[event.key];
+            if (target === void 0) return;
+            event.preventDefault();
+            const next = PANES[(target + PANES.length) % PANES.length][0];
             this.clearSearch();
             this.selectPane(next);
             this.querySelector(`[data-pane="${next}"]`)?.focus();
           });
-          this.querySelector(".settings-search input")?.addEventListener("input", (event) => {
-            this.filter(event.target.value);
+          const search = this.querySelector(".settings-search input");
+          search.addEventListener("input", () => this.filter(search.value));
+          search.addEventListener("keydown", (event) => {
+            if (event.key !== "Escape" || !search.value) return;
+            event.preventDefault();
+            this.clearSearch();
           });
         }
         bindControls() {
-          this.querySelectorAll("[data-segment]").forEach((groupElement) => {
+          this.querySelectorAll('[data-segment][data-kind="radio"]').forEach((groupElement) => {
+            groupElement.addEventListener("change", (event) => {
+              void this.applySegment(groupElement.dataset.segment ?? "", event.target.value);
+            });
+          });
+          this.querySelectorAll('[data-segment][data-kind="actions"]').forEach((groupElement) => {
             const buttons = [...groupElement.querySelectorAll("[data-value]")];
-            const actions = groupElement.dataset.kind === "actions";
             buttons.forEach((button) => button.addEventListener("click", () => {
               void this.applySegment(groupElement.dataset.segment ?? "", button.dataset.value ?? "");
             }));
             groupElement.addEventListener("keydown", (event) => {
               if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
               event.preventDefault();
-              const current = actions ? buttons.indexOf(document.activeElement) : buttons.findIndex((button) => button.classList.contains("is-active"));
+              const current = buttons.indexOf(document.activeElement);
               const next = buttons[(current + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length];
-              if (actions) buttons.forEach((button) => {
+              buttons.forEach((button) => {
                 button.tabIndex = button === next ? 0 : -1;
               });
               next.focus();
-              if (!actions) next.click();
             });
           });
           this.querySelectorAll("input[data-toggle]").forEach((input) => {
@@ -3809,7 +3887,9 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.querySelectorAll('input[type="range"]').forEach((input) => {
             input.addEventListener("input", (event) => {
               const output = input.closest(".setting-row")?.querySelector("output");
-              if (output) output.textContent = `${input.value}${input.dataset.unit ?? ""}`;
+              const text = `${input.value}${input.dataset.unit ?? ""}`;
+              if (output) output.textContent = text;
+              input.setAttribute("aria-valuetext", text);
               syncSlider(input);
               if (!event.isTrusted) return;
               const surface = document.querySelector("wallpaper-surface");
@@ -3861,30 +3941,22 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           this.querySelectorAll(".settings-nav-item").forEach((button) => {
             const active = button.dataset.pane === target;
             button.classList.toggle("is-active", active);
-            if (active) button.setAttribute("aria-current", "page");
-            else button.removeAttribute("aria-current");
+            button.setAttribute("aria-selected", String(active));
+            button.tabIndex = active ? 0 : -1;
           });
           this.querySelectorAll(".settings-pane").forEach((element) => {
             element.hidden = element.dataset.pane !== target;
           });
           const content = this.querySelector(".settings-content");
           if (content) content.scrollTop = 0;
-          this.placeSegmentThumbs();
           if (target === "wallpaper") void this.refreshPreview();
         }
-        /** Slides each visible segmented control's thumb under its selected option. */
-        placeSegmentThumbs() {
-          const placements = [...this.querySelectorAll("[data-segment]")].map((groupElement) => {
-            const active = groupElement.querySelector(".is-active");
-            return active && groupElement.offsetWidth ? { groupElement, x: active.offsetLeft, width: active.offsetWidth } : null;
-          });
-          placements.forEach((placement) => {
-            if (!placement) return;
-            const { groupElement } = placement;
-            groupElement.style.setProperty("--thumb-x", `${placement.x}px`);
-            groupElement.style.setProperty("--thumb-width", `${placement.width}px`);
-            groupElement.classList.toggle("has-thumb", true);
-            if (!groupElement.classList.contains("is-placed")) requestAnimationFrame(() => groupElement.classList.add("is-placed"));
+        /** The example dates on the 日期 buttons follow the day the window is opened, not the day the tab was. */
+        syncDateExamples() {
+          const now = /* @__PURE__ */ new Date();
+          ["long", "short"].forEach((format) => {
+            const label = this.querySelector(`[data-segment="dateFormat"] [data-value="${format}"] span`);
+            if (label) label.textContent = formatDate(now, format);
           });
         }
         /** Searching shows matching rows from every pane at once. */
@@ -3894,13 +3966,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.querySelectorAll(".setting-row, .settings-group, .settings-heading").forEach((element) => {
               element.hidden = false;
             });
-            this.querySelector(".settings-empty").hidden = true;
+            this.querySelector(".settings-empty").textContent = "";
             this.selectPane(this.activePane);
             return;
           }
           this.querySelectorAll(".settings-nav-item").forEach((button) => {
             button.classList.remove("is-active");
-            button.removeAttribute("aria-current");
+            button.setAttribute("aria-selected", "false");
           });
           let total = 0;
           this.querySelectorAll(".settings-pane").forEach((paneElement) => {
@@ -3919,22 +3991,13 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             paneElement.hidden = !paneMatches;
             total += paneMatches;
           });
-          const empty = this.querySelector(".settings-empty");
-          empty.hidden = total > 0;
-          empty.textContent = `\u6CA1\u6709\u627E\u5230\u201C${value.trim()}\u201D`;
+          this.querySelector(".settings-empty").textContent = total ? "" : `\u6CA1\u6709\u627E\u5230\u201C${value.trim()}\u201D`;
         }
         clearSearch() {
           const input = this.querySelector(".settings-search input");
           if (!input?.value) return;
           input.value = "";
           this.filter("");
-        }
-        syncOpenState() {
-          const windowElement = this.querySelector(".settings-window");
-          windowElement?.classList.toggle("is-open", this.openState);
-          windowElement?.setAttribute("aria-hidden", String(!this.openState));
-          windowElement?.toggleAttribute("inert", !this.openState);
-          this.querySelector(".settings-scrim")?.classList.toggle("is-open", this.openState);
         }
         /** The screen can change while the page is open (a window moved to another display). */
         syncHdrDescription() {
@@ -3954,14 +4017,18 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           };
           this.querySelectorAll("[data-segment]").forEach((groupElement) => {
             const value = segments[groupElement.dataset.segment ?? ""];
+            if (groupElement.dataset.kind === "radio") {
+              groupElement.querySelectorAll('input[type="radio"]').forEach((input) => {
+                input.checked = input.value === value;
+              });
+              return;
+            }
             const buttons = [...groupElement.querySelectorAll("[data-value]")];
             const hasValue = buttons.some((button) => button.dataset.value === value);
-            const state = groupElement.dataset.kind === "actions" ? "aria-pressed" : "aria-checked";
             buttons.forEach((button, index) => {
-              const checked = button.dataset.value === value;
-              button.classList.toggle("is-active", checked);
-              button.setAttribute(state, String(checked));
-              button.tabIndex = checked || !hasValue && index === 0 ? 0 : -1;
+              const current = button.dataset.value === value;
+              button.classList.toggle("is-active", current);
+              if (!groupElement.contains(document.activeElement)) button.tabIndex = current || !hasValue && index === 0 ? 0 : -1;
             });
           });
           const toggles = {
@@ -3991,7 +4058,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             input.value = String(value);
             input.dispatchEvent(new Event("input", { bubbles: false }));
           });
-          this.placeSegmentThumbs();
           const reset = this.querySelector(".reset-wallpaper");
           if (reset) reset.hidden = wallpaper.type === "gradient";
           const resetFraming = this.querySelector(".reset-framing");
@@ -4136,20 +4202,15 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           }
         }
         async refreshData() {
+          const token = ++this.dataToken;
           const { bookmarks, folders } = appStore.state;
           const summary = this.querySelector(".sync-summary");
           if (summary) summary.textContent = `${bookmarks.length} \u4E2A\u4E66\u7B7E \xB7 ${folders.length - 1} \u4E2A\u6587\u4EF6\u5939`;
           const [bytes, media] = await Promise.all([
-            new Promise((resolve) => {
-              try {
-                if (!chrome.storage.sync.getBytesInUse) resolve(null);
-                else chrome.storage.sync.getBytesInUse(null, (value) => resolve(chrome.runtime.lastError ? null : value));
-              } catch {
-                resolve(null);
-              }
-            }),
+            storageBytesInUse(),
             mediaStore.snapshot().then(({ image, video }) => [image, video]).catch(() => [null, null])
           ]);
+          if (token !== this.dataToken) return;
           const usage = this.querySelector(".sync-usage");
           if (usage) usage.textContent = bytes === null ? "" : `\u5DF2\u7528 ${formatBytes(bytes)} / 100 KB`;
           const mediaUsage = this.querySelector(".media-usage");
@@ -4161,7 +4222,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         async importData(file) {
           const confirmed = await confirmAction({
             title: "\u4ECE\u5907\u4EFD\u6062\u590D\uFF1F",
-            body: "\u5F53\u524D\u7684\u4E66\u7B7E\u3001\u6587\u4EF6\u5939\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\u4F1A\u88AB\u5907\u4EFD\u4E2D\u7684\u5185\u5BB9\u66FF\u6362\u3002\u5EFA\u8BAE\u5148\u5BFC\u51FA\u4E00\u4EFD\u5F53\u524D\u6570\u636E\u3002",
+            body: "\u5F53\u524D\u7684\u4E66\u7B7E\u3001\u6587\u4EF6\u5939\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\u4F1A\u88AB\u5907\u4EFD\u4E2D\u7684\u5185\u5BB9\u66FF\u6362\uFF0C\u4E66\u7B7E\u4E0E\u8BBE\u7F6E\u7684\u53D8\u5316\u4E5F\u4F1A\u540C\u6B65\u5230\u767B\u5F55\u540C\u4E00 Chrome \u8D26\u53F7\u7684\u5176\u4ED6\u8BBE\u5907\u3002\u5EFA\u8BAE\u5148\u5BFC\u51FA\u4E00\u4EFD\u5F53\u524D\u6570\u636E\u3002",
             confirmText: "\u6062\u590D"
           });
           if (!confirmed) return;
@@ -4175,7 +4236,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         async resetData() {
           const confirmed = await confirmAction({
             title: "\u6E05\u7A7A\u6240\u6709\u6570\u636E\uFF1F",
-            body: `\u5C06\u5220\u9664 ${appStore.state.bookmarks.length} \u4E2A\u4E66\u7B7E\u3001\u5168\u90E8\u6587\u4EF6\u5939\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\uFF0C\u4E14\u65E0\u6CD5\u64A4\u9500\u3002`,
+            body: `\u5C06\u5220\u9664 ${appStore.state.bookmarks.length} \u4E2A\u4E66\u7B7E\u3001\u5168\u90E8\u6587\u4EF6\u5939\u3001\u8BBE\u7F6E\u548C\u672C\u5730\u58C1\u7EB8\uFF0C\u4E14\u65E0\u6CD5\u64A4\u9500\u3002\u4E66\u7B7E\u4E0E\u8BBE\u7F6E\u4E5F\u4F1A\u4ECE\u767B\u5F55\u540C\u4E00 Chrome \u8D26\u53F7\u7684\u5176\u4ED6\u8BBE\u5907\u4E0A\u6E05\u9664\u3002`,
             confirmText: "\u6E05\u7A7A",
             danger: true
           });
@@ -4203,14 +4264,16 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       return null;
     }
   }
-  function callbackResult(start, fallback) {
-    return new Promise((resolve) => {
-      try {
-        start((result) => resolve(chrome.runtime.lastError ? fallback : result));
-      } catch {
-        resolve(fallback);
-      }
-    });
+  async function showTab(media) {
+    await chrome.tabs.update(media.id, { active: true });
+    await chrome.windows?.update?.(media.windowId, { focused: true });
+  }
+  async function settle(read, fallback) {
+    try {
+      return await read() ?? fallback;
+    } catch {
+      return fallback;
+    }
   }
   var StatusStrip;
   var init_status_strip = __esm({
@@ -4221,29 +4284,58 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_base();
       init_icons();
       init_site_icon();
+      init_ui_layer();
       StatusStrip = class extends StoreElement {
         observedChanges = ["settings.layout"];
-        timer = 0;
         status = { media: null, downloads: [], battery: null };
+        refreshTimer = 0;
+        refreshToken = 0;
+        battery = null;
         connectedCallback() {
           super.connectedCallback();
           void this.refresh();
-          this.timer = window.setInterval(() => void this.refresh(), 5e3);
           document.addEventListener("visibilitychange", this.onVisibility);
+          chrome.tabs?.onUpdated?.addListener(this.onTabUpdated);
+          chrome.tabs?.onRemoved?.addListener(this.scheduleRefresh);
+          chrome.downloads?.onCreated?.addListener(this.scheduleRefresh);
+          chrome.downloads?.onChanged?.addListener(this.scheduleRefresh);
+          void navigator.getBattery?.().then((battery) => {
+            if (!this.isConnected) return;
+            this.battery = battery;
+            this.battery.addEventListener?.("levelchange", this.scheduleRefresh);
+            this.battery.addEventListener?.("chargingchange", this.scheduleRefresh);
+          }).catch(() => void 0);
         }
         disconnectedCallback() {
           super.disconnectedCallback();
-          window.clearInterval(this.timer);
+          window.clearTimeout(this.refreshTimer);
           document.removeEventListener("visibilitychange", this.onVisibility);
+          chrome.tabs?.onUpdated?.removeListener(this.onTabUpdated);
+          chrome.tabs?.onRemoved?.removeListener(this.scheduleRefresh);
+          chrome.downloads?.onCreated?.removeListener(this.scheduleRefresh);
+          chrome.downloads?.onChanged?.removeListener(this.scheduleRefresh);
+          this.battery?.removeEventListener?.("levelchange", this.scheduleRefresh);
+          this.battery?.removeEventListener?.("chargingchange", this.scheduleRefresh);
+          this.battery = null;
         }
         onVisibility = () => {
           if (document.visibilityState === "visible") void this.refresh();
+        };
+        /** Only sound starting or stopping, muting, or the playing tab's title matter; page loads elsewhere do not. */
+        onTabUpdated = (tabId, change) => {
+          if ("audible" in change || "mutedInfo" in change || "title" in change && tabId === this.status.media?.id) this.scheduleRefresh();
+        };
+        /** Bursts of events (a download starting fires several) collapse into one read. */
+        scheduleRefresh = () => {
+          window.clearTimeout(this.refreshTimer);
+          this.refreshTimer = window.setTimeout(() => void this.refresh(), 150);
         };
         handleStoreChange() {
           this.render();
           void this.refresh();
         }
         render() {
+          const focused = this.contains(document.activeElement) ? ["media-open", "media-mute", "download-capsule"].find((name) => document.activeElement?.classList.contains(name)) : void 0;
           this.hidden = !appStore.state.settings.layout.showStatus;
           const { media, downloads, battery } = this.status;
           const muteLabel = media?.muted ? "\u53D6\u6D88\u9759\u97F3" : "\u9759\u97F3";
@@ -4261,30 +4353,45 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
                     <button class="media-mute" type="button" aria-label="${muteLabel}" title="${muteLabel}">${media.muted ? ICONS.muted : ICONS.speaker}</button>
                 </div>` : "",
             downloads.length ? `<button class="glass glass-dark capsule download-capsule" type="button" data-glass title="\u5728\u6587\u4EF6\u5939\u4E2D\u663E\u793A">${ICONS.download}<span>${downloads.length} \u9879\u4E0B\u8F7D\u4E2D</span></button>` : "",
-            battery ? `<span data-glass class="glass glass-dark capsule battery-capsule ${battery.level <= 0.2 && !battery.charging ? "is-low" : ""}" title="${battery.charging ? "\u6B63\u5728\u5145\u7535" : "\u6B63\u5728\u4F7F\u7528\u7535\u6C60"}">${battery.charging ? ICONS.bolt : ICONS.battery}<span>${Math.round(battery.level * 100)}%</span></span>` : ""
+            battery ? `<span data-glass class="glass glass-dark capsule battery-capsule ${battery.level <= 0.2 && !battery.charging ? "is-low" : ""}" title="${battery.charging ? "\u6B63\u5728\u5145\u7535" : "\u6B63\u5728\u4F7F\u7528\u7535\u6C60"}">${battery.charging ? ICONS.bolt : ICONS.battery}<span class="visually-hidden">${battery.charging ? "\u6B63\u5728\u5145\u7535\uFF0C\u7535\u91CF" : "\u6B63\u5728\u4F7F\u7528\u7535\u6C60\uFF0C\u7535\u91CF"}</span><span>${Math.round(battery.level * 100)}%</span></span>` : ""
           ].join("");
+          if (focused) this.querySelector(`.${focused}`)?.focus();
           this.querySelector(".media-open")?.addEventListener("click", () => {
-            if (media) chrome.tabs.update(media.id, { active: true });
+            if (media) void showTab(media).catch(notifyError);
           });
           this.querySelector(".media-mute")?.addEventListener("click", () => {
-            if (!media) return;
-            void Promise.resolve(chrome.tabs.update(media.id, { muted: !media.muted })).finally(() => void this.refresh());
+            if (media) void this.toggleMute(media);
           });
           this.querySelector(".download-capsule")?.addEventListener("click", () => {
-            if (downloads[0] !== void 0) chrome.downloads.show(downloads[0]);
+            if (downloads[0] === void 0) return;
+            try {
+              chrome.downloads.show(downloads[0]);
+            } catch (error) {
+              notifyError(error);
+            }
           });
+        }
+        async toggleMute(media) {
+          try {
+            await chrome.tabs.update(media.id, { muted: !media.muted });
+          } catch (error) {
+            notifyError(error);
+          }
+          await this.refresh();
         }
         async refresh() {
           if (document.visibilityState === "hidden" || this.hidden) return;
+          const token = ++this.refreshToken;
           const [tabs, downloads, battery] = await Promise.all([
-            chrome.tabs?.query ? callbackResult((done) => chrome.tabs.query({ audible: true }, done), []) : [],
-            chrome.downloads?.search ? callbackResult((done) => chrome.downloads.search({ state: "in_progress" }, done), []) : [],
+            settle(() => chrome.tabs.query({ audible: true }), []),
+            settle(() => chrome.downloads.search({ state: "in_progress" }), []),
             readBattery()
           ]);
           const tab = tabs[0];
           const next = {
             media: tab ? {
               id: tab.id,
+              windowId: tab.windowId,
               title: tab.title || "\u6B63\u5728\u64AD\u653E",
               host: hostOf(tab.url ?? "") || "\u5176\u4ED6",
               icon: tab.url ? faviconUrl(tab.url, 64) : "",
@@ -4293,7 +4400,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             downloads: downloads.map((item) => item.id),
             battery
           };
-          if (JSON.stringify(next) === JSON.stringify(this.status)) return;
+          if (token !== this.refreshToken || JSON.stringify(next) === JSON.stringify(this.status)) return;
           this.status = next;
           this.render();
         }
@@ -4328,11 +4435,10 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (!this.querySelector(".wallpaper-pause")) {
             this.innerHTML = '<button class="glass round-button wallpaper-pause" type="button" data-glass></button>';
           }
-          const action = paused ? "\u64AD\u653E\u52A8\u6001\u58C1\u7EB8" : "\u6682\u505C\u52A8\u6001\u58C1\u7EB8";
           const button = this.querySelector(".wallpaper-pause");
           this.hidden = !animated;
-          button.setAttribute("aria-label", action);
-          button.title = action;
+          button.setAttribute("aria-label", "\u6682\u505C\u52A8\u6001\u58C1\u7EB8");
+          button.title = paused ? "\u64AD\u653E\u52A8\u6001\u58C1\u7EB8" : "\u6682\u505C\u52A8\u6001\u58C1\u7EB8";
           button.setAttribute("aria-pressed", String(paused));
           button.innerHTML = paused ? ICONS.play : ICONS.pause;
         }
@@ -4364,13 +4470,6 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
     window.addEventListener("pointerdown", unmute, true);
     window.addEventListener("keydown", unmute, true);
   }
-  function safely(sample2, fallback) {
-    try {
-      return sample2();
-    } catch {
-      return fallback;
-    }
-  }
   var SCENE_SIZE, BLEED, LIGHT_BACKDROP_BELOW, WallpaperSurface, unmuteTarget, waitingForGesture, SCENE;
   var init_wallpaper_surface = __esm({
     "src/components/wallpaper-surface.ts"() {
@@ -4379,6 +4478,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
       init_store();
       init_wallpaper_service();
       init_base();
+      init_ui_layer();
       init_wallpaper_framing();
       SCENE_SIZE = { width: 1440, height: 900 };
       BLEED = 10;
@@ -4396,7 +4496,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         framer = new WallpaperFramer(this, {
           save: (framing) => {
             if (sameFraming(framing, appStore.state.settings.wallpaper.framing)) return;
-            void appStore.updateSettings("wallpaper", { framing }).catch(() => void 0);
+            void appStore.updateSettings("wallpaper", { framing }).catch(notifyError);
           },
           coverage: (share) => {
             this.coverage = share;
@@ -4525,10 +4625,11 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           if (!host) return;
           let candidateUrl = "";
           let candidateVideo = null;
-          let tone = Promise.resolve("dark");
+          let tone = "dark";
           try {
             if (wallpaper.type === "video") {
               const blob = await mediaStore.get("video");
+              if (token !== this.renderToken) return;
               if (!blob) throw new Error("\u627E\u4E0D\u5230\u5DF2\u4FDD\u5B58\u7684\u89C6\u9891\u80CC\u666F");
               candidateUrl = URL.createObjectURL(blob);
               candidateVideo = document.createElement("video");
@@ -4544,22 +4645,25 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
               if (token !== this.renderToken) return;
               candidateVideo.style.removeProperty("visibility");
               const video = candidateVideo;
-              tone = Promise.resolve(safely(() => toneOf(video), "dark"));
+              const pixels = samplePixels(video);
+              tone = toneOf(pixels);
               this.commitMedia(host, candidateVideo, candidateUrl, "");
-              this.setPicture({ width: video.videoWidth, height: video.videoHeight }, safely(() => backdropOf(video), SCENE_BACKDROP));
+              this.setPicture({ width: video.videoWidth, height: video.videoHeight }, backdropOf(pixels));
               candidateUrl = "";
               candidateVideo = null;
             } else if (wallpaper.type === "local") {
               const blob = await mediaStore.get("image");
+              if (token !== this.renderToken) return;
               if (!blob) throw new Error("\u627E\u4E0D\u5230\u5DF2\u4FDD\u5B58\u7684\u56FE\u7247\u80CC\u666F");
               candidateUrl = URL.createObjectURL(blob);
               const image = new Image();
               image.src = candidateUrl;
               await image.decode();
               if (token !== this.renderToken) return;
-              tone = Promise.resolve(safely(() => toneOf(image), "dark"));
+              const pixels = samplePixels(image);
+              tone = toneOf(pixels);
               this.commitMedia(host, null, candidateUrl, `url("${candidateUrl}")`);
-              this.setPicture({ width: image.naturalWidth, height: image.naturalHeight }, safely(() => backdropOf(image), SCENE_BACKDROP));
+              this.setPicture({ width: image.naturalWidth, height: image.naturalHeight }, backdropOf(pixels));
               candidateUrl = "";
             } else {
               if (token !== this.renderToken) return;
@@ -4571,11 +4675,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
             this.failedMediaKey = "";
             this.syncPlayback();
             this.reportState();
-            const resolved = await tone;
-            if (token === this.renderToken) {
-              this.pictureTone = resolved;
-              this.reportTone();
-            }
+            this.pictureTone = tone;
+            this.reportTone();
           } catch (error) {
             if (token === this.renderToken) {
               this.failedMediaKey = mediaKey;
@@ -4729,6 +4830,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
         wallpaperTone = "dark";
         idleTimer = 0;
         lastActivity = 0;
+        listeners = null;
         updateClasses = () => {
           const { appearance } = appStore.state.settings;
           const theme = appearance.theme === "auto" ? this.wallpaperTone : appearance.theme;
@@ -4748,13 +4850,15 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           try {
             await appStore.init();
             this.updateClasses();
-            appStore.addEventListener("change", this.onStoreChange);
             this.render();
-            window.addEventListener("keydown", this.onKeyDown);
-            window.addEventListener("dragover", this.onFileDragOver);
-            window.addEventListener("drop", this.onFileDrop);
+            this.listeners = new AbortController();
+            const { signal } = this.listeners;
+            appStore.addEventListener("change", this.onStoreChange, { signal });
+            window.addEventListener("keydown", this.onKeyDown, { signal });
+            window.addEventListener("dragover", this.onFileDragOver, { signal });
+            window.addEventListener("drop", this.onFileDrop, { signal });
             ["pointermove", "pointerdown", "keydown", "wheel", "focusin"].forEach((type) => {
-              window.addEventListener(type, this.wake, { passive: true, capture: true });
+              window.addEventListener(type, this.wake, { passive: true, capture: true, signal });
             });
             this.wake();
           } catch (error) {
@@ -4762,13 +4866,8 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           }
         }
         disconnectedCallback() {
-          appStore.removeEventListener("change", this.onStoreChange);
-          window.removeEventListener("keydown", this.onKeyDown);
-          window.removeEventListener("dragover", this.onFileDragOver);
-          window.removeEventListener("drop", this.onFileDrop);
-          ["pointermove", "pointerdown", "keydown", "wheel", "focusin"].forEach((type) => {
-            window.removeEventListener(type, this.wake, true);
-          });
+          this.listeners?.abort();
+          this.listeners = null;
           window.clearTimeout(this.idleTimer);
         }
         render() {
@@ -4862,8 +4961,7 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           const files = [...event.dataTransfer.files];
           const file = files.find((item) => mediaKindOf(item)) ?? files[0];
           if (!file) return;
-          notify("\u6B63\u5728\u8BBE\u4E3A\u58C1\u7EB8\u2026");
-          void useLocalWallpaper(file).then(() => notify("\u5DF2\u8BBE\u4E3A\u58C1\u7EB8", "success"), notifyError);
+          void setDroppedWallpaper(file);
         };
         onWallpaperTone = (event) => {
           this.wallpaperTone = event.detail.tone;
@@ -4886,6 +4984,15 @@ fn fragmentMain(@builtin(position) position: vec4f) -> @location(0) vec4f {
           }
         };
       };
+      async function setDroppedWallpaper(file) {
+        notify("\u6B63\u5728\u8BBE\u4E3A\u58C1\u7EB8\u2026");
+        try {
+          await useLocalWallpaper(file);
+          notify("\u5DF2\u8BBE\u4E3A\u58C1\u7EB8", "success");
+        } catch (error) {
+          notifyError(error);
+        }
+      }
       function isTypingTarget(target) {
         return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target instanceof HTMLElement && target.isContentEditable;
       }

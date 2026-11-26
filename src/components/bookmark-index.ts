@@ -40,6 +40,9 @@ const ICON_SIZE = 16;
 export class BookmarkIndex extends StoreElement {
     protected readonly observedChanges = ['bookmarks', 'folders', 'settings.layout'] as const;
     private draggingId: Bookmark['id'] | null = null;
+    private listeners: AbortController | null = null;
+    /** The control that last had focus in the index, by its `data-focus-key`, and its folder. */
+    private lastFocus: { key: string; folder: string } | null = null;
     /** Refits when the footer gives the index a different width, e.g. once the pause button appears. */
     private readonly resizeObserver = new ResizeObserver(() => this.refit());
     /** The width and window height the rows were last fitted to. */
@@ -55,14 +58,24 @@ export class BookmarkIndex extends StoreElement {
         this.addEventListener('drop', this.onDrop);
         this.addEventListener('dragend', this.onDragEnd);
         this.addEventListener('wheel', this.onWheel, { passive: false });
-        window.addEventListener('resize', this.refit);
+        this.addEventListener('focusin', this.onFocusIn);
+        this.addEventListener('focusout', this.onFocusOut);
+        this.listeners = new AbortController();
+        const { signal } = this.listeners;
+        window.addEventListener('resize', this.refit, { signal });
+        // Dialogs fire `close`, menus `toggle`; neither bubbles, so they are caught on the way down.
+        document.addEventListener('close', this.onOverlayClosed, { capture: true, signal });
+        document.addEventListener('toggle', (event) => {
+            if ((event as ToggleEvent).newState === 'closed') this.onOverlayClosed();
+        }, { capture: true, signal });
         this.resizeObserver.observe(this);
         super.connectedCallback();
     }
 
     disconnectedCallback(): void {
         super.disconnectedCallback();
-        window.removeEventListener('resize', this.refit);
+        this.listeners?.abort();
+        this.listeners = null;
         this.resizeObserver.disconnect();
     }
 
@@ -72,10 +85,9 @@ export class BookmarkIndex extends StoreElement {
         if (this.hidden) return;
         if (showRecent && this.recent.state === 'idle') void this.loadRecent();
         const folders = appStore.state.folders.filter((folder) => folder !== ROOT_FOLDER);
-        // A redraw replaces every link; the focused bookmark keeps focus, so moving it from the keyboard can go on step by step.
-        const focused = this.contains(document.activeElement)
-            ? (document.activeElement as HTMLElement).closest<HTMLElement>('[data-bookmark-id]')?.dataset.bookmarkId
-            : undefined;
+        // A redraw replaces every link and button; whichever had focus keeps it, so moving a bookmark from the keyboard can go on step by step.
+        // Taken before the old index goes: removing the focused link fires a focusout that clears it.
+        const focus = this.contains(document.activeElement) ? this.lastFocus : null;
         this.innerHTML = `
             <nav class="index" aria-label="书签">
                 ${this.groupTemplate(ROOT_FOLDER)}
@@ -83,25 +95,62 @@ export class BookmarkIndex extends StoreElement {
                 ${showRecent ? this.recentTemplate() : ''}
             </nav>`;
         bindSiteIcons(this);
-        this.querySelector('.index')?.addEventListener('scroll', this.syncEdges, { passive: true });
         this.fit();
-        if (focused) this.querySelector<HTMLElement>(`[data-bookmark-id="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
+        if (focus) {
+            this.lastFocus = focus;
+            this.restoreFocus();
+        }
+    }
+
+    /** Remembers the focused control by what it stands for, since a redraw replaces the element itself. */
+    private readonly onFocusIn = (event: FocusEvent): void => {
+        const target = (event.target as HTMLElement).closest<HTMLElement>('[data-focus-key]');
+        if (target) this.lastFocus = { key: target.dataset.focusKey!, folder: target.closest<HTMLElement>('.index-group')?.dataset.folder ?? ROOT_FOLDER };
+    };
+
+    /** Focus that leaves for a menu or dialog it opened will come back here; leaving for anywhere else ends that. */
+    private readonly onFocusOut = (event: FocusEvent): void => {
+        const next = event.relatedTarget as Element | null;
+        if (!next || !(this.contains(next) || next.closest('dialog, .context-menu'))) this.lastFocus = null;
+    };
+
+    /**
+     * A menu or dialog opened from the index returns focus to its opener when it
+     * closes, but a save may have redrawn the index meanwhile; focus then goes to
+     * the same control in the new index, or to its folder if that control is gone.
+     */
+    private readonly onOverlayClosed = (): void => {
+        requestAnimationFrame(() => {
+            if (this.lastFocus && (document.activeElement === document.body || !document.activeElement)) this.restoreFocus();
+        });
+    };
+
+    private restoreFocus(): void {
+        if (!this.lastFocus) return;
+        const { key, folder } = this.lastFocus;
+        const group = this.querySelector<HTMLElement>(`.index-group[data-folder="${CSS.escape(folder)}"]`);
+        const target = this.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`)
+            ?? group?.querySelector<HTMLElement>('[data-bookmark-id], .index-more, [data-add-folder]')
+            ?? this.querySelector<HTMLElement>('[data-focus-key]');
+        target?.focus({ preventScroll: true });
     }
 
     private groupTemplate(folder: string): string {
         const bookmarks = bookmarksIn(folder);
         const label = escapeHtml(folderLabel(folder));
+        const key = escapeHtml(folder);
         const empty = bookmarks.length ? ''
             : folder === ROOT_FOLDER && !appStore.state.bookmarks.length
-                ? `<li><button class="index-link index-first" type="button" data-add-folder="${escapeHtml(folder)}">${ICONS.plus}添加第一个书签</button></li>`
+                ? `<li><button class="index-link index-first" type="button" data-add-folder="${key}" data-focus-key="first">${ICONS.plus}添加第一个书签</button></li>`
                 : '<li class="index-note">拖书签到这里</li>';
+        // The heading holds only the folder name; its buttons sit beside it, so they are not read as part of it.
         return `
-            <section class="index-group" data-folder="${escapeHtml(folder)}" aria-label="${label}">
-                <h2 class="index-heading">
-                    <span class="index-title">${label}</span>
-                    <button class="index-action" type="button" data-add-folder="${escapeHtml(folder)}" aria-label="添加书签到“${label}”" title="添加书签">${ICONS.plus}</button>
-                    <button class="index-action index-more" type="button" aria-label="“${label}”的更多操作" title="更多操作">${ICONS.more}</button>
-                </h2>
+            <section class="index-group" data-folder="${key}">
+                <div class="index-heading">
+                    <h2 class="index-title">${label}</h2>
+                    <button class="index-action" type="button" data-add-folder="${key}" data-focus-key="add:${key}" aria-label="添加书签到“${label}”" title="添加书签">${ICONS.plus}</button>
+                    <button class="index-action index-more" type="button" data-focus-key="more:${key}" aria-haspopup="menu" aria-expanded="false" aria-label="“${label}”的更多操作" title="更多操作">${ICONS.more}</button>
+                </div>
                 <ul class="index-list">
                     ${bookmarks.map((bookmark) => this.bookmarkTemplate(bookmark)).join('')}
                     ${empty}
@@ -113,7 +162,7 @@ export class BookmarkIndex extends StoreElement {
         const name = bookmarkName(bookmark);
         return `
             <li><a class="index-link" href="${escapeHtml(bookmark.url)}" ${this.target()} rel="noopener noreferrer"
-                data-bookmark-id="${escapeHtml(bookmark.id)}" draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
+                data-bookmark-id="${escapeHtml(bookmark.id)}" data-focus-key="bookmark:${escapeHtml(bookmark.id)}" draggable="true" title="${escapeHtml(name)}&#10;${escapeHtml(bookmark.url)}">
                 ${siteIcon({ url: bookmark.url, name: bookmark.name, bookmark }, 'index-icon', ICON_SIZE)}<span class="index-name">${escapeHtml(name)}</span>
             </a></li>`;
     }
@@ -130,8 +179,8 @@ export class BookmarkIndex extends StoreElement {
             : state === 'ready' && !items ? '最近 30 天没有记录'
                 : state === 'ready' ? '' : '正在整理…';
         return `
-            <section class="index-group is-recent" aria-label="常访问">
-                <h2 class="index-heading"><span class="index-title">常访问</span></h2>
+            <section class="index-group is-recent">
+                <div class="index-heading"><h2 class="index-title">常访问</h2></div>
                 <ul class="index-list">${items}${note ? `<li class="index-note">${note}</li>` : ''}</ul>
             </section>`;
     }
@@ -149,29 +198,30 @@ export class BookmarkIndex extends StoreElement {
         if (this.sizeKey() !== this.fittedSize) this.fit();
     };
 
-    /** Adds rows until every column fits the width, up to a share of the window; past that the index scrolls sideways. */
+    /**
+     * The fewest rows (from MIN_ROWS, up to a share of the window) at which every
+     * column fits the width; past that the index scrolls sideways. More rows only
+     * ever narrow the index, so a binary search needs a few layouts, not one per row.
+     */
     private fit(): void {
         const index = this.querySelector<HTMLElement>('.index');
         if (!index) return;
         this.fittedSize = this.sizeKey();
         const longest = Math.max(MIN_ROWS, ...[...index.querySelectorAll('.index-list')].map((list) => list.childElementCount));
         const maxRows = Math.min(longest, Math.max(MIN_ROWS, Math.floor(window.innerHeight * MAX_HEIGHT_SHARE / ROW_HEIGHT)));
-        let rows = MIN_ROWS;
-        index.style.setProperty('--rows', String(rows));
-        while (rows < maxRows && index.scrollWidth > index.clientWidth + 1) {
-            rows += 1;
+        const fits = (rows: number) => {
             index.style.setProperty('--rows', String(rows));
+            return index.scrollWidth <= index.clientWidth + 1;
+        };
+        let low = MIN_ROWS;
+        let high = maxRows;
+        while (low < high) {
+            const middle = Math.floor((low + high) / 2);
+            if (fits(middle)) high = middle;
+            else low = middle + 1;
         }
-        this.syncEdges();
+        index.style.setProperty('--rows', String(low));
     }
-
-    /** Fades only the edges that have columns scrolled past them. */
-    private readonly syncEdges = (): void => {
-        const index = this.querySelector<HTMLElement>('.index');
-        if (!index) return;
-        index.classList.toggle('can-scroll-left', index.scrollLeft > 1);
-        index.classList.toggle('can-scroll-right', index.scrollLeft + index.clientWidth < index.scrollWidth - 1);
-    };
 
     /** A mouse wheel scrolls an overflowing index sideways. */
     private readonly onWheel = (event: WheelEvent): void => {
@@ -218,8 +268,9 @@ export class BookmarkIndex extends StoreElement {
     private openFolderMenu(folder: string, at: MenuAnchor): void {
         const add = { label: '添加书签…', icon: ICONS.plus, action: () => openBookmarkDialog(this, { folder }) };
         const create = { label: '新建文件夹…', icon: ICONS.folderPlus, action: () => void createFolder() };
+        const label = `“${folderLabel(folder)}”的操作`;
         if (folder === ROOT_FOLDER) {
-            openMenu([add, create], at);
+            openMenu([add, create], at, label);
             return;
         }
         openMenu([
@@ -228,7 +279,7 @@ export class BookmarkIndex extends StoreElement {
             create,
             { separator: true },
             { label: '删除文件夹', icon: ICONS.trash, danger: true, action: () => void deleteFolder(folder) }
-        ], at);
+        ], at, label);
     }
 
     private readonly onDragStart = (event: DragEvent): void => {

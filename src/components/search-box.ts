@@ -15,7 +15,8 @@ export const ENGINES: Record<SearchEngineKey, { label: string; url: string }> = 
     duckduckgo: { label: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=' }
 };
 
-export const SHORTCUT_LABEL = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K';
+/** `navigator.platform` is frozen and deprecated; Chrome reports the OS through User-Agent Client Hints. */
+export const SHORTCUT_LABEL = /mac|iphone|ipad|ios/i.test(navigator.userAgentData?.platform ?? navigator.platform) ? '⌘K' : 'Ctrl K';
 
 const ENGINE_ORDER = Object.keys(ENGINES) as SearchEngineKey[];
 const GROUP_TITLES = { url: '网址', bookmark: '书签', site: '常访问', web: '搜索网络', recent: '最近搜索' } as const;
@@ -47,7 +48,7 @@ export class SearchBox extends StoreElement {
         this.hidden = !showSearch && !this.summoned;
         if (this.querySelector('.search-field')) return;
         this.innerHTML = `
-            <div class="search-box" role="search">
+            <search class="search-box">
                 <label class="glass search-field" data-glass>
                     ${ICONS.search}
                     <span class="search-input">
@@ -60,7 +61,7 @@ export class SearchBox extends StoreElement {
                     <kbd class="search-shortcut">${SHORTCUT_LABEL}</kbd>
                 </label>
                 <div class="glass-panel search-results" id="search-results" role="listbox" aria-label="搜索建议" hidden></div>
-            </div>`;
+            </search>`;
         this.bind();
     }
 
@@ -109,7 +110,7 @@ export class SearchBox extends StoreElement {
             if (!row) return;
             const item = this.rows[Number(row.dataset.index)];
             if (target.closest('.row-remove') && item?.kind === 'recent') {
-                void appStore.removeRecentSearch(item.query).then(() => this.renderResults(), notifyError);
+                void this.forget(item.query);
                 return;
             }
             this.activate(Number(row.dataset.index), event.metaKey || event.ctrlKey);
@@ -128,12 +129,27 @@ export class SearchBox extends StoreElement {
         this.engine = appStore.state.settings.layout.searchEngine;
         this.selected = 0;
         this.renderResults();
-        if (!appStore.state.settings.layout.showRecent || this.sites.length) return;
-        void loadRecentSites().then((sites) => {
-            this.sites = sites;
-            if (this.hasFocus) this.renderResults();
-        }).catch(() => undefined);
+        if (appStore.state.settings.layout.showRecent && !this.sites.length) void this.loadSites();
     };
+
+    /** Frequent sites join the suggestions once history has been read; without history access they simply stay out. */
+    private async loadSites(): Promise<void> {
+        try {
+            this.sites = await loadRecentSites();
+        } catch {
+            return;
+        }
+        if (this.hasFocus) this.renderResults();
+    }
+
+    private async forget(query: string): Promise<void> {
+        try {
+            await appStore.removeRecentSearch(query);
+            this.renderResults();
+        } catch (error) {
+            notifyError(error);
+        }
+    }
 
     private readonly onKeyDown = (event: KeyboardEvent): void => {
         if (event.isComposing) return;
@@ -156,7 +172,7 @@ export class SearchBox extends StoreElement {
             // Shift+Delete forgets the highlighted recent search, as in Chrome's own address bar.
             event.preventDefault();
             const row = this.rows[this.selected];
-            if (row.kind === 'recent') void appStore.removeRecentSearch(row.query).then(() => this.renderResults(), notifyError);
+            if (row.kind === 'recent') void this.forget(row.query);
         } else if (event.key === 'Escape') {
             event.preventDefault();
             if (input.value) {
@@ -215,17 +231,17 @@ export class SearchBox extends StoreElement {
         if (!this.hasFocus) return;
         this.rows = this.buildRows();
         this.selected = Math.min(this.selected, Math.max(0, this.rows.length - 1));
-        let previous = '';
-        this.results.innerHTML = this.rows.map((row, index) => {
-            const heading = row.kind !== previous ? `<h3 class="search-heading" role="presentation">${GROUP_TITLES[row.kind]}</h3>` : '';
-            previous = row.kind;
-            return `${heading}
-                <div class="search-row" role="option" id="search-option-${index}" data-index="${index}" aria-selected="false">
-                    ${rowIcon(row)}
-                    <span class="row-text"><strong>${escapeHtml(row.title)}</strong>${row.subtitle ? `<small>${escapeHtml(row.subtitle)}</small>` : ''}</span>
-                    ${row.kind === 'recent' ? '<button class="row-remove" type="button" tabindex="-1" aria-label="删除这条记录" aria-keyshortcuts="Shift+Delete" title="删除（Shift+Delete）">删除</button>' : ''}
-                </div>`;
-        }).join('');
+        // Each kind of result is a named group of options; the delete button is for the pointer (Shift+Delete for the keyboard).
+        this.results.innerHTML = [...Map.groupBy(this.rows.entries(), ([, row]) => row.kind)].map(([kind, entries]) => `
+            <div role="group" aria-labelledby="search-group-${kind}">
+                <h3 class="search-heading" id="search-group-${kind}" role="presentation">${GROUP_TITLES[kind]}</h3>
+                ${entries.map(([index, row]) => `
+                    <div class="search-row" role="option" id="search-option-${index}" data-index="${index}" aria-selected="false">
+                        ${rowIcon(row)}
+                        <span class="row-text"><strong>${escapeHtml(row.title)}</strong>${row.subtitle ? `<small>${escapeHtml(row.subtitle)}</small>` : ''}</span>
+                        ${row.kind === 'recent' ? '<button class="row-remove" type="button" tabindex="-1" aria-hidden="true" title="删除（Shift+Delete）">删除</button>' : ''}
+                    </div>`).join('')}
+            </div>`).join('');
         this.results.hidden = !this.rows.length;
         this.input.setAttribute('aria-expanded', String(!this.results.hidden));
         this.classList.toggle('is-open', !this.results.hidden);
@@ -271,11 +287,11 @@ export class SearchBox extends StoreElement {
         const row = this.rows[index];
         if (!row) {
             const query = this.input.value.trim();
-            if (query) this.search(query, background);
+            if (query) void this.search(query, background);
             return;
         }
         if (row.kind === 'web' || row.kind === 'recent') {
-            this.search(row.query, background);
+            void this.search(row.query, background);
             return;
         }
         this.go(row.url, background || appStore.state.settings.layout.openInNewTab || new URL(row.url).protocol === 'chrome-extension:');
@@ -287,16 +303,22 @@ export class SearchBox extends StoreElement {
             window.location.href = url;
             return;
         }
-        openInNewTab(url);
+        void openInNewTab(url);
         this.input.value = '';
         this.input.blur();
     }
 
     /** A failed save of the recent search never stops the search itself. */
-    private search(query: string, newTab = false): void {
+    private async search(query: string, newTab = false): Promise<void> {
         const target = `${ENGINES[this.engine].url}${encodeURIComponent(query)}`;
-        const save = appStore.state.settings.layout.saveSearches ? appStore.saveRecentSearch(query) : Promise.resolve();
-        void save.catch(() => undefined).then(() => this.go(target, newTab));
+        if (appStore.state.settings.layout.saveSearches) {
+            try {
+                await appStore.saveRecentSearch(query);
+            } catch {
+                // Searching matters more than remembering the search.
+            }
+        }
+        this.go(target, newTab);
     }
 
     private cycleEngine(step: number): void {

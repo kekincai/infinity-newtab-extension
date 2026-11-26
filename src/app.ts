@@ -25,6 +25,7 @@ class InfinityNewTabApp extends HTMLElement {
     private wallpaperTone: ResolvedTheme = 'dark';
     private idleTimer = 0;
     private lastActivity = 0;
+    private listeners: AbortController | null = null;
 
     private readonly updateClasses = () => {
         const { appearance } = appStore.state.settings;
@@ -47,13 +48,16 @@ class InfinityNewTabApp extends HTMLElement {
         try {
             await appStore.init();
             this.updateClasses();
-            appStore.addEventListener('change', this.onStoreChange);
             this.render();
-            window.addEventListener('keydown', this.onKeyDown);
-            window.addEventListener('dragover', this.onFileDragOver);
-            window.addEventListener('drop', this.onFileDrop);
+            // Every page-wide listener shares one signal, so disconnecting removes them all.
+            this.listeners = new AbortController();
+            const { signal } = this.listeners;
+            appStore.addEventListener('change', this.onStoreChange, { signal });
+            window.addEventListener('keydown', this.onKeyDown, { signal });
+            window.addEventListener('dragover', this.onFileDragOver, { signal });
+            window.addEventListener('drop', this.onFileDrop, { signal });
             ['pointermove', 'pointerdown', 'keydown', 'wheel', 'focusin'].forEach((type) => {
-                window.addEventListener(type, this.wake, { passive: true, capture: true });
+                window.addEventListener(type, this.wake, { passive: true, capture: true, signal });
             });
             this.wake();
         } catch (error) {
@@ -62,13 +66,8 @@ class InfinityNewTabApp extends HTMLElement {
     }
 
     disconnectedCallback(): void {
-        appStore.removeEventListener('change', this.onStoreChange);
-        window.removeEventListener('keydown', this.onKeyDown);
-        window.removeEventListener('dragover', this.onFileDragOver);
-        window.removeEventListener('drop', this.onFileDrop);
-        ['pointermove', 'pointerdown', 'keydown', 'wheel', 'focusin'].forEach((type) => {
-            window.removeEventListener(type, this.wake, true);
-        });
+        this.listeners?.abort();
+        this.listeners = null;
         window.clearTimeout(this.idleTimer);
     }
 
@@ -172,9 +171,7 @@ class InfinityNewTabApp extends HTMLElement {
         const files = [...event.dataTransfer.files];
         const file = files.find((item) => mediaKindOf(item)) ?? files[0];
         if (!file) return;
-        // A large video takes a moment to check and store; say so, and say when it is done.
-        notify('正在设为壁纸…');
-        void useLocalWallpaper(file).then(() => notify('已设为壁纸', 'success'), notifyError);
+        void setDroppedWallpaper(file);
     };
 
     private readonly onWallpaperTone = (event: CustomEvent<{ tone: ResolvedTheme }>): void => {
@@ -199,6 +196,17 @@ class InfinityNewTabApp extends HTMLElement {
             this.search?.focusField();
         }
     };
+}
+
+/** A large video takes a moment to check and store; say so, and say when it is done. */
+async function setDroppedWallpaper(file: File): Promise<void> {
+    notify('正在设为壁纸…');
+    try {
+        await useLocalWallpaper(file);
+        notify('已设为壁纸', 'success');
+    } catch (error) {
+        notifyError(error);
+    }
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {

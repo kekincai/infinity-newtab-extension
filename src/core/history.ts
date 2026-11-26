@@ -23,11 +23,7 @@ const TITLE_SEPARATOR = /\s+[-|–—·]\s+/;
  * Different ports on one machine are different apps (minipc.local:8443 and :3000).
  */
 export function siteKey(url: string): string {
-    try {
-        return new URL(url).host.toLowerCase().replace(/^www\./, '');
-    } catch {
-        return '';
-    }
+    return URL.parse(url)?.host.toLowerCase().replace(/^www\./, '') ?? '';
 }
 
 /** Groups history by site, keeps the address people actually open and a readable site name. */
@@ -158,18 +154,17 @@ let recentSites: Promise<RecentSite[]> | null = null;
 
 /** One history scan per page load, shared by the bookmark index and the search field. */
 export function loadRecentSites(): Promise<RecentSite[]> {
-    if (!recentSites) {
-        recentSites = new Promise<RecentSite[]>((resolve, reject) => {
-            if (!chrome.history?.search) {
-                reject(new Error('浏览器未开放历史记录访问'));
-                return;
-            }
-            chrome.history.search({ text: '', startTime: Date.now() - 30 * 24 * 60 * 60 * 1000, maxResults: 3000 }, (items: Array<Record<string, unknown>>) => {
-                if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-                else resolve(rankSites(items ?? []));
-            });
-        });
-        recentSites.catch(() => { recentSites = null; });
-    }
+    recentSites ??= searchHistory();
+    recentSites.catch(() => { recentSites = null; });
     return recentSites;
+}
+
+async function searchHistory(): Promise<RecentSite[]> {
+    if (!chrome.history?.search) throw new Error('浏览器未开放历史记录访问');
+    const items: Array<Record<string, unknown>> = await chrome.history.search({
+        text: '',
+        startTime: Date.now() - 30 * 24 * 60 * 60 * 1000,
+        maxResults: 3000
+    });
+    return rankSites(items ?? []);
 }

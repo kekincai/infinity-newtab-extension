@@ -4,6 +4,7 @@ import {
     finiteNumber,
     normalizeFolders,
     normalizeRecentSearches,
+    renumberFolders,
     sanitizeBookmarks,
     sanitizeSettings
 } from './backup';
@@ -96,7 +97,7 @@ export class AppStore extends EventTarget {
             draft.bookmarks.forEach((bookmark) => {
                 if (bookmark.folder === from) bookmark.folder = name;
             });
-            normalizeOrders(draft.bookmarks);
+            renumberFolders(draft.bookmarks);
             renamed = true;
         }, ['folders', 'bookmarks']);
         return renamed;
@@ -109,7 +110,7 @@ export class AppStore extends EventTarget {
             draft.bookmarks.forEach((bookmark) => {
                 if (bookmark.folder === folder) bookmark.folder = ROOT_FOLDER;
             });
-            normalizeOrders(draft.bookmarks);
+            renumberFolders(draft.bookmarks);
         }, ['folders', 'bookmarks']);
     }
 
@@ -132,14 +133,14 @@ export class AppStore extends EventTarget {
                 ? previous.order
                 : draft.bookmarks.filter((bookmark) => bookmark.folder === next.folder).length;
             draft.bookmarks[index] = next;
-            normalizeOrders(draft.bookmarks);
+            renumberFolders(draft.bookmarks);
         }, ['bookmarks']);
     }
 
     async deleteBookmark(id: Bookmark['id']): Promise<void> {
         await this.commit((draft) => {
             draft.bookmarks = draft.bookmarks.filter((bookmark) => String(bookmark.id) !== String(id));
-            normalizeOrders(draft.bookmarks);
+            renumberFolders(draft.bookmarks);
         }, ['bookmarks']);
     }
 
@@ -173,7 +174,7 @@ export class AppStore extends EventTarget {
         const value = cleanText(query, 200);
         if (!value) return;
         await this.commit((draft) => {
-            draft.recentSearches = [value, ...draft.recentSearches.filter((item) => item !== value)].slice(0, 20);
+            draft.recentSearches = fitRecentSearches([value, ...draft.recentSearches.filter((item) => item !== value)]);
         }, ['recentSearches']);
     }
 
@@ -189,13 +190,13 @@ export class AppStore extends EventTarget {
                 ...encoded.values,
                 folders: next.folders,
                 settings: next.settings,
-                recentSearches: next.recentSearches,
+                recentSearches: fitRecentSearches(next.recentSearches),
                 lastBackupPrompt: next.lastBackupPrompt
             });
-            const staleKeys = staleBookmarkKeys(this.bookmarkChunks, encoded.count);
-            if (staleKeys.length) await storageRemove(staleKeys);
-            this.bookmarkChunks = encoded.count;
+            // The backup is saved once the write lands; leftover chunks are cleaned up like after any other save.
             this.stateValue = structuredClone(next);
+            this.stateValue.recentSearches = fitRecentSearches(next.recentSearches);
+            await this.dropStaleBookmarkKeys(encoded.count);
             this.emit(ALL_CHANGES);
         });
     }
@@ -287,6 +288,23 @@ export class AppStore extends EventTarget {
     }
 }
 
+/** chrome.storage.sync caps one item at 8 KB; recent searches in CJK can pass that well before the 20-entry limit. */
+const RECENT_SEARCH_BUDGET = 7600;
+const RECENT_SEARCH_LIMIT = 20;
+
+/** The newest searches that fit one sync item; older ones drop off first. */
+export function fitRecentSearches(searches: string[]): string[] {
+    const encoder = new TextEncoder();
+    const kept: string[] = [];
+    let size = encoder.encode('recentSearches[]').length;
+    for (const search of searches.slice(0, RECENT_SEARCH_LIMIT)) {
+        size += encoder.encode(JSON.stringify(search)).length + 1;
+        if (size > RECENT_SEARCH_BUDGET) break;
+        kept.push(search);
+    }
+    return kept;
+}
+
 function diff(previous: AppState, next: AppState): StoreChangeKey[] {
     const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
     return ALL_CHANGES.filter((change) => {
@@ -317,10 +335,6 @@ function normalizeBookmarkInput(
         icon,
         order: state.bookmarks.filter((bookmark) => bookmark.folder === folder && String(bookmark.id) !== String(id)).length
     };
-}
-
-function normalizeOrders(bookmarks: Bookmark[]): void {
-    new Set(bookmarks.map((bookmark) => bookmark.folder)).forEach((folder) => normalizeFolderOrder(bookmarks, folder));
 }
 
 function normalizeFolderOrder(bookmarks: Bookmark[], folder: string): void {

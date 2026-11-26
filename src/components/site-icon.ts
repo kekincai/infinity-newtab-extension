@@ -66,11 +66,7 @@ export function bindSiteIcons(root: ParentNode): void {
 }
 
 export function hostOf(url: string): string {
-    try {
-        return new URL(url).hostname.replace(/^www\./, '');
-    } catch {
-        return '';
-    }
+    return URL.parse(url)?.hostname.replace(/^www\./, '') ?? '';
 }
 
 function hash(value: string): number {

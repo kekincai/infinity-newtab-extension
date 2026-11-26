@@ -1,8 +1,9 @@
 import { mediaStore } from '../core/media-store';
 import { appStore } from '../core/store';
 import type { ResolvedTheme } from '../core/types';
-import { SCENE_BACKDROP, backdropOf, toneOf } from '../core/wallpaper-service';
+import { SCENE_BACKDROP, backdropOf, samplePixels, toneOf } from '../core/wallpaper-service';
 import { StoreElement } from './base';
+import { notifyError } from './ui-layer';
 import { WallpaperFramer, sameFraming } from './wallpaper-framing';
 
 export type WallpaperState = { animated: boolean; paused: boolean };
@@ -34,7 +35,8 @@ export class WallpaperSurface extends StoreElement {
     private readonly framer = new WallpaperFramer(this, {
         save: (framing) => {
             if (sameFraming(framing, appStore.state.settings.wallpaper.framing)) return;
-            void appStore.updateSettings('wallpaper', { framing }).catch(() => undefined);
+            // A refused write (the sync quota) is reported; the picture keeps its new framing on screen.
+            void appStore.updateSettings('wallpaper', { framing }).catch(notifyError);
         },
         coverage: (share) => {
             this.coverage = share;
@@ -181,10 +183,12 @@ export class WallpaperSurface extends StoreElement {
         if (!host) return;
         let candidateUrl = '';
         let candidateVideo: HTMLVideoElement | null = null;
-        let tone: Promise<ResolvedTheme> = Promise.resolve('dark');
+        let tone: ResolvedTheme = 'dark';
         try {
             if (wallpaper.type === 'video') {
                 const blob = await mediaStore.get('video');
+                // A newer wallpaper was chosen while this one was being read.
+                if (token !== this.renderToken) return;
                 if (!blob) throw new Error('找不到已保存的视频背景');
                 candidateUrl = URL.createObjectURL(blob);
                 candidateVideo = document.createElement('video');
@@ -200,22 +204,25 @@ export class WallpaperSurface extends StoreElement {
                 if (token !== this.renderToken) return;
                 candidateVideo.style.removeProperty('visibility');
                 const video = candidateVideo;
-                tone = Promise.resolve(safely(() => toneOf(video), 'dark' as ResolvedTheme));
+                const pixels = samplePixels(video);
+                tone = toneOf(pixels);
                 this.commitMedia(host, candidateVideo, candidateUrl, '');
-                this.setPicture({ width: video.videoWidth, height: video.videoHeight }, safely(() => backdropOf(video), SCENE_BACKDROP));
+                this.setPicture({ width: video.videoWidth, height: video.videoHeight }, backdropOf(pixels));
                 candidateUrl = '';
                 candidateVideo = null;
             } else if (wallpaper.type === 'local') {
                 const blob = await mediaStore.get('image');
+                if (token !== this.renderToken) return;
                 if (!blob) throw new Error('找不到已保存的图片背景');
                 candidateUrl = URL.createObjectURL(blob);
                 const image = new Image();
                 image.src = candidateUrl;
                 await image.decode();
                 if (token !== this.renderToken) return;
-                tone = Promise.resolve(safely(() => toneOf(image), 'dark' as ResolvedTheme));
+                const pixels = samplePixels(image);
+                tone = toneOf(pixels);
                 this.commitMedia(host, null, candidateUrl, `url("${candidateUrl}")`);
-                this.setPicture({ width: image.naturalWidth, height: image.naturalHeight }, safely(() => backdropOf(image), SCENE_BACKDROP));
+                this.setPicture({ width: image.naturalWidth, height: image.naturalHeight }, backdropOf(pixels));
                 candidateUrl = '';
             } else {
                 if (token !== this.renderToken) return;
@@ -227,11 +234,8 @@ export class WallpaperSurface extends StoreElement {
             this.failedMediaKey = '';
             this.syncPlayback();
             this.reportState();
-            const resolved = await tone;
-            if (token === this.renderToken) {
-                this.pictureTone = resolved;
-                this.reportTone();
-            }
+            this.pictureTone = tone;
+            this.reportTone();
         } catch (error) {
             if (token === this.renderToken) {
                 this.failedMediaKey = mediaKey;
@@ -316,15 +320,6 @@ function applySound(video: HTMLVideoElement, sound: boolean): void {
     };
     window.addEventListener('pointerdown', unmute, true);
     window.addEventListener('keydown', unmute, true);
-}
-
-/** Sampling pixels can fail (an undecodable frame); the fallback keeps the wallpaper usable. */
-function safely<T>(sample: () => T, fallback: T): T {
-    try {
-        return sample();
-    } catch {
-        return fallback;
-    }
 }
 
 /** Twilight Bay: the built-in animated scene, drawn in SVG so it costs no download. */

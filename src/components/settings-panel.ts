@@ -1,5 +1,6 @@
 import { backupService } from '../core/backup-service';
 import { mediaStore } from '../core/media-store';
+import { storageBytesInUse } from '../core/storage';
 import { appStore } from '../core/store';
 import type { AppSettings } from '../core/types';
 import { escapeHtml } from '../core/utils';
@@ -11,7 +12,7 @@ import { formatDate } from './dashboard-header';
 import { isHdrDisplay, onHdrDisplayChange } from './hdr-glass';
 import { ICONS, SETTINGS_GLYPHS } from './icons';
 import { ENGINES, SHORTCUT_LABEL } from './search-box';
-import { afterMotion, confirmAction, notify, notifyError, pushLayer } from './ui-layer';
+import { afterMotion, confirmAction, notify, notifyError } from './ui-layer';
 
 type Pane = 'appearance' | 'widgets' | 'wallpaper' | 'data';
 type Option = [value: string, label: string];
@@ -30,9 +31,9 @@ export class SettingsPanel extends StoreElement {
     protected readonly observedChanges = ['settings.appearance', 'settings.wallpaper', 'settings.layout', 'bookmarks', 'folders'] as const;
     private openState = false;
     private activePane: Pane = 'appearance';
-    private releaseLayer: (() => void) | null = null;
     private previewUrl = '';
     private previewToken = 0;
+    private dataToken = 0;
     private stopWatchingDisplay: (() => void) | null = null;
 
     connectedCallback(): void {
@@ -42,27 +43,26 @@ export class SettingsPanel extends StoreElement {
     }
 
     open(): void {
-        if (this.openState) return;
+        const dialog = this.dialog;
+        if (this.openState || !dialog) return;
         this.openState = true;
-        this.syncOpenState();
         this.syncHdrDescription();
-        this.placeSegmentThumbs();
-        this.releaseLayer = pushLayer(this.querySelector<HTMLElement>('.settings-window')!, () => this.close());
+        this.syncDateExamples();
+        dialog.showModal();
         void this.refreshPreview();
         void this.refreshData();
-        const windowElement = this.querySelector<HTMLElement>('.settings-window')!;
-        afterMotion(windowElement, () => {
-            if (this.openState && !windowElement.contains(document.activeElement)) this.querySelector<HTMLButtonElement>('.settings-nav-item.is-active')?.focus();
+        // Focus waits for the window to finish scaling in, so the glass lens never measures it half-grown.
+        afterMotion(dialog, () => {
+            if (this.openState) this.querySelector<HTMLButtonElement>('.settings-nav-item[aria-selected="true"]')?.focus();
         });
     }
 
     close(): void {
-        if (!this.openState) return;
-        this.openState = false;
-        this.syncOpenState();
-        const release = this.releaseLayer;
-        this.releaseLayer = null;
-        release?.();
+        if (this.dialog?.open) this.dialog.close();
+    }
+
+    private get dialog(): HTMLDialogElement | null {
+        return this.querySelector<HTMLDialogElement>('dialog.settings-window');
     }
 
     disconnectedCallback(): void {
@@ -81,37 +81,35 @@ export class SettingsPanel extends StoreElement {
     protected render(): void {
         const settings = appStore.state.settings;
         this.innerHTML = `
-            <div class="settings-scrim" aria-hidden="true"></div>
-            <section class="glass-panel settings-window" role="dialog" aria-modal="true" aria-label="设置" aria-hidden="true" inert>
+            <dialog class="glass-panel settings-window" aria-label="设置" closedby="any">
                 <aside class="settings-sidebar">
                     <div class="settings-title">
                         <button class="settings-close" type="button" aria-label="关闭设置" aria-keyshortcuts="Escape" title="关闭（Esc）">${ICONS.close}</button>
                     </div>
                     <label class="settings-search">
                         ${ICONS.search}
-                        <input type="search" placeholder="搜索" aria-label="搜索设置" autocomplete="off">
+                        <input type="search" placeholder="搜索" aria-label="搜索设置" aria-controls="settings-content" autocomplete="off">
                     </label>
-                    <nav class="settings-nav" aria-label="设置分类">
+                    <div class="settings-nav" role="tablist" aria-orientation="vertical" aria-label="设置分类">
                         ${PANES.map(([pane, label]) => `
-                            <button class="settings-nav-item" type="button" data-pane="${pane}">
+                            <button class="settings-nav-item" type="button" role="tab" id="settings-tab-${pane}" aria-controls="settings-pane-${pane}" aria-selected="false" tabindex="-1" data-pane="${pane}">
                                 <span class="nav-tile" data-tile="${pane}">${SETTINGS_GLYPHS[pane]}</span><span>${label}</span>
                             </button>`).join('')}
-                    </nav>
+                    </div>
                     <span class="settings-version">Infinity New Tab ${escapeHtml(chrome.runtime?.getManifest?.().version ?? '')}</span>
                 </aside>
-                <div class="settings-content">
+                <div class="settings-content" id="settings-content">
                     ${this.appearancePane(settings)}
                     ${this.widgetsPane(settings)}
                     ${this.wallpaperPane(settings)}
                     ${this.dataPane()}
-                    <p class="settings-empty" hidden></p>
+                    <p class="settings-empty" role="status"></p>
                 </div>
-            </section>`;
+            </dialog>`;
         this.bindChrome();
         this.bindControls();
         this.syncControls(settings);
         this.selectPane(this.activePane);
-        this.syncOpenState();
     }
 
     private appearancePane({ appearance }: AppSettings): string {
@@ -198,8 +196,10 @@ export class SettingsPanel extends StoreElement {
     }
 
     private bindChrome(): void {
+        const dialog = this.dialog!;
+        // Escape, an outside click and the close button all end here; the browser returns focus to the opener.
+        dialog.addEventListener('close', () => { this.openState = false; });
         this.querySelector('.settings-close')?.addEventListener('click', () => this.close());
-        this.querySelector('.settings-scrim')?.addEventListener('click', () => this.close());
         const nav = this.querySelector<HTMLElement>('.settings-nav')!;
         nav.addEventListener('click', (event) => {
             const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-pane]');
@@ -207,39 +207,48 @@ export class SettingsPanel extends StoreElement {
             this.clearSearch();
             this.selectPane(button.dataset.pane as Pane);
         });
+        // A vertical tab list: the arrows (and Home / End) move between panes.
         nav.addEventListener('keydown', (event) => {
-            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-            event.preventDefault();
             const index = PANES.findIndex(([pane]) => pane === this.activePane);
-            const next = PANES[(index + (event.key === 'ArrowDown' ? 1 : -1) + PANES.length) % PANES.length][0];
+            const target = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: PANES.length - 1 }[event.key];
+            if (target === undefined) return;
+            event.preventDefault();
+            const next = PANES[(target + PANES.length) % PANES.length][0];
             this.clearSearch();
             this.selectPane(next);
             this.querySelector<HTMLButtonElement>(`[data-pane="${next}"]`)?.focus();
         });
-        this.querySelector<HTMLInputElement>('.settings-search input')?.addEventListener('input', (event) => {
-            this.filter((event.target as HTMLInputElement).value);
+        const search = this.querySelector<HTMLInputElement>('.settings-search input')!;
+        search.addEventListener('input', () => this.filter(search.value));
+        // Escape first empties a search with text in it; only then does it close the window.
+        search.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape' || !search.value) return;
+            event.preventDefault();
+            this.clearSearch();
         });
     }
 
     private bindControls(): void {
-        this.querySelectorAll<HTMLElement>('[data-segment]').forEach((groupElement) => {
+        // Radio groups are native: the arrows move the choice and fire `change`.
+        this.querySelectorAll<HTMLElement>('[data-segment][data-kind="radio"]').forEach((groupElement) => {
+            groupElement.addEventListener('change', (event) => {
+                void this.applySegment(groupElement.dataset.segment ?? '', (event.target as HTMLInputElement).value);
+            });
+        });
+        // A toolbar of buttons that each start something (open a file picker, download a picture):
+        // the arrows only move focus, and Enter or Space starts the action.
+        this.querySelectorAll<HTMLElement>('[data-segment][data-kind="actions"]').forEach((groupElement) => {
             const buttons = [...groupElement.querySelectorAll<HTMLButtonElement>('[data-value]')];
-            const actions = groupElement.dataset.kind === 'actions';
             buttons.forEach((button) => button.addEventListener('click', () => {
                 void this.applySegment(groupElement.dataset.segment ?? '', button.dataset.value ?? '');
             }));
-            // A radio group selects as the arrows move; buttons that start an action
-            // (open a file picker, download a picture) only move focus and wait for Enter or Space.
             groupElement.addEventListener('keydown', (event) => {
                 if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
                 event.preventDefault();
-                const current = actions
-                    ? buttons.indexOf(document.activeElement as HTMLButtonElement)
-                    : buttons.findIndex((button) => button.classList.contains('is-active'));
+                const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
                 const next = buttons[(current + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length];
-                if (actions) buttons.forEach((button) => { button.tabIndex = button === next ? 0 : -1; });
+                buttons.forEach((button) => { button.tabIndex = button === next ? 0 : -1; });
                 next.focus();
-                if (!actions) next.click();
             });
         });
         this.querySelectorAll<HTMLInputElement>('input[data-toggle]').forEach((input) => {
@@ -248,7 +257,9 @@ export class SettingsPanel extends StoreElement {
         this.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach((input) => {
             input.addEventListener('input', (event) => {
                 const output = input.closest('.setting-row')?.querySelector('output');
-                if (output) output.textContent = `${input.value}${input.dataset.unit ?? ''}`;
+                const text = `${input.value}${input.dataset.unit ?? ''}`;
+                if (output) output.textContent = text;
+                input.setAttribute('aria-valuetext', text);
                 syncSlider(input);
                 // A value synced from the store (reset, import, another tab) is already on the wallpaper; only the user's own drag previews.
                 if (!event.isTrusted) return;
@@ -307,33 +318,23 @@ export class SettingsPanel extends StoreElement {
         this.querySelectorAll<HTMLButtonElement>('.settings-nav-item').forEach((button) => {
             const active = button.dataset.pane === target;
             button.classList.toggle('is-active', active);
-            if (active) button.setAttribute('aria-current', 'page');
-            else button.removeAttribute('aria-current');
+            button.setAttribute('aria-selected', String(active));
+            button.tabIndex = active ? 0 : -1;
         });
         this.querySelectorAll<HTMLElement>('.settings-pane').forEach((element) => {
             element.hidden = element.dataset.pane !== target;
         });
         const content = this.querySelector<HTMLElement>('.settings-content');
         if (content) content.scrollTop = 0;
-        this.placeSegmentThumbs();
         if (target === 'wallpaper') void this.refreshPreview();
     }
 
-    /** Slides each visible segmented control's thumb under its selected option. */
-    private placeSegmentThumbs(): void {
-        // Every size is read before anything is written, so the layout is worked out once rather than once per control.
-        const placements = [...this.querySelectorAll<HTMLElement>('[data-segment]')].map((groupElement) => {
-            const active = groupElement.querySelector<HTMLElement>('.is-active');
-            return active && groupElement.offsetWidth ? { groupElement, x: active.offsetLeft, width: active.offsetWidth } : null;
-        });
-        placements.forEach((placement) => {
-            if (!placement) return;
-            const { groupElement } = placement;
-            groupElement.style.setProperty('--thumb-x', `${placement.x}px`);
-            groupElement.style.setProperty('--thumb-width', `${placement.width}px`);
-            groupElement.classList.toggle('has-thumb', true);
-            // The first placement lands without sliding in from the left edge.
-            if (!groupElement.classList.contains('is-placed')) requestAnimationFrame(() => groupElement.classList.add('is-placed'));
+    /** The example dates on the 日期 buttons follow the day the window is opened, not the day the tab was. */
+    private syncDateExamples(): void {
+        const now = new Date();
+        (['long', 'short'] as const).forEach((format) => {
+            const label = this.querySelector(`[data-segment="dateFormat"] [data-value="${format}"] span`);
+            if (label) label.textContent = formatDate(now, format);
         });
     }
 
@@ -342,13 +343,14 @@ export class SettingsPanel extends StoreElement {
         const query = value.trim().toLowerCase();
         if (!query) {
             this.querySelectorAll<HTMLElement>('.setting-row, .settings-group, .settings-heading').forEach((element) => { element.hidden = false; });
-            this.querySelector<HTMLElement>('.settings-empty')!.hidden = true;
+            this.querySelector<HTMLElement>('.settings-empty')!.textContent = '';
             this.selectPane(this.activePane);
             return;
         }
+        // Results come from every pane, so no tab is selected; the last one stays the list's Tab stop.
         this.querySelectorAll<HTMLElement>('.settings-nav-item').forEach((button) => {
             button.classList.remove('is-active');
-            button.removeAttribute('aria-current');
+            button.setAttribute('aria-selected', 'false');
         });
         let total = 0;
         this.querySelectorAll<HTMLElement>('.settings-pane').forEach((paneElement) => {
@@ -367,9 +369,8 @@ export class SettingsPanel extends StoreElement {
             paneElement.hidden = !paneMatches;
             total += paneMatches;
         });
-        const empty = this.querySelector<HTMLElement>('.settings-empty')!;
-        empty.hidden = total > 0;
-        empty.textContent = `没有找到“${value.trim()}”`;
+        // A status line that stays in the page, so the result is announced as soon as its text changes.
+        this.querySelector<HTMLElement>('.settings-empty')!.textContent = total ? '' : `没有找到“${value.trim()}”`;
     }
 
     private clearSearch(): void {
@@ -377,14 +378,6 @@ export class SettingsPanel extends StoreElement {
         if (!input?.value) return;
         input.value = '';
         this.filter('');
-    }
-
-    private syncOpenState(): void {
-        const windowElement = this.querySelector<HTMLElement>('.settings-window');
-        windowElement?.classList.toggle('is-open', this.openState);
-        windowElement?.setAttribute('aria-hidden', String(!this.openState));
-        windowElement?.toggleAttribute('inert', !this.openState);
-        this.querySelector('.settings-scrim')?.classList.toggle('is-open', this.openState);
     }
 
     /** The screen can change while the page is open (a window moved to another display). */
@@ -406,14 +399,19 @@ export class SettingsPanel extends StoreElement {
         };
         this.querySelectorAll<HTMLElement>('[data-segment]').forEach((groupElement) => {
             const value = segments[groupElement.dataset.segment ?? ''];
+            if (groupElement.dataset.kind === 'radio') {
+                groupElement.querySelectorAll<HTMLInputElement>('input[type="radio"]').forEach((input) => {
+                    input.checked = input.value === value;
+                });
+                return;
+            }
+            // The toolbar marks the current kind for the eye only; its buttons are actions, not states.
             const buttons = [...groupElement.querySelectorAll<HTMLButtonElement>('[data-value]')];
             const hasValue = buttons.some((button) => button.dataset.value === value);
-            const state = groupElement.dataset.kind === 'actions' ? 'aria-pressed' : 'aria-checked';
             buttons.forEach((button, index) => {
-                const checked = button.dataset.value === value;
-                button.classList.toggle('is-active', checked);
-                button.setAttribute(state, String(checked));
-                button.tabIndex = checked || (!hasValue && index === 0) ? 0 : -1;
+                const current = button.dataset.value === value;
+                button.classList.toggle('is-active', current);
+                if (!groupElement.contains(document.activeElement)) button.tabIndex = current || (!hasValue && index === 0) ? 0 : -1;
             });
         });
 
@@ -445,7 +443,6 @@ export class SettingsPanel extends StoreElement {
             input.value = String(value);
             input.dispatchEvent(new Event('input', { bubbles: false }));
         });
-        this.placeSegmentThumbs();
         const reset = this.querySelector<HTMLElement>('.reset-wallpaper');
         if (reset) reset.hidden = wallpaper.type === 'gradient';
         const resetFraming = this.querySelector<HTMLElement>('.reset-framing');
@@ -599,20 +596,16 @@ export class SettingsPanel extends StoreElement {
     }
 
     private async refreshData(): Promise<void> {
+        // Overlapping refreshes (a save while the window opens) paint only the latest numbers.
+        const token = ++this.dataToken;
         const { bookmarks, folders } = appStore.state;
         const summary = this.querySelector('.sync-summary');
         if (summary) summary.textContent = `${bookmarks.length} 个书签 · ${folders.length - 1} 个文件夹`;
         const [bytes, media] = await Promise.all([
-            new Promise<number | null>((resolve) => {
-                try {
-                    if (!chrome.storage.sync.getBytesInUse) resolve(null);
-                    else chrome.storage.sync.getBytesInUse(null, (value: number) => resolve(chrome.runtime.lastError ? null : value));
-                } catch {
-                    resolve(null);
-                }
-            }),
+            storageBytesInUse(),
             mediaStore.snapshot().then(({ image, video }) => [image, video]).catch(() => [null, null])
         ]);
+        if (token !== this.dataToken) return;
         const usage = this.querySelector('.sync-usage');
         if (usage) usage.textContent = bytes === null ? '' : `已用 ${formatBytes(bytes)} / 100 KB`;
         const mediaUsage = this.querySelector('.media-usage');
@@ -625,7 +618,7 @@ export class SettingsPanel extends StoreElement {
     private async importData(file: File): Promise<void> {
         const confirmed = await confirmAction({
             title: '从备份恢复？',
-            body: '当前的书签、文件夹、设置和本地壁纸会被备份中的内容替换。建议先导出一份当前数据。',
+            body: '当前的书签、文件夹、设置和本地壁纸会被备份中的内容替换，书签与设置的变化也会同步到登录同一 Chrome 账号的其他设备。建议先导出一份当前数据。',
             confirmText: '恢复'
         });
         if (!confirmed) return;
@@ -638,7 +631,7 @@ export class SettingsPanel extends StoreElement {
     private async resetData(): Promise<void> {
         const confirmed = await confirmAction({
             title: '清空所有数据？',
-            body: `将删除 ${appStore.state.bookmarks.length} 个书签、全部文件夹、设置和本地壁纸，且无法撤销。`,
+            body: `将删除 ${appStore.state.bookmarks.length} 个书签、全部文件夹、设置和本地壁纸，且无法撤销。书签与设置也会从登录同一 Chrome 账号的其他设备上清除。`,
             confirmText: '清空',
             danger: true
         });
@@ -652,15 +645,21 @@ export class SettingsPanel extends StoreElement {
 }
 
 function pane(name: Pane, title: string, body: string): string {
-    return `<section class="settings-pane" data-pane="${name}" aria-label="${title}" hidden><h2 class="settings-pane-title">${title}</h2>${body}</section>`;
+    return `<section class="settings-pane" id="settings-pane-${name}" role="tabpanel" aria-labelledby="settings-tab-${name}" data-pane="${name}" hidden><h2 class="settings-pane-title">${title}</h2>${body}</section>`;
 }
 
 function group(title: string, body: string): string {
     return `${title ? `<h3 class="settings-heading">${title}</h3>` : ''}<div class="settings-group">${body}</div>`;
 }
 
-function rowLabel(label: string, sub: string): string {
-    return `<span class="row-label"><span class="row-title">${label}</span>${sub ? `<span class="row-sub">${sub}</span>` : ''}</span>`;
+function rowLabel(label: string, sub: string, id = ''): string {
+    const ids = id ? { title: ` id="${id}-title"`, sub: ` id="${id}-sub"` } : { title: '', sub: '' };
+    return `<span class="row-label"><span class="row-title"${ids.title}>${label}</span>${sub ? `<span class="row-sub"${ids.sub}>${sub}</span>` : ''}</span>`;
+}
+
+/** The row's title names a control and its sub-text describes it, rather than both making up its name. */
+function describedBy(id: string, sub: string): string {
+    return `aria-labelledby="${id}-title"${sub ? ` aria-describedby="${id}-sub"` : ''}`;
 }
 
 function infoRow(label: string, sub: string, control: string): string {
@@ -668,36 +667,40 @@ function infoRow(label: string, sub: string, control: string): string {
 }
 
 /**
- * A segmented control. `radio` picks a value; `actions` is a row of buttons that
- * each start something, with the current choice shown as pressed.
+ * A segmented control. `radio` picks a value with native radio buttons; `actions`
+ * is a toolbar of buttons that each start something, the current kind marked only visually.
  */
 function segmentRow(name: string, label: string, value: string, options: Option[], sub = '', kind: 'radio' | 'actions' = 'radio'): string {
-    const radio = kind === 'radio';
+    const id = `segment-${name}`;
+    const items = options.map(([optionValue, optionLabel], index) => {
+        const checked = optionValue === value;
+        if (kind === 'radio') {
+            return `<label data-value="${optionValue}"><input class="visually-hidden" type="radio" name="${id}" value="${optionValue}" ${checked ? 'checked' : ''}><span>${escapeHtml(optionLabel)}</span></label>`;
+        }
+        const focusable = checked || (index === 0 && !options.some(([option]) => option === value));
+        return `<button type="button" tabindex="${focusable ? 0 : -1}" class="${checked ? 'is-active' : ''}" data-value="${optionValue}">${escapeHtml(optionLabel)}</button>`;
+    }).join('');
     return `
         <div class="setting-row segment-row">
-            <span class="row-label"><span class="row-title" id="segment-${name}">${label}</span>${sub ? `<span class="row-sub">${sub}</span>` : ''}</span>
-            <div class="segmented" role="${radio ? 'radiogroup' : 'group'}" aria-labelledby="segment-${name}" data-segment="${name}" data-kind="${kind}">
-                ${options.map(([optionValue, optionLabel], index) => {
-                    const checked = optionValue === value;
-                    const focusable = checked || (index === 0 && !options.some(([option]) => option === value));
-                    const state = radio ? `role="radio" aria-checked="${checked}"` : `aria-pressed="${checked}"`;
-                    return `<button type="button" ${state} tabindex="${focusable ? 0 : -1}" class="${checked ? 'is-active' : ''}" data-value="${optionValue}">${escapeHtml(optionLabel)}</button>`;
-                }).join('')}
-            </div>
+            ${rowLabel(label, sub, id)}
+            <div class="segmented" role="${kind === 'radio' ? 'radiogroup' : 'toolbar'}" ${describedBy(id, sub)} data-segment="${name}" data-kind="${kind}">${items}</div>
         </div>`;
 }
 
 function toggleRow(name: string, label: string, sub = ''): string {
-    return `<label class="setting-row toggle-row">${rowLabel(label, sub)}<span class="switch"><input type="checkbox" role="switch" data-toggle="${name}"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></span></label>`;
+    const id = `toggle-${name}`;
+    return `<label class="setting-row toggle-row">${rowLabel(label, sub, id)}<span class="switch"><input type="checkbox" role="switch" data-toggle="${name}" ${describedBy(id, sub)}><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span></span></label>`;
 }
 
 function rangeRow(name: string, label: string, value: number, min: number, max: number, unit: string, sub = ''): string {
+    const id = `range-${name}`;
+    // The output shows the value; the slider speaks it (with its unit) through aria-valuetext instead of a live region.
     return `
         <div class="setting-row">
-            ${rowLabel(label, sub)}
+            ${rowLabel(label, sub, id)}
             <span class="range-control">
-                <input class="slider" type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-label="${label}">
-                <output>${value}${unit}</output>
+                <input class="slider" type="range" name="${name}" min="${min}" max="${max}" value="${value}" data-unit="${unit}" aria-valuetext="${value}${unit}" ${describedBy(id, sub)}>
+                <output aria-hidden="true">${value}${unit}</output>
             </span>
         </div>`;
 }

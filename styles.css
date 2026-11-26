@@ -176,6 +176,16 @@ kbd {
     display: none !important;
 }
 
+/* Read by screen readers, not shown. */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
 infinity-newtab-app,
 dashboard-header,
 bookmark-dialog {
@@ -195,7 +205,7 @@ bookmark-dialog {
     color: var(--fg);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16), 0 1px 2px rgba(0, 0, 0, 0.12);
     backdrop-filter: var(--glass-backdrop, blur(12px) saturate(160%));
-    transition: background-color 200ms ease, transform 420ms var(--spring);
+    transition: background-color 200ms ease, scale 420ms var(--spring);
 }
 
 /* The rim catches light from the top left and, fainter, the bottom right. */
@@ -208,8 +218,7 @@ bookmark-dialog {
     background: linear-gradient(155deg, var(--glass-rim), rgba(255, 255, 255, 0.1) 32%, rgba(255, 255, 255, 0) 58%, rgba(255, 255, 255, 0.3));
     content: "";
     pointer-events: none;
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
     mask-composite: exclude;
 }
 
@@ -235,7 +244,7 @@ bookmark-dialog {
 }
 
 button.glass:active {
-    transform: scale(0.96);
+    scale: 0.96;
     transition-duration: 200ms, 160ms;
 }
 
@@ -333,7 +342,7 @@ glass-system {
     font-weight: 500;
     white-space: nowrap;
     cursor: pointer;
-    transition: background-color 160ms ease, transform 300ms var(--spring);
+    transition: background-color 160ms ease, scale 300ms var(--spring);
 }
 
 .pill-button:hover {
@@ -341,7 +350,7 @@ glass-system {
 }
 
 .pill-button:active {
-    transform: scale(0.97);
+    scale: 0.97;
     transition-duration: 160ms, 120ms;
     transition-timing-function: ease, var(--ease-out);
 }
@@ -351,7 +360,7 @@ glass-system {
     cursor: default;
     opacity: 0.45;
     pointer-events: none;
-    transform: none;
+    scale: none;
 }
 
 .pill-button.primary {
@@ -386,7 +395,9 @@ glass-system {
     animation: spin 800ms linear infinite;
 }
 
-/* The selected option sits on a thumb that slides between options. */
+/* The selected option sits on a thumb that slides between options. The thumb
+   is anchored to the checked option, so the browser places it; no script
+   measures anything. */
 .segmented {
     position: relative;
     display: flex;
@@ -394,49 +405,52 @@ glass-system {
     padding: 2px;
     border-radius: 9px;
     background: var(--fill-2);
+    anchor-scope: --segment;
 }
 
 .segmented::before {
     position: absolute;
-    top: 2px;
-    bottom: 2px;
-    left: 0;
-    width: var(--thumb-width, 0);
+    position-anchor: --segment;
+    inset: anchor(top) anchor(right) anchor(bottom) anchor(left);
     border-radius: 7px;
     background: var(--seg-on-bg);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
     content: "";
-    opacity: 0;
-    transform: translateX(var(--thumb-x, 0));
+
+    @media (prefers-reduced-motion: no-preference) {
+        transition: inset 220ms var(--ease-out);
+    }
 }
 
-.segmented.has-thumb::before {
-    opacity: 1;
+/* The wallpaper toolbar has no current kind on the built-in scene. */
+.segmented:not(:has(:checked, .is-active))::before {
+    display: none;
 }
 
-.segmented.is-placed::before {
-    transition: transform 220ms var(--ease-out), width 220ms var(--ease-out);
-}
-
-.segmented button {
+.segmented :is(button, label) {
     position: relative;
     z-index: 1;
+    display: grid;
     height: 24px;
+    place-items: center;
     padding: 0 12px;
     border-radius: 7px;
     color: var(--fg-2);
+    cursor: default;
     font-size: 12px;
     font-weight: 500;
     white-space: nowrap;
     transition: color 200ms ease;
 }
 
-.segmented button.is-active {
-    color: var(--seg-on-fg);
+.segmented label:has(:focus-visible) {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
 }
 
-.segmented:not(.has-thumb) button.is-active {
-    background: var(--seg-on-bg);
+.segmented :is(label:has(:checked), button.is-active) {
+    color: var(--seg-on-fg);
+    anchor-name: --segment;
 }
 
 /* Switch: pressing stretches the thumb toward where it will land, as on iOS. */
@@ -474,7 +488,7 @@ glass-system {
     border-radius: 999px;
     background: #fff;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
-    transition: transform 250ms var(--ease-out), width 200ms var(--ease-out);
+    transition: translate 250ms var(--ease-out), width 200ms var(--ease-out);
 }
 
 .switch input:checked + .switch-track {
@@ -482,7 +496,7 @@ glass-system {
 }
 
 .switch input:checked + .switch-track .switch-thumb {
-    transform: translateX(16px);
+    translate: 16px;
 }
 
 .switch input:active + .switch-track .switch-thumb {
@@ -490,7 +504,7 @@ glass-system {
 }
 
 .switch input:checked:active + .switch-track .switch-thumb {
-    transform: translateX(12px);
+    translate: 12px;
 }
 
 .switch input:focus-visible + .switch-track {
@@ -521,15 +535,16 @@ glass-system {
     background: #fff;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
     appearance: none;
-    transition: transform 300ms var(--spring);
+    transition: scale 300ms var(--spring);
 }
 
 .slider:active::-webkit-slider-thumb {
-    transform: scale(1.15);
+    scale: 1.15;
 }
 
+/* The ring is drawn by the thumb's shadow; the transparent outline still shows in forced colours, where shadows are dropped. */
 .slider:focus-visible {
-    outline: none;
+    outline: 2px solid transparent;
 }
 
 .slider:focus-visible::-webkit-slider-thumb {
@@ -900,7 +915,7 @@ search-box {
     width: 100%;
     padding: 0;
     border: 0;
-    outline: 0;
+    outline: 2px solid transparent;
     background: transparent;
     color: var(--fg);
 }
@@ -969,7 +984,7 @@ search-box:focus-within .search-shortcut {
     font-weight: 500;
 }
 
-.search-heading:first-child {
+.search-results > :first-child > .search-heading {
     padding-top: 4px;
 }
 
@@ -1100,27 +1115,50 @@ bookmark-index {
 }
 
 /* Each folder is a group of columns; the component adds rows until the groups fit the width. */
+/* The edges fade only where columns are scrolled past them. A scroll-driven
+   animation sizes each fade from the index's own scroll position, so no script
+   listens for scrolling; when everything fits, the timeline is inactive and
+   nothing fades. Focused links never stop inside a fade, and a sideways
+   trackpad swipe at either end stays in the index rather than going back a page. */
+@property --fade-start {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+}
+
+@property --fade-end {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+}
+
 .index {
     --rows: 4;
+    --fade-start-size: 40px;
+    --fade-end-size: 64px;
     display: flex;
     gap: 48px;
     margin: -4px -8px;
     overflow-x: auto;
     padding: 4px 8px;
+    overscroll-behavior-x: contain;
+    scroll-padding-inline: var(--fade-start-size) var(--fade-end-size);
     scrollbar-width: none;
+    mask:
+        linear-gradient(#000, #000) no-clip subtract,
+        linear-gradient(to right, #000, transparent) 0 0 / var(--fade-start) 100% no-repeat no-clip,
+        linear-gradient(to right, transparent, #000) 100% 0 / var(--fade-end) 100% no-repeat no-clip;
+    animation: reveal-fade-start linear both, hide-fade-end linear both;
+    animation-timeline: scroll(self inline);
+    animation-range: 0 var(--fade-start-size), calc(100% - var(--fade-end-size)) 100%;
 }
 
-.index.can-scroll-left,
-.index.can-scroll-right {
-    mask-image: linear-gradient(to right, transparent, #000 var(--fade-left, 0px), #000 calc(100% - var(--fade-right, 0px)), transparent);
+@keyframes reveal-fade-start {
+    to { --fade-start: var(--fade-start-size); }
 }
 
-.index.can-scroll-left {
-    --fade-left: 40px;
-}
-
-.index.can-scroll-right {
-    --fade-right: 64px;
+@keyframes hide-fade-end {
+    from { --fade-end: var(--fade-end-size); }
 }
 
 .index-group {
@@ -1143,6 +1181,7 @@ bookmark-index {
 
 .index-title {
     margin-right: 4px;
+    font: inherit;
     white-space: nowrap;
 }
 
@@ -1317,7 +1356,7 @@ search-box,
 .home-footer,
 backup-toast {
     --idle-fade: opacity 180ms var(--ease-out);
-    transition: transform 180ms var(--ease-out);
+    transition: translate 180ms var(--ease-out);
 }
 
 .top-bar .glass,
@@ -1325,8 +1364,8 @@ search-box :is(.glass, .glass-panel),
 bookmark-index,
 wallpaper-badge .glass,
 .backup-toast {
-    /* Opacity goes last so the shorter press timings on button.glass:active still land on background and transform. */
-    transition: background-color 200ms ease, transform 420ms var(--spring), var(--idle-fade);
+    /* The press timings on button.glass:active (two values, repeated) still land on background and scale; the backup reminder slides in on translate. */
+    transition: background-color 200ms ease, scale 420ms var(--spring), var(--idle-fade), translate 420ms var(--spring);
 }
 
 body.is-idle {
@@ -1348,7 +1387,7 @@ body.is-idle .backup-toast {
 }
 
 body.is-idle .home-footer {
-    transform: translateY(12px);
+    translate: 0 12px;
 }
 
 body.is-idle dashboard-header {
@@ -1366,41 +1405,21 @@ settings-panel {
     display: block;
 }
 
-.settings-scrim {
-    position: fixed;
-    z-index: 3200;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.22);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 240ms ease;
-}
-
-.settings-scrim.is-open {
-    opacity: 1;
-    pointer-events: auto;
-}
-
 .settings-window {
-    position: fixed;
-    z-index: 3201;
-    top: 50%;
-    left: 50%;
-    display: flex;
     width: min(820px, calc(100% - 32px));
+    max-width: none;
     height: min(580px, calc(100% - 64px));
+    max-height: none;
+    padding: 0;
     overflow: hidden;
+    border: 0;
     border-radius: 18px;
-    opacity: 0;
-    pointer-events: none;
-    transform: translate(-50%, -50%) scale(0.96);
-    transition: opacity 200ms ease, transform 440ms var(--spring);
+    color: var(--fg);
 }
 
-.settings-window.is-open {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translate(-50%, -50%) scale(1);
+/* A native modal: the browser centres it, makes the page inert and closes it on Escape or an outside click. */
+.settings-window[open] {
+    display: flex;
 }
 
 .settings-sidebar {
@@ -1475,7 +1494,7 @@ settings-panel {
     min-width: 0;
     flex: 1;
     border: 0;
-    outline: 0;
+    outline: 2px solid transparent;
     background: transparent;
     color: var(--fg);
 }
@@ -1490,8 +1509,8 @@ settings-panel {
     height: 14px;
     background: var(--fg-3);
     cursor: pointer;
-    -webkit-appearance: none;
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M7 0a7 7 0 1 1 0 14A7 7 0 0 1 7 0Zm-2.3 3.6-1.1 1.1L5.9 7 3.6 9.3l1.1 1.1L7 8.1l2.3 2.3 1.1-1.1L8.1 7l2.3-2.3-1.1-1.1L7 5.9 4.7 3.6Z'/%3E%3C/svg%3E") center / contain no-repeat;
+    appearance: none;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M7 0a7 7 0 1 1 0 14A7 7 0 0 1 7 0Zm-2.3 3.6-1.1 1.1L5.9 7 3.6 9.3l1.1 1.1L7 8.1l2.3 2.3 1.1-1.1L8.1 7l2.3-2.3-1.1-1.1L7 5.9 4.7 3.6Z'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .settings-search .icon {
@@ -1573,6 +1592,8 @@ settings-panel {
     flex: 1;
     overflow-y: auto;
     padding: 18px 24px 28px;
+    /* With classic scrollbars, a pane that scrolls and one that does not keep the same width. */
+    scrollbar-gutter: stable;
 }
 
 .settings-pane-title {
@@ -1660,6 +1681,7 @@ label.setting-row {
     justify-content: flex-start;
     gap: 16px;
     padding: 12px;
+    transition: box-shadow 160ms var(--ease-out), background-color 160ms var(--ease-out);
 }
 
 .wallpaper-preview {
@@ -1743,13 +1765,13 @@ label.setting-row {
     margin-top: 4px;
 }
 
-.wallpaper-card {
-    transition: box-shadow 160ms var(--ease-out), background-color 160ms var(--ease-out);
-}
-
 .wallpaper-card.is-drop-target {
     background-color: var(--fill-2);
     box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.settings-empty:empty {
+    display: none;
 }
 
 .settings-empty {
@@ -1760,35 +1782,22 @@ label.setting-row {
 
 /* ---- Dialogs ------------------------------------------------------------ */
 
-.modal-backdrop {
-    position: fixed;
-    z-index: 3500;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    padding: 16px;
-}
-
-/* The dimming fades on its own layer: fading the backdrop itself would cut the dialog's blur off until it ended. */
-.modal-backdrop::before {
-    position: absolute;
-    z-index: -1;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.22);
-    content: "";
-    animation: fade-in 160ms ease both;
-}
-
 .modal {
-    display: grid;
-    width: min(400px, 100%);
-    gap: 14px;
+    width: min(400px, calc(100% - 32px));
+    max-width: none;
     padding: 20px;
+    border: 0;
     border-radius: 16px;
-    animation: pop-in 320ms var(--spring) both;
+    color: var(--fg);
 }
 
-.modal-header h2 {
+.modal[open],
+.modal > form {
+    display: grid;
+    gap: 14px;
+}
+
+.modal-title {
     font-size: 15px;
     font-weight: 600;
     text-wrap: balance;
@@ -1812,6 +1821,49 @@ label.setting-row {
     min-width: 72px;
 }
 
+/* Dialogs and the settings window grow in and fade out in the top layer; the dimming fades on its own. */
+:is(.modal, .settings-window) {
+    opacity: 0;
+    scale: 0.96;
+    transition: opacity 200ms ease, scale 440ms var(--spring), display 200ms, overlay 200ms;
+    transition-behavior: allow-discrete;
+}
+
+:is(.modal, .settings-window)[open] {
+    opacity: 1;
+    scale: 1;
+
+    @starting-style {
+        opacity: 0;
+        scale: 0.96;
+    }
+}
+
+:is(.modal, .settings-window)::backdrop {
+    background: rgba(0, 0, 0, 0.22);
+    opacity: 0;
+    transition: opacity 200ms ease, display 200ms, overlay 200ms;
+    transition-behavior: allow-discrete;
+}
+
+:is(.modal, .settings-window)[open]::backdrop {
+    opacity: 1;
+
+    @starting-style {
+        opacity: 0;
+    }
+}
+
+/* Scrolling inside a dialog, or over its backdrop, never scrolls the page behind it. */
+dialog:modal {
+    overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+    overflow: hidden;
+    overscroll-behavior: contain;
+}
+
 .field {
     display: grid;
     gap: 6px;
@@ -1830,7 +1882,7 @@ label.setting-row {
     padding: 0 10px;
     border: 0;
     border-radius: 7px;
-    outline: 0;
+    outline: 2px solid transparent;
     background: var(--fill-2);
     box-shadow: inset 0 0 0 0.5px var(--hairline);
     color: var(--fg);
@@ -1842,8 +1894,10 @@ label.setting-row {
     color: var(--fg-3);
 }
 
+/* The option list is drawn by Chrome in the page's colour scheme; system colours keep its text readable in both. */
 .field select option {
-    color: #111;
+    background-color: Canvas;
+    color: CanvasText;
 }
 
 .field input:focus,
@@ -1917,15 +1971,30 @@ label.setting-row {
 
 /* ---- Context menu ------------------------------------------------------- */
 
+/* An auto popover in the top layer, placed by script at the pointer or under its anchor. */
 .context-menu {
-    position: fixed;
-    z-index: 4500;
-    display: grid;
+    inset: auto;
     min-width: 188px;
     max-width: 260px;
+    margin: 0;
     padding: 5px;
+    border: 0;
     border-radius: 12px;
-    animation: pop-in 160ms var(--ease-out) both;
+    opacity: 0;
+    scale: 0.96;
+    transition: opacity 160ms var(--ease-out), scale 160ms var(--ease-out), display 160ms, overlay 160ms;
+    transition-behavior: allow-discrete;
+}
+
+.context-menu:popover-open {
+    display: grid;
+    opacity: 1;
+    scale: 1;
+
+    @starting-style {
+        opacity: 0;
+        scale: 0.96;
+    }
 }
 
 .context-menu button {
@@ -1944,7 +2013,7 @@ label.setting-row {
 .context-menu button:focus-visible {
     background: var(--accent);
     color: #fff;
-    outline: 0;
+    outline: 2px solid transparent;
 }
 
 .context-menu button.danger {
@@ -1994,18 +2063,24 @@ label.setting-row {
 
 /* ---- Toasts ------------------------------------------------------------- */
 
+/* A manual popover, so toasts show above an open dialog; it holds no controls and takes no clicks. */
 .toast-region {
-    position: fixed;
-    z-index: 4600;
-    top: 20px;
-    left: 50%;
-    display: grid;
+    inset: 20px auto auto 50%;
     width: max-content;
     max-width: calc(100vw - 32px);
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    border: 0;
+    background: none;
+    pointer-events: none;
+    translate: -50% 0;
+}
+
+.toast-region:popover-open {
+    display: grid;
     justify-items: center;
     gap: 8px;
-    pointer-events: none;
-    transform: translateX(-50%);
 }
 
 .toast {
@@ -2013,16 +2088,15 @@ label.setting-row {
     border-radius: 999px;
     font-size: 13px;
     font-weight: 500;
-    pointer-events: auto;
     /* Transitions rather than a keyframe: a finished keyframe holds opacity and would swallow the exit below. */
-    transition: opacity 320ms var(--ease-out), transform 320ms var(--spring);
+    transition: opacity 320ms var(--ease-out), translate 320ms var(--spring);
 }
 
 @starting-style {
     .toast,
     .backup-toast {
         opacity: 0;
-        transform: translateY(-8px);
+        translate: 0 -8px;
     }
 }
 
@@ -2032,7 +2106,7 @@ label.setting-row {
 
 .toast.is-leaving {
     opacity: 0;
-    transform: translateY(-6px);
+    translate: 0 -6px;
     transition-duration: 200ms;
     transition-timing-function: ease;
 }
@@ -2164,10 +2238,6 @@ backup-toast {
         display: none;
     }
 
-    .search-results {
-        width: 100%;
-    }
-
     .home {
         padding: 64px 16px 16px;
     }
@@ -2195,35 +2265,93 @@ backup-toast {
     }
 }
 
-/* ---- Motion ------------------------------------------------------------- */
+/* ---- Forced colours -----------------------------------------------------
+   High-contrast modes drop backgrounds and shadows, which is all that marks a
+   switch, the selected option, the current pane or a drop target here. System
+   colours draw them again as borders and highlights. */
 
-@keyframes fade-in {
-    from { opacity: 0; }
-}
+@media (forced-colors: active) {
+    .switch-track {
+        border: 1px solid CanvasText;
+    }
 
-@keyframes pop-in {
-    from {
-        opacity: 0;
-        transform: scale(0.96);
+    .switch input:checked + .switch-track {
+        background: Highlight;
+    }
+
+    .switch-thumb {
+        background: CanvasText;
+    }
+
+    .segmented {
+        border: 1px solid ButtonText;
+    }
+
+    .segmented::before {
+        border: 2px solid Highlight;
+    }
+
+    .settings-nav-item[aria-selected="true"],
+    .search-row[aria-selected="true"],
+    .context-menu button:is(:hover, :focus-visible) {
+        background: Highlight;
+        color: HighlightText;
+    }
+
+    .field :is(input, select),
+    .search-field,
+    .settings-search {
+        border: 1px solid ButtonText;
+    }
+
+    .index-link.drop-before,
+    .index-link.drop-after,
+    .index-group.drop-target .index-heading,
+    .wallpaper-card.is-drop-target {
+        outline: 2px solid Highlight;
     }
 }
+
+/* ---- Motion ------------------------------------------------------------- */
 
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
 
-/* Reduced motion: nothing slides, scales or springs, but fades stay (softened)
-   and spinners keep turning, since a frozen spinner reads as a hang. Leaving
-   transform out of the transitions makes every move and scale land at once. */
+/* Reduced motion: nothing slides, scales or springs; each move lands at once.
+   Fades and colour changes keep their own timing, and spinners keep turning,
+   since a frozen spinner reads as a hang. Handled rule by rule: a blanket
+   override would also add fades where there were none and slow the live
+   wallpaper dimming while its slider is dragged. */
 @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
-        scroll-behavior: auto !important;
-        transition-property: opacity, background-color !important;
-        /* Each rule's own timings would pair up with the wrong properties once the list above replaces its own. */
-        transition-duration: 200ms !important;
-        transition-timing-function: ease !important;
+    .glass,
+    .pill-button {
+        transition-property: background-color;
+    }
+
+    .top-bar .glass,
+    search-box :is(.glass, .glass-panel),
+    bookmark-index,
+    wallpaper-badge .glass,
+    .backup-toast {
+        transition: background-color 200ms ease, var(--idle-fade);
+    }
+
+    .top-bar,
+    search-box,
+    .home-footer,
+    backup-toast,
+    .switch-thumb,
+    .slider::-webkit-slider-thumb {
+        transition: none;
+    }
+
+    .toast {
+        transition-property: opacity;
+    }
+
+    :is(.modal, .settings-window, .context-menu) {
+        transition-property: opacity, display, overlay;
     }
 
     .wallpaper-media .scene,
@@ -2232,9 +2360,5 @@ backup-toast {
         animation: none !important;
     }
 
-    .modal,
-    .context-menu {
-        animation-name: fade-in !important;
-    }
 
 }
