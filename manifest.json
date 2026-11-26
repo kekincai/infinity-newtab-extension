@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Infinity New Tab",
-    "version": "3.6.3",
+    "version": "3.7.0",
     "description": "二次元新标签页：一屏看完的书签目录、常访问网站、视频与在线壁纸，以及 HDR 屏幕上的玻璃高光。",
     "minimum_chrome_version": "141",
     "permissions": [
