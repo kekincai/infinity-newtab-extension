@@ -27,11 +27,11 @@ export class WallpaperBadge extends HTMLElement {
         if (!this.querySelector('.wallpaper-pause')) {
             this.innerHTML = '<button class="glass round-button wallpaper-pause" type="button" data-glass></button>';
         }
-        const action = paused ? '播放动态壁纸' : '暂停动态壁纸';
         const button = this.querySelector<HTMLButtonElement>('.wallpaper-pause')!;
         this.hidden = !animated;
-        button.setAttribute('aria-label', action);
-        button.title = action;
+        // A toggle keeps one name; whether it is on is what aria-pressed says. Only the tooltip and icon follow the action.
+        button.setAttribute('aria-label', '暂停动态壁纸');
+        button.title = paused ? '播放动态壁纸' : '暂停动态壁纸';
         button.setAttribute('aria-pressed', String(paused));
         button.innerHTML = paused ? ICONS.play : ICONS.pause;
     }

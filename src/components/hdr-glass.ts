@@ -113,6 +113,9 @@ export class HdrRimLayer {
     private drawFrame = 0;
     private stopWatchingDisplay: (() => void) | null = null;
     private readonly classObserver = new MutationObserver(() => this.syncVisibility());
+    /** Uniform data for one frame, reused while the pointer moves instead of allocated per frame. */
+    private readonly frameData = new Float32Array(FRAME_FLOATS);
+    private readonly rimData = new Float32Array(MAX_RIMS * RIM_FLOATS);
 
     /** `onActivate` runs whenever the layer starts drawing, so its owner can measure the rims for it. */
     constructor(private readonly onActivate: () => void = () => undefined) {
@@ -221,10 +224,13 @@ export class HdrRimLayer {
             this.frameBuffer = frameBuffer;
             this.rimBuffer = rimBuffer;
             this.canvas.dataset.hdrRenderer = 'webgpu';
-            void device.lost.then(() => {
+            void device.lost.then((info: { reason?: string }) => {
+                if (this.device !== device) return;
                 this.device = null;
                 this.canvas.dataset.hdrRenderer = 'lost';
                 this.syncVisibility();
+                // A GPU reset or driver update loses the device; only our own destroy() means stop.
+                if (info?.reason !== 'destroyed') void this.initialize();
             });
             this.syncVisibility();
         } catch {
@@ -255,15 +261,20 @@ export class HdrRimLayer {
     private draw(): void {
         if (!this.active) return;
         const scale = this.canvas.width / Math.max(1, innerWidth);
-        this.device.queue.writeBuffer(this.frameBuffer, 0, new Float32Array([
-            this.pointer.x, this.pointer.y, this.rims.length, scale, PEAK, 0, 0, 0
-        ]));
-        const rims = new Float32Array(MAX_RIMS * RIM_FLOATS);
-        this.rims.forEach((rim, index) => rims.set(
-            [rim.x, rim.y, rim.width, rim.height, rim.radius, rim.opacity, rim.glint, 0],
-            index * RIM_FLOATS
-        ));
-        this.device.queue.writeBuffer(this.rimBuffer, 0, rims);
+        this.frameData.set([this.pointer.x, this.pointer.y, this.rims.length, scale, PEAK]);
+        this.device.queue.writeBuffer(this.frameBuffer, 0, this.frameData);
+        const rims = this.rimData;
+        this.rims.forEach((rim, index) => {
+            const offset = index * RIM_FLOATS;
+            rims[offset] = rim.x;
+            rims[offset + 1] = rim.y;
+            rims[offset + 2] = rim.width;
+            rims[offset + 3] = rim.height;
+            rims[offset + 4] = rim.radius;
+            rims[offset + 5] = rim.opacity;
+            rims[offset + 6] = rim.glint;
+        });
+        this.device.queue.writeBuffer(this.rimBuffer, 0, rims, 0, this.rims.length * RIM_FLOATS);
         const encoder = this.device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
             colorAttachments: [{

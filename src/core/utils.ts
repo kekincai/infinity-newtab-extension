@@ -22,24 +22,16 @@ export function normalizeUrl(value: unknown): string {
     if (typeof value !== 'string' || !value.trim()) return '';
     const text = value.trim();
     const hasScheme = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(text);
-    try {
-        let url = new URL(hasScheme ? text : `https://${text}`);
-        if (!hasScheme && LOCAL_HOST.test(url.hostname)) url = new URL(`http://${text}`);
-        return BOOKMARK_PROTOCOLS.has(url.protocol) && url.hostname ? url.href : '';
-    } catch {
-        return '';
-    }
+    let url = URL.parse(hasScheme ? text : `https://${text}`);
+    if (url && !hasScheme && LOCAL_HOST.test(url.hostname)) url = URL.parse(`http://${text}`);
+    return url && BOOKMARK_PROTOCOLS.has(url.protocol) && url.hostname ? url.href : '';
 }
 
 export function sanitizeRemoteUrl(value: unknown, allowImageData = false): string {
     if (typeof value !== 'string') return '';
     if (allowImageData && value.startsWith('data:image/')) return value;
-    try {
-        const url = new URL(value);
-        return url.protocol === 'https:' ? url.href : '';
-    } catch {
-        return '';
-    }
+    const url = URL.parse(value);
+    return url?.protocol === 'https:' ? url.href : '';
 }
 
 export function cleanText(value: unknown, maxLength: number): string {
@@ -153,14 +145,12 @@ export function isManagedFavicon(value: unknown): boolean {
 }
 
 export function faviconUrl(pageUrl: string, size = 128): string {
-    try {
-        const favicon = new URL(chrome.runtime.getURL('/_favicon/'));
-        favicon.searchParams.set('pageUrl', new URL(pageUrl).href);
-        favicon.searchParams.set('size', String(size));
-        return favicon.toString();
-    } catch {
-        return DEFAULT_ICON;
-    }
+    const page = URL.parse(pageUrl);
+    const favicon = URL.parse(chrome.runtime.getURL('/_favicon/'));
+    if (!page || !favicon) return DEFAULT_ICON;
+    favicon.searchParams.set('pageUrl', page.href);
+    favicon.searchParams.set('size', String(size));
+    return favicon.href;
 }
 
 export function faviconSrcSet(pageUrl: string): string {

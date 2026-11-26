@@ -1,65 +1,31 @@
 import { escapeHtml } from '../core/utils';
 
 /**
- * One stack for every overlay (drawer, dialogs, menus): Escape closes the top
- * layer, Tab stays inside it and focus returns to whatever opened it.
+ * Overlays are native: dialogs open with `showModal()` and menus are `popover`
+ * elements, so the browser makes the page inert, keeps focus inside, closes on
+ * Escape (and outside clicks where wanted) and returns focus to the opener.
  */
-type Layer = { element: HTMLElement; close: () => void; restoreFocus: HTMLElement | null };
+const OPEN_OVERLAY = 'dialog:modal, .context-menu:popover-open';
 
-const layers: Layer[] = [];
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-document.addEventListener('keydown', (event) => {
-    const top = layers.at(-1);
-    if (!top) return;
-    if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        top.close();
-        return;
-    }
-    if (event.key === 'Tab') trapFocus(top.element, event);
-}, true);
-
-export function pushLayer(element: HTMLElement, close: () => void): () => void {
-    const layer: Layer = {
-        element,
-        close,
-        restoreFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null
-    };
-    layers.push(layer);
-    return () => {
-        const index = layers.indexOf(layer);
-        if (index < 0) return;
-        layers.splice(index, 1);
-        if (layer.restoreFocus?.isConnected && element.contains(document.activeElement)) layer.restoreFocus.focus();
-        else if (layer.restoreFocus?.isConnected && document.activeElement === document.body) layer.restoreFocus.focus();
-    };
-}
-
+/** True while a dialog or menu is open; the home screen then ignores its own shortcuts and gestures. */
 export function hasOpenLayer(): boolean {
-    return layers.length > 0;
+    return document.querySelector(OPEN_OVERLAY) !== null;
 }
 
-function trapFocus(container: HTMLElement, event: KeyboardEvent): void {
-    const focusable = [...container.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((element) => element.getClientRects().length);
-    if (!focusable.length) {
-        event.preventDefault();
+/**
+ * A dialog or menu that is closed for good leaves the page once its exit
+ * transition has played. Until then it takes no input and is hidden from
+ * assistive technology, so it never reads as a second open dialog.
+ */
+export function removeAfterExit(element: HTMLElement): void {
+    element.inert = true;
+    element.setAttribute('aria-hidden', 'true');
+    const running = element.getAnimations({ subtree: true });
+    if (!running.length) {
+        element.remove();
         return;
     }
-    const first = focusable[0];
-    const last = focusable.at(-1)!;
-    const active = document.activeElement;
-    if (!container.contains(active)) {
-        event.preventDefault();
-        first.focus();
-    } else if (event.shiftKey && active === first) {
-        event.preventDefault();
-        last.focus();
-    } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-    }
+    void Promise.allSettled(running.map((animation) => animation.finished)).then(() => element.remove());
 }
 
 type ModalOptions = {
@@ -71,47 +37,45 @@ type ModalOptions = {
     input?: { label: string; value?: string; placeholder?: string; maxLength?: number };
 };
 
+let modalCount = 0;
+
 /** Resolves with the input value (or '' without input) on confirm, null on cancel. */
 function openModal(options: ModalOptions): Promise<string | null> {
     return new Promise((resolve) => {
-        const backdrop = document.createElement('div');
-        backdrop.className = 'modal-backdrop is-open';
-        backdrop.innerHTML = `
-            <form class="modal glass-panel" role="alertdialog" aria-modal="true" aria-labelledby="modal-title">
-                <header class="modal-header">
-                    <h2 id="modal-title">${escapeHtml(options.title)}</h2>
-                </header>
+        const titleId = `modal-title-${++modalCount}`;
+        const dialog = document.createElement('dialog');
+        dialog.className = 'modal glass-panel';
+        // Only a confirmation is an alert; a prompt for a name is an ordinary dialog.
+        if (!options.input) dialog.setAttribute('role', 'alertdialog');
+        dialog.setAttribute('aria-labelledby', titleId);
+        dialog.setAttribute('closedby', 'any');
+        // A destructive confirmation starts on the safe choice; otherwise on the field or the confirm button.
+        const cancelFocus = options.danger ? 'autofocus' : '';
+        const submitFocus = !options.danger && !options.input ? 'autofocus' : '';
+        dialog.innerHTML = `
+            <form method="dialog">
+                <h1 class="modal-title" id="${titleId}">${escapeHtml(options.title)}</h1>
                 ${options.body ? `<p class="modal-body">${escapeHtml(options.body)}</p>` : ''}
-                ${options.input ? `<label class="field"><span>${escapeHtml(options.input.label)}</span><input name="value" type="text" autocomplete="off" maxlength="${options.input.maxLength ?? 80}" placeholder="${escapeHtml(options.input.placeholder ?? '')}" value="${escapeHtml(options.input.value ?? '')}"></label>` : ''}
+                ${options.input ? `<label class="field"><span>${escapeHtml(options.input.label)}</span><input name="value" type="text" autocomplete="off" autofocus maxlength="${options.input.maxLength ?? 80}" placeholder="${escapeHtml(options.input.placeholder ?? '')}" value="${escapeHtml(options.input.value ?? '')}"></label>` : ''}
                 <footer class="modal-actions">
-                    <button class="pill-button" type="button" data-action="cancel">${escapeHtml(options.cancelText ?? '取消')}</button>
-                    <button class="pill-button ${options.danger ? 'danger' : 'primary'}" type="submit">${escapeHtml(options.confirmText ?? '确定')}</button>
+                    <button class="pill-button" type="submit" value="cancel" formnovalidate ${cancelFocus}>${escapeHtml(options.cancelText ?? '取消')}</button>
+                    <button class="pill-button ${options.danger ? 'danger' : 'primary'}" type="submit" value="confirm" ${submitFocus}>${escapeHtml(options.confirmText ?? '确定')}</button>
                 </footer>
             </form>`;
-        document.body.append(backdrop);
-        const form = backdrop.querySelector('form')!;
-        const input = form.querySelector<HTMLInputElement>('input[name="value"]');
-        let release = () => {};
-        const finish = (value: string | null) => {
-            release();
-            backdrop.remove();
-            resolve(value);
-        };
-        release = pushLayer(form, () => finish(null));
-        form.querySelectorAll('[data-action="cancel"]').forEach((button) => button.addEventListener('click', () => finish(null)));
-        backdrop.addEventListener('pointerdown', (event) => { if (event.target === backdrop) finish(null); });
-        form.addEventListener('submit', (event) => {
-            event.preventDefault();
-            finish(input ? input.value.trim() : '');
+        const input = dialog.querySelector<HTMLInputElement>('input[name="value"]');
+        // Enter in the field submits with no button, which counts as confirming.
+        dialog.querySelector('form')!.addEventListener('submit', (event) => {
+            if (!event.submitter) dialog.returnValue = 'confirm';
         });
-        requestAnimationFrame(() => {
-            if (input) {
-                input.focus();
-                input.select();
-            } else {
-                form.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus();
-            }
-        });
+        dialog.addEventListener('close', () => {
+            // Escape and outside clicks set no return value: that is a cancel.
+            const confirmed = dialog.returnValue === 'confirm';
+            resolve(confirmed ? (input ? input.value.trim() : '') : null);
+            removeAfterExit(dialog);
+        }, { once: true });
+        document.body.append(dialog);
+        dialog.showModal();
+        input?.select();
     });
 }
 
@@ -126,25 +90,51 @@ export async function promptText(title: string, input: NonNullable<ModalOptions[
 
 type ToastKind = 'info' | 'success' | 'error';
 
+/**
+ * Toasts live in one manual popover, so they show above an open dialog (the
+ * top layer ignores z-index). They are announced with `ariaNotify()`, since a
+ * live region outside an open modal dialog is inert and would stay silent.
+ */
 export function notify(message: string, kind: ToastKind = 'info', timeout = kind === 'error' ? 7000 : 3200): void {
     let region = document.querySelector<HTMLElement>('.toast-region');
     if (!region) {
         region = document.createElement('div');
         region.className = 'toast-region';
-        region.setAttribute('role', 'status');
-        region.setAttribute('aria-live', 'polite');
+        region.popover = 'manual';
+        region.setAttribute('role', 'region');
+        region.setAttribute('aria-label', '通知');
         document.body.append(region);
     }
     const toast = document.createElement('div');
     toast.className = `toast glass-panel app-notice is-${kind}`;
     toast.textContent = message;
     region.append(toast);
+    raise(region);
+    document.ariaNotify(message, { priority: kind === 'error' ? 'high' : 'normal' });
     window.setTimeout(() => {
         toast.classList.add('is-leaving');
-        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
         // Reduced motion (or a tab in the background) may skip the transition; the toast still goes.
-        window.setTimeout(() => toast.remove(), 260);
+        const remove = () => {
+            toast.remove();
+            if (!region.childElementCount && region.matches(':popover-open')) region.hidePopover();
+        };
+        toast.addEventListener('transitionend', remove, { once: true });
+        window.setTimeout(remove, 260);
     }, timeout);
+}
+
+/** Shown again only when a dialog has opened above it since, so the toasts already there do not flash. */
+function raise(region: HTMLElement): void {
+    if (!region.matches(':popover-open')) {
+        region.showPopover();
+        return;
+    }
+    const dialogs = [...document.querySelectorAll('dialog:modal')];
+    if (dialogs.some((dialog) => region.compareDocumentPosition(dialog) & Node.DOCUMENT_POSITION_FOLLOWING || !region.dataset.raised)) {
+        region.hidePopover();
+        region.showPopover();
+    }
+    region.dataset.raised = dialogs.length ? 'true' : '';
 }
 
 export function notifyError(error: unknown, fallback = '操作失败'): void {
@@ -159,43 +149,44 @@ export type MenuItem =
 /** A pointer position, or an element to open under (keyboard and button use). */
 export type MenuAnchor = { x: number; y: number } | HTMLElement;
 
-/** Opens a context menu at a point, or anchored under an element for keyboard / button use. */
-export function openMenu(items: MenuItem[], at: MenuAnchor): void {
-    document.querySelector('.context-menu')?.dispatchEvent(new Event('menu-close'));
+/**
+ * Opens a context menu at a point, or under an element for keyboard / button
+ * use. It is an auto popover: opening it closes any other menu, and an outside
+ * click or Escape closes it and returns focus.
+ */
+export function openMenu(items: MenuItem[], at: MenuAnchor, label: string): void {
     const menu = document.createElement('div');
     menu.className = 'context-menu glass-panel';
+    menu.popover = 'auto';
     menu.setAttribute('role', 'menu');
-    menu.innerHTML = items.map((item, index) => {
-        if ('separator' in item) return '<hr>';
-        if ('heading' in item) return `<span class="menu-heading">${escapeHtml(item.heading)}</span>`;
-        return `<button type="button" role="menuitem" data-index="${index}" class="${item.danger ? 'danger' : ''}">${item.icon ? `<i aria-hidden="true">${item.icon}</i>` : '<i></i>'}<span>${escapeHtml(item.label)}</span></button>`;
-    }).join('');
+    menu.setAttribute('aria-label', label);
+    menu.innerHTML = menuMarkup(items);
+    // Focus starts on the first item. Letting the popover move it there (rather than calling focus()) is what
+    // makes the browser hand focus back to the opener when the menu closes.
+    menu.querySelector('button')?.setAttribute('autofocus', '');
     document.body.append(menu);
+    const source = at instanceof HTMLElement ? at : null;
+    menu.showPopover(source ? { source } : undefined);
+    place(menu, at);
+    // A menu button says whether its menu is open.
+    if (source?.hasAttribute('aria-haspopup')) source.setAttribute('aria-expanded', 'true');
 
-    const anchor = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
-    const point = anchor ? { x: anchor.left, y: anchor.bottom + 6 } : at as { x: number; y: number };
-    const { width, height } = menu.getBoundingClientRect();
-    const flipsLeft = point.x > innerWidth - width - 8;
-    const flipsUp = point.y + height > innerHeight - 8;
-    menu.style.left = `${Math.max(8, Math.min(point.x, innerWidth - width - 8))}px`;
-    menu.style.top = `${flipsUp ? Math.max(8, point.y - height - (anchor ? anchor.height + 12 : 0)) : point.y}px`;
-    // The menu grows out of the corner nearest the pointer or anchor, whichever way it was flipped.
-    menu.style.transformOrigin = `${flipsLeft ? 'right' : 'left'} ${flipsUp ? 'bottom' : 'top'}`;
-
-    let release = () => {};
+    const listening = new AbortController();
     const close = () => {
-        document.removeEventListener('pointerdown', onOutside, true);
-        window.removeEventListener('blur', close);
-        window.removeEventListener('resize', close);
-        release();
-        menu.remove();
+        if (menu.matches(':popover-open')) menu.hidePopover();
     };
-    const onOutside = (event: Event) => { if (!menu.contains(event.target as Node)) close(); };
-    release = pushLayer(menu, close);
-    menu.addEventListener('menu-close', close);
-    document.addEventListener('pointerdown', onOutside, true);
-    window.addEventListener('blur', close);
-    window.addEventListener('resize', close);
+    menu.addEventListener('toggle', (event) => {
+        if ((event as ToggleEvent).newState !== 'closed') return;
+        listening.abort();
+        if (source?.hasAttribute('aria-haspopup')) source.setAttribute('aria-expanded', 'false');
+        removeAfterExit(menu);
+    }, { signal: listening.signal });
+    window.addEventListener('blur', close, { signal: listening.signal });
+    window.addEventListener('resize', close, { signal: listening.signal });
+    // Tab leaves a menu rather than cycling inside it.
+    menu.addEventListener('focusout', (event) => {
+        if (!menu.contains(event.relatedTarget as Node | null)) close();
+    }, { signal: listening.signal });
 
     const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button')];
     menu.addEventListener('click', (event) => {
@@ -207,13 +198,48 @@ export function openMenu(items: MenuItem[], at: MenuAnchor): void {
     });
     menu.addEventListener('keydown', (event) => {
         const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-            event.preventDefault();
-            const step = event.key === 'ArrowDown' ? 1 : -1;
-            buttons[(index + step + buttons.length) % buttons.length]?.focus();
+        const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
+        const jump = { Home: 0, End: buttons.length - 1 }[event.key];
+        if (step === undefined && jump === undefined) return;
+        event.preventDefault();
+        buttons[jump ?? (index + step! + buttons.length) % buttons.length]?.focus();
+    });
+}
+
+/** Items as menu items; a heading names the group of items that follows it, up to the next separator. */
+function menuMarkup(items: MenuItem[]): string {
+    let html = '';
+    let inGroup = false;
+    const endGroup = () => {
+        if (inGroup) html += '</div>';
+        inGroup = false;
+    };
+    items.forEach((item, index) => {
+        if ('separator' in item) {
+            endGroup();
+            html += '<hr>';
+        } else if ('heading' in item) {
+            endGroup();
+            html += `<div role="group" aria-labelledby="menu-heading-${index}"><span class="menu-heading" id="menu-heading-${index}" role="presentation">${escapeHtml(item.heading)}</span>`;
+            inGroup = true;
+        } else {
+            html += `<button type="button" role="menuitem" data-index="${index}" class="${item.danger ? 'danger' : ''}">${item.icon ? `<i aria-hidden="true">${item.icon}</i>` : '<i></i>'}<span>${escapeHtml(item.label)}</span></button>`;
         }
     });
-    buttons[0]?.focus({ preventScroll: true });
+    endGroup();
+    return html;
+}
+
+/** Opens at the pointer or under the anchor, flipped to stay on screen, growing from the nearest corner. */
+function place(menu: HTMLElement, at: MenuAnchor): void {
+    const anchor = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
+    const point = anchor ? { x: anchor.left, y: anchor.bottom + 6 } : at as { x: number; y: number };
+    const { width, height } = menu.getBoundingClientRect();
+    const flipsLeft = point.x > innerWidth - width - 8;
+    const flipsUp = point.y + height > innerHeight - 8;
+    menu.style.left = `${Math.max(8, Math.min(point.x, innerWidth - width - 8))}px`;
+    menu.style.top = `${flipsUp ? Math.max(8, point.y - height - (anchor ? anchor.height + 12 : 0)) : point.y}px`;
+    menu.style.transformOrigin = `${flipsLeft ? 'right' : 'left'} ${flipsUp ? 'bottom' : 'top'}`;
 }
 
 /**

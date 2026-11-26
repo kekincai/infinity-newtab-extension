@@ -34,6 +34,7 @@ export class GlassSystem extends HTMLElement {
         if (records.some((record) => record.type === 'childList')) this.scan();
         this.wake();
     });
+    private listeners: AbortController | null = null;
     private hovered: HTMLElement | null = null;
     private pointer = { x: -1e4, y: -1e4 };
     private smoothPointer = { x: -1e4, y: -1e4 };
@@ -54,24 +55,25 @@ export class GlassSystem extends HTMLElement {
         this.hdr.connect();
         this.scan();
         this.mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden'] });
-        document.addEventListener('pointermove', this.onPointerMove, { passive: true, capture: true });
-        document.addEventListener('pointerdown', this.wake, { passive: true, capture: true });
-        document.addEventListener('pointerup', this.wake, { passive: true, capture: true });
-        document.addEventListener('pointerleave', this.onPointerLeave);
-        window.addEventListener('scroll', this.wake, { passive: true, capture: true });
-        window.addEventListener('resize', this.wake);
+        this.listeners = new AbortController();
+        const { signal } = this.listeners;
+        document.addEventListener('pointermove', this.onPointerMove, { passive: true, capture: true, signal });
+        document.addEventListener('pointerdown', this.wake, { passive: true, capture: true, signal });
+        document.addEventListener('pointerup', this.wake, { passive: true, capture: true, signal });
+        document.addEventListener('pointerleave', this.onPointerLeave, { signal });
+        // A dialog or menu opening or closing moves controls in and out of view; `open` changes no class.
+        document.addEventListener('toggle', this.wake, { capture: true, signal });
+        document.addEventListener('close', this.wake, { capture: true, signal });
+        window.addEventListener('scroll', this.wake, { passive: true, capture: true, signal });
+        window.addEventListener('resize', this.wake, { signal });
         this.wake();
     }
 
     disconnectedCallback(): void {
         this.resizeObserver.disconnect();
         this.mutationObserver.disconnect();
-        document.removeEventListener('pointermove', this.onPointerMove, true);
-        document.removeEventListener('pointerdown', this.wake, true);
-        document.removeEventListener('pointerup', this.wake, true);
-        document.removeEventListener('pointerleave', this.onPointerLeave);
-        window.removeEventListener('scroll', this.wake, true);
-        window.removeEventListener('resize', this.wake);
+        this.listeners?.abort();
+        this.listeners = null;
         cancelAnimationFrame(this.frame);
         this.frame = 0;
         this.hdr.disconnect();

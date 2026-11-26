@@ -14,7 +14,7 @@ export class BackupToast extends StoreElement {
         const due = Date.now() - appStore.state.lastBackupPrompt >= REMINDER_INTERVAL;
         this.hidden = !due || this.dismissed || !appStore.state.bookmarks.length || !appStore.state.settings.layout.backupReminder;
         if (this.hidden) {
-            this.innerHTML = '';
+            this.replaceChildren();
             return;
         }
         this.innerHTML = `

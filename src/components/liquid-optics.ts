@@ -55,13 +55,23 @@ export function precalculateDisplacements(
     });
 }
 
+let profile: { displacements: number[]; maximumDisplacement: number } | null = null;
+
+/** The rim profile never changes, so it is worked out once for every shape. */
+function defaultProfile(): { displacements: number[]; maximumDisplacement: number } {
+    if (!profile) {
+        const displacements = precalculateDisplacements();
+        profile = { displacements, maximumDisplacement: Math.max(...displacements.map(Math.abs)) };
+    }
+    return profile;
+}
+
 /** The bend a convex glass rim of this shape applies to whatever sits behind it. */
 export function createRefractionMap(shape: OpticalShape): RefractionMap {
     const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
     const radius = clamp(shape.radius, 2, Math.min(shape.width, shape.height) / 2);
     const bezelWidth = Math.max(2, radius * 0.75);
-    const displacements = precalculateDisplacements();
-    const maximumDisplacement = Math.max(...displacements.map(Math.abs));
+    const { displacements, maximumDisplacement } = defaultProfile();
     return {
         displacement: imageDataUrl(createDisplacementMap(
             shape.width,

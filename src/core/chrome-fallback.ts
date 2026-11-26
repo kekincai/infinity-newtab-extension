@@ -1,35 +1,39 @@
-/** Keeps the page previewable outside an installed extension without changing extension behavior. */
+/**
+ * Keeps the page previewable outside an installed extension without changing
+ * extension behavior. Like the real APIs, every method returns a promise.
+ */
 export function installChromeFallback(): void {
     if ((globalThis as any).chrome?.storage?.sync) return;
     const syncKey = 'infinity-preview-sync';
-    const makeArea = (name: string) => ({
-        get(keys: unknown, callback: (value: Record<string, unknown>) => void) {
-            const values = JSON.parse(localStorage.getItem(name) || '{}') as Record<string, unknown>;
-            if (keys === null || keys === undefined) callback({ ...values });
-            else if (typeof keys === 'string') callback({ [keys]: values[keys] });
-            else if (Array.isArray(keys)) callback(Object.fromEntries(keys.map((key) => [key, values[key]])));
-            else callback({});
+    const read = (): Record<string, unknown> => JSON.parse(localStorage.getItem(syncKey) || '{}');
+    const write = (values: Record<string, unknown>) => localStorage.setItem(syncKey, JSON.stringify(values));
+    const sync = {
+        async get(keys: unknown): Promise<Record<string, unknown>> {
+            const values = read();
+            if (keys === null || keys === undefined) return values;
+            if (typeof keys === 'string') return { [keys]: values[keys] };
+            if (Array.isArray(keys)) return Object.fromEntries(keys.map((key) => [key, values[key]]));
+            return {};
         },
-        set(next: Record<string, unknown>, callback: () => void = () => undefined) {
-            const values = JSON.parse(localStorage.getItem(name) || '{}') as Record<string, unknown>;
-            localStorage.setItem(name, JSON.stringify({ ...values, ...next }));
-            callback();
+        async set(next: Record<string, unknown>): Promise<void> {
+            write({ ...read(), ...next });
         },
-        remove(keys: string | string[], callback: () => void = () => undefined) {
-            const values = JSON.parse(localStorage.getItem(name) || '{}') as Record<string, unknown>;
+        async remove(keys: string | string[]): Promise<void> {
+            const values = read();
             (Array.isArray(keys) ? keys : [keys]).forEach((key) => delete values[key]);
-            localStorage.setItem(name, JSON.stringify(values));
-            callback();
+            write(values);
         },
-        clear(callback: () => void = () => undefined) {
-            localStorage.removeItem(name);
-            callback();
+        async clear(): Promise<void> {
+            localStorage.removeItem(syncKey);
+        },
+        async getBytesInUse(): Promise<number> {
+            return new TextEncoder().encode(localStorage.getItem(syncKey) ?? '').length;
         }
-    });
+    };
     (globalThis as any).chrome = {
-        runtime: { id: 'preview', lastError: null, getURL: (path: string) => new URL(path, location.href).href },
+        runtime: { id: 'preview', getURL: (path: string) => new URL(path, location.href).href },
         storage: {
-            sync: makeArea(syncKey),
+            sync,
             // Other preview tabs writing to localStorage stand in for other tabs and devices.
             onChanged: {
                 addListener(listener: (changes: Record<string, unknown>, areaName: string) => void) {
@@ -40,11 +44,12 @@ export function installChromeFallback(): void {
             }
         },
         tabs: {
-            query: (_query: unknown, done: (value: unknown[]) => void) => done([]),
-            update: () => undefined,
-            create: ({ url }: { url?: string }) => url ? window.open(url, '_blank', 'noopener') : undefined
+            query: async () => [],
+            update: async () => undefined,
+            create: async ({ url }: { url?: string }) => { if (url) window.open(url, '_blank', 'noopener'); }
         },
-        downloads: { search: (_query: unknown, done: (value: unknown[]) => void) => done([]), show: () => undefined },
-        history: { search: (_query: unknown, done: (value: unknown[]) => void) => done([]) }
+        windows: { update: async () => undefined },
+        downloads: { search: async () => [], show: () => undefined },
+        history: { search: async () => [] }
     };
 }

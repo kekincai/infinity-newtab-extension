@@ -2,11 +2,10 @@ import { appStore } from '../core/store';
 import type { Bookmark } from '../core/types';
 import { DEFAULT_ICON, escapeHtml, faviconUrl, normalizeUrl, sanitizeRemoteUrl } from '../core/utils';
 import { type BookmarkDialogDetail as DialogDetail, ROOT_FOLDER, folderLabel } from './bookmark-actions';
-import { notifyError, pushLayer } from './ui-layer';
+import { removeAfterExit } from './ui-layer';
 
 export class BookmarkDialog extends HTMLElement {
     private editing?: Bookmark;
-    private releaseLayer: (() => void) | null = null;
 
     connectedCallback(): void {
         document.addEventListener('open-bookmark-dialog', this.onOpen as EventListener);
@@ -18,30 +17,30 @@ export class BookmarkDialog extends HTMLElement {
     }
 
     private readonly onOpen = (event: CustomEvent<DialogDetail>): void => {
-        this.editing = event.detail.bookmark;
         this.open(event.detail);
     };
 
     private open({ bookmark, folder = ROOT_FOLDER, draft }: DialogDetail): void {
         this.close();
+        // Set after closing the previous dialog, which forgets what it was editing.
+        this.editing = bookmark;
         const selected = bookmark?.folder ?? folder;
         const title = bookmark ? '编辑书签' : '添加书签';
+        // Editing starts on the name, adding on the address.
         this.innerHTML = `
-            <div class="modal-backdrop dialog-backdrop is-open">
-                <form class="modal bookmark-dialog glass-panel" role="dialog" aria-modal="true" aria-label="${title}" novalidate>
-                    <header class="modal-header">
-                        <h2>${title}</h2>
-                    </header>
+            <dialog class="modal bookmark-dialog glass-panel" aria-labelledby="bookmark-dialog-title" closedby="any">
+                <form novalidate>
+                    <h1 class="modal-title" id="bookmark-dialog-title">${title}</h1>
                     <label class="field">
                         <span>网址</span>
                         <span class="field-with-icon">
                             <img class="url-preview" src="${DEFAULT_ICON}" alt="">
-                            <input name="url" type="text" inputmode="url" required autocomplete="off" spellcheck="false" placeholder="example.com" value="${escapeHtml(bookmark?.url ?? draft?.url ?? '')}">
+                            <input name="url" type="text" inputmode="url" required autocomplete="off" spellcheck="false" placeholder="example.com" ${bookmark ? '' : 'autofocus'} value="${escapeHtml(bookmark?.url ?? draft?.url ?? '')}">
                         </span>
                     </label>
                     <label class="field">
                         <span>名称</span>
-                        <input name="name" type="text" maxlength="160" autocomplete="off" placeholder="留空则使用网站名" value="${escapeHtml(bookmark?.name ?? draft?.name ?? '')}">
+                        <input name="name" type="text" maxlength="160" autocomplete="off" placeholder="留空则使用网站名" ${bookmark ? 'autofocus' : ''} value="${escapeHtml(bookmark?.name ?? draft?.name ?? '')}">
                     </label>
                     <label class="field">
                         <span>文件夹</span>
@@ -54,16 +53,16 @@ export class BookmarkDialog extends HTMLElement {
                             <input name="icon" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://example.com/icon.png" value="${escapeHtml(bookmark?.icon ?? '')}">
                         </label>
                     </details>
-                    <p class="field-error" role="alert" hidden></p>
+                    <p class="field-error" id="bookmark-url-error" role="alert" hidden></p>
                     <footer class="modal-actions">
                         <button class="pill-button cancel-dialog" type="button">取消</button>
                         <button class="pill-button primary" type="submit">保存</button>
                     </footer>
                 </form>
-            </div>
+            </dialog>
         `;
-        const backdrop = this.querySelector<HTMLElement>('.dialog-backdrop')!;
-        const form = this.querySelector<HTMLFormElement>('form')!;
+        const dialog = this.querySelector<HTMLDialogElement>('dialog')!;
+        const form = dialog.querySelector<HTMLFormElement>('form')!;
         const urlInput = form.querySelector<HTMLInputElement>('input[name="url"]')!;
         const iconInput = form.querySelector<HTMLInputElement>('input[name="icon"]')!;
         const preview = form.querySelector<HTMLImageElement>('.url-preview')!;
@@ -79,11 +78,18 @@ export class BookmarkDialog extends HTMLElement {
         urlInput.addEventListener('input', () => {
             error.hidden = true;
             urlInput.removeAttribute('aria-invalid');
+            urlInput.removeAttribute('aria-describedby');
             updatePreview();
         });
         iconInput.addEventListener('change', updatePreview);
-        this.querySelector('.cancel-dialog')?.addEventListener('click', () => this.close());
-        backdrop.addEventListener('pointerdown', (event) => { if (event.target === backdrop) this.close(); });
+        form.querySelector('.cancel-dialog')?.addEventListener('click', () => this.close());
+        // Escape and clicks outside close it natively; the element is emptied once it has gone.
+        dialog.addEventListener('close', () => {
+            // The close event comes a task later; by then another bookmark may already be open here.
+            if (this.querySelector('dialog') !== dialog) return;
+            this.editing = undefined;
+            removeAfterExit(dialog);
+        }, { once: true });
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
             const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
@@ -100,6 +106,8 @@ export class BookmarkDialog extends HTMLElement {
                 error.textContent = '请输入有效的网址，例如 github.com';
                 error.hidden = false;
                 urlInput.setAttribute('aria-invalid', 'true');
+                // The message describes the field only while it is wrong.
+                urlInput.setAttribute('aria-describedby', error.id);
                 urlInput.focus();
                 return;
             }
@@ -110,22 +118,22 @@ export class BookmarkDialog extends HTMLElement {
                 else await appStore.addBookmark(input);
                 this.close();
             } catch (saveError) {
-                notifyError(saveError, '保存失败');
+                // Shown inside the dialog: a toast outside an open modal would be inert, and easy to miss.
+                error.textContent = saveError instanceof Error && saveError.message ? saveError.message : '保存失败';
+                error.hidden = false;
             } finally {
                 submit.disabled = false;
                 form.removeAttribute('aria-busy');
             }
         });
-        this.releaseLayer = pushLayer(form, () => this.close());
-        requestAnimationFrame(() => (bookmark ? form.querySelector<HTMLInputElement>('input[name="name"]') : urlInput)?.focus());
+        dialog.showModal();
     }
 
     private close(): void {
+        const dialog = this.querySelector<HTMLDialogElement>('dialog');
+        if (dialog?.open) dialog.close();
+        else dialog?.remove();
         this.editing = undefined;
-        this.innerHTML = '';
-        const release = this.releaseLayer;
-        this.releaseLayer = null;
-        release?.();
     }
 }
 

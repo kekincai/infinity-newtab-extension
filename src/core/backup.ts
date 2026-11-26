@@ -83,17 +83,15 @@ export function sanitizeBookmarks(values: unknown[], mergeDuplicates = false): B
         });
     });
 
-    const folders = new Map<string, Bookmark[]>();
-    bookmarks.forEach((bookmark) => {
-        const list = folders.get(bookmark.folder) ?? [];
-        list.push(bookmark);
-        folders.set(bookmark.folder, list);
-    });
-    folders.forEach((list) => {
-        list.sort(compareBookmarks);
-        list.forEach((bookmark, index) => { bookmark.order = index; });
-    });
+    renumberFolders(bookmarks);
     return bookmarks;
+}
+
+/** Numbers every folder's bookmarks 0, 1, 2… in their current order, closing any gaps. */
+export function renumberFolders(bookmarks: Bookmark[]): void {
+    Map.groupBy(bookmarks, (bookmark) => bookmark.folder).forEach((list) => {
+        list.sort(compareBookmarks).forEach((bookmark, index) => { bookmark.order = index; });
+    });
 }
 
 /** The root folder first, then every named folder and any folder a bookmark still points at. */
@@ -166,9 +164,10 @@ export function dataUrlToBlob(dataUrl: unknown): Blob | null {
     if (!payload) return null;
     const mime = header.match(/^data:([^;,]+)/)?.[1] ?? 'application/octet-stream';
     try {
-        const decoded = header.includes(';base64') ? atob(payload) : decodeURIComponent(payload);
-        const bytes = new Uint8Array(decoded.length);
-        for (let index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index);
+        // Decoded straight to bytes: no binary string as large as the video in between.
+        const bytes = header.includes(';base64')
+            ? Uint8Array.fromBase64(payload)
+            : new TextEncoder().encode(decodeURIComponent(payload));
         return new Blob([bytes], { type: mime });
     } catch {
         return null;
