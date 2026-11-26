@@ -1,6 +1,15 @@
-/** Thin async wrappers over `chrome.storage.sync`, where every synced value lives. */
+/**
+ * Thin async wrappers over `chrome.storage`. Bookmarks and most settings live
+ * in `sync`, shared by every device signed in to the Chrome account; the
+ * wallpaper settings live in `local`, next to the picture or video they
+ * describe, which never leaves this device.
+ */
 function sync(): any {
     return chrome.storage.sync;
+}
+
+function local(): any {
+    return chrome.storage.local;
 }
 
 export async function storageGet<T extends Record<string, unknown>>(keys: string[] | string | null): Promise<T> {
@@ -23,6 +32,22 @@ export async function storageClear(): Promise<void> {
     await sync().clear();
 }
 
+export async function localGet<T extends Record<string, unknown>>(keys: string[] | string | null): Promise<T> {
+    return (await local().get(keys) ?? {}) as T;
+}
+
+export async function localSet(values: Record<string, unknown>): Promise<void> {
+    try {
+        await local().set(values);
+    } catch (error) {
+        throw new Error(error instanceof Error && error.message ? error.message : '保存失败', { cause: error });
+    }
+}
+
+export async function localClear(): Promise<void> {
+    await local().clear();
+}
+
 /** Bytes the synced data takes, or null where Chrome cannot tell. */
 export async function storageBytesInUse(): Promise<number | null> {
     try {
@@ -32,10 +57,10 @@ export async function storageBytesInUse(): Promise<number | null> {
     }
 }
 
-/** Calls back whenever another tab, another device or this page changes synced data. */
-export function onSyncChanged(callback: () => void): void {
+/** Calls back whenever another tab, another device or this page changes stored data. */
+export function onStorageChanged(callback: () => void): void {
     chrome.storage.onChanged?.addListener?.((_changes: unknown, areaName: string) => {
-        if (areaName === 'sync') callback();
+        if (areaName === 'sync' || areaName === 'local') callback();
     });
 }
 

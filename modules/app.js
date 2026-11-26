@@ -404,6 +404,9 @@
   function sync() {
     return chrome.storage.sync;
   }
+  function local() {
+    return chrome.storage.local;
+  }
   async function storageGet(keys) {
     return await sync().get(keys) ?? {};
   }
@@ -420,6 +423,19 @@
   async function storageClear() {
     await sync().clear();
   }
+  async function localGet(keys) {
+    return await local().get(keys) ?? {};
+  }
+  async function localSet(values) {
+    try {
+      await local().set(values);
+    } catch (error) {
+      throw new Error(error instanceof Error && error.message ? error.message : "\u4FDD\u5B58\u5931\u8D25", { cause: error });
+    }
+  }
+  async function localClear() {
+    await local().clear();
+  }
   async function storageBytesInUse() {
     try {
       return typeof sync().getBytesInUse === "function" ? await sync().getBytesInUse(null) : null;
@@ -427,9 +443,9 @@
       return null;
     }
   }
-  function onSyncChanged(callback) {
+  function onStorageChanged(callback) {
     chrome.storage.onChanged?.addListener?.((_changes, areaName) => {
-      if (areaName === "sync") callback();
+      if (areaName === "sync" || areaName === "local") callback();
     });
   }
   function describeWriteError(message = "") {
@@ -444,6 +460,111 @@
     }
   });
 
+  // src/core/media-store.ts
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error ?? new Error("\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u58C1\u7EB8"));
+      reader.readAsDataURL(blob);
+    });
+  }
+  var DATABASE, STORE, KINDS, MediaStore, mediaStore;
+  var init_media_store = __esm({
+    "src/core/media-store.ts"() {
+      "use strict";
+      init_backup();
+      DATABASE = "infinity-wallpaper";
+      STORE = "wallpapers";
+      KINDS = ["image", "video"];
+      MediaStore = class {
+        database = null;
+        async get(kind) {
+          const database = await this.open();
+          return new Promise((resolve, reject) => {
+            const request = database.transaction(STORE, "readonly").objectStore(STORE).get(kind);
+            request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
+            request.onerror = () => reject(request.error ?? new Error("\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u58C1\u7EB8"));
+          });
+        }
+        async set(kind, value) {
+          await this.write((store) => store.put(value, kind), "\u65E0\u6CD5\u4FDD\u5B58\u672C\u5730\u58C1\u7EB8", "\u672C\u5730\u58C1\u7EB8\u5B58\u50A8\u5DF2\u4E2D\u6B62");
+        }
+        async clear(kind) {
+          await this.write((store) => store.delete(kind), "\u65E0\u6CD5\u5220\u9664\u672C\u5730\u58C1\u7EB8", "\u672C\u5730\u58C1\u7EB8\u5220\u9664\u5DF2\u4E2D\u6B62");
+        }
+        async clearAll() {
+          await Promise.all(KINDS.map((kind) => this.clear(kind)));
+        }
+        async snapshot() {
+          const [image, video] = await Promise.all(KINDS.map((kind) => this.get(kind)));
+          return { image, video };
+        }
+        async restore(snapshot) {
+          for (const kind of KINDS) {
+            const blob = snapshot[kind];
+            if (blob) await this.set(kind, blob);
+            else await this.clear(kind);
+          }
+        }
+        async export() {
+          const { image, video } = await this.snapshot();
+          return {
+            image: image ? await blobToDataUrl(image) : null,
+            video: video ? await blobToDataUrl(video) : null
+          };
+        }
+        async import(value) {
+          if (!isRecord(value)) {
+            await this.clearAll();
+            return;
+          }
+          for (const kind of KINDS) {
+            const blob = dataUrlToBlob(value[kind]);
+            if (blob) await this.set(kind, blob);
+            else await this.clear(kind);
+          }
+        }
+        async write(run, failed, aborted) {
+          const database = await this.open();
+          await new Promise((resolve, reject) => {
+            const transaction = database.transaction(STORE, "readwrite");
+            run(transaction.objectStore(STORE));
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error ?? new Error(failed));
+            transaction.onabort = () => reject(transaction.error ?? new Error(aborted));
+          });
+        }
+        /** One connection for the page; it is dropped if it fails or another page upgrades the database. */
+        open() {
+          this.database ??= new Promise((resolve, reject) => {
+            const request = indexedDB.open(DATABASE, 1);
+            request.onupgradeneeded = () => {
+              if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
+            };
+            request.onsuccess = () => {
+              const database = request.result;
+              database.onversionchange = () => {
+                database.close();
+                this.database = null;
+              };
+              database.onclose = () => {
+                this.database = null;
+              };
+              resolve(database);
+            };
+            request.onerror = () => reject(request.error ?? new Error("\u65E0\u6CD5\u6253\u5F00\u58C1\u7EB8\u6570\u636E\u5E93"));
+          });
+          this.database.catch(() => {
+            this.database = null;
+          });
+          return this.database;
+        }
+      };
+      mediaStore = new MediaStore();
+    }
+  });
+
   // src/core/store.ts
   function initialState() {
     return {
@@ -453,6 +574,10 @@
       recentSearches: [],
       lastBackupPrompt: 0
     };
+  }
+  function syncedSettings(settings) {
+    const { wallpaper: _wallpaper, ...synced } = settings;
+    return synced;
   }
   function fitRecentSearches(searches) {
     const encoder = new TextEncoder();
@@ -496,13 +621,14 @@
       bookmark.order = index;
     });
   }
-  var ALL_CHANGES, AppStore, RECENT_SEARCH_BUDGET, RECENT_SEARCH_LIMIT, appStore;
+  var ALL_CHANGES, hasStoredMedia, AppStore, WALLPAPER_KEY, RECENT_SEARCH_BUDGET, RECENT_SEARCH_LIMIT, appStore;
   var init_store = __esm({
     "src/core/store.ts"() {
       "use strict";
       init_backup();
       init_bookmark_storage();
       init_storage();
+      init_media_store();
       init_utils();
       ALL_CHANGES = [
         "bookmarks",
@@ -513,7 +639,19 @@
         "settings.wallpaper",
         "settings.layout"
       ];
+      hasStoredMedia = async (kind) => {
+        try {
+          return Boolean(await mediaStore.get(kind));
+        } catch {
+          return false;
+        }
+      };
       AppStore = class extends EventTarget {
+        constructor(hasMedia = hasStoredMedia) {
+          super();
+          this.hasMedia = hasMedia;
+        }
+        hasMedia;
         stateValue = initialState();
         initialized = null;
         bookmarkChunks = 0;
@@ -526,7 +664,7 @@
           this.initialized ??= this.serial(async () => {
             this.stateValue = await this.read();
             this.emit(ALL_CHANGES);
-            onSyncChanged(this.queueReload);
+            onStorageChanged(this.queueReload);
           });
           this.initialized.catch(() => {
             this.initialized = null;
@@ -641,10 +779,11 @@
             await storageSet({
               ...encoded.values,
               folders: next.folders,
-              settings: next.settings,
+              settings: syncedSettings(next.settings),
               recentSearches: fitRecentSearches(next.recentSearches),
               lastBackupPrompt: next.lastBackupPrompt
             });
+            await localSet({ [WALLPAPER_KEY]: next.settings.wallpaper });
             this.stateValue = structuredClone(next);
             this.stateValue.recentSearches = fitRecentSearches(next.recentSearches);
             await this.dropStaleBookmarkKeys(encoded.count);
@@ -654,6 +793,7 @@
         reset() {
           return this.serial(async () => {
             await storageClear();
+            await localClear();
             this.bookmarkChunks = 0;
             this.stateValue = initialState();
             this.emit(ALL_CHANGES);
@@ -666,16 +806,34 @@
           return run;
         }
         async read() {
-          const stored = await storageGet(null);
+          const [stored, device] = await Promise.all([
+            storageGet(null),
+            localGet(WALLPAPER_KEY)
+          ]);
           this.bookmarkChunks = storedChunkCount(stored);
           const bookmarks = sanitizeBookmarks(decodeBookmarks(stored));
+          const synced = isRecord(stored.settings) ? stored.settings : {};
+          const wallpaper = WALLPAPER_KEY in device && device[WALLPAPER_KEY] !== void 0 ? device[WALLPAPER_KEY] : await this.adoptSyncedWallpaper(synced.wallpaper);
           return {
             bookmarks,
             folders: normalizeFolders(stored.folders, bookmarks),
-            settings: sanitizeSettings(stored.settings),
+            settings: sanitizeSettings({ ...synced, wallpaper }),
             recentSearches: normalizeRecentSearches(stored.recentSearches),
             lastBackupPrompt: finiteNumber(stored.lastBackupPrompt, 0)
           };
+        }
+        /**
+         * Before 3.7.1 the wallpaper settings were synced, so a device may hold
+         * another device's choice. It is taken over once, as this device's own,
+         * only where this device has the media it names; otherwise this device
+         * starts from the built-in scene, keeping the other wallpaper preferences.
+         */
+        async adoptSyncedWallpaper(value) {
+          const wallpaper = sanitizeSettings({ wallpaper: value }).wallpaper;
+          const kind = wallpaper.type === "video" ? "video" : wallpaper.type === "local" ? "image" : null;
+          const adopted = kind && !await this.hasMedia(kind) ? { ...wallpaper, type: DEFAULT_SETTINGS.wallpaper.type, value: DEFAULT_SETTINGS.wallpaper.value, framing: DEFAULT_SETTINGS.wallpaper.framing } : wallpaper;
+          await localSet({ [WALLPAPER_KEY]: adopted }).catch(() => void 0);
+          return adopted;
         }
         /** Several change events (a save and its chunk cleanup) collapse into one reload. */
         queueReload = () => {
@@ -696,8 +854,15 @@
             const draft = structuredClone(this.stateValue);
             if (mutator(draft) === false) return;
             const values = {};
+            const deviceValues = {};
             let bookmarkChunks = null;
             keys.forEach((key) => {
+              if (key === "settings") {
+                const sections = changes.filter((change) => change.startsWith("settings."));
+                if (!sections.length || sections.includes("settings.wallpaper")) deviceValues[WALLPAPER_KEY] = draft.settings.wallpaper;
+                if (!sections.length || sections.some((change) => change !== "settings.wallpaper")) values.settings = syncedSettings(draft.settings);
+                return;
+              }
               if (key !== "bookmarks") {
                 values[key] = draft[key];
                 return;
@@ -706,7 +871,8 @@
               Object.assign(values, encoded.values);
               bookmarkChunks = encoded.count;
             });
-            await storageSet(values);
+            if (Object.keys(values).length) await storageSet(values);
+            if (Object.keys(deviceValues).length) await localSet(deviceValues);
             this.stateValue = draft;
             if (bookmarkChunks !== null) await this.dropStaleBookmarkKeys(bookmarkChunks);
             this.emit(changes);
@@ -726,6 +892,7 @@
           this.dispatchEvent(new CustomEvent("change", { detail: { state: this.stateValue, changes } }));
         }
       };
+      WALLPAPER_KEY = "wallpaper";
       RECENT_SEARCH_BUDGET = 7600;
       RECENT_SEARCH_LIMIT = 20;
       appStore = new AppStore();
@@ -736,40 +903,45 @@
   function installChromeFallback() {
     if (globalThis.chrome?.storage?.sync) return;
     const syncKey = "infinity-preview-sync";
-    const read = () => JSON.parse(localStorage.getItem(syncKey) || "{}");
-    const write = (values) => localStorage.setItem(syncKey, JSON.stringify(values));
-    const sync2 = {
-      async get(keys) {
-        const values = read();
-        if (keys === null || keys === void 0) return values;
-        if (typeof keys === "string") return { [keys]: values[keys] };
-        if (Array.isArray(keys)) return Object.fromEntries(keys.map((key) => [key, values[key]]));
-        return {};
-      },
-      async set(next) {
-        write({ ...read(), ...next });
-      },
-      async remove(keys) {
-        const values = read();
-        (Array.isArray(keys) ? keys : [keys]).forEach((key) => delete values[key]);
-        write(values);
-      },
-      async clear() {
-        localStorage.removeItem(syncKey);
-      },
-      async getBytesInUse() {
-        return new TextEncoder().encode(localStorage.getItem(syncKey) ?? "").length;
-      }
+    const localKey = "infinity-preview-local";
+    const area = (key) => {
+      const read = () => JSON.parse(localStorage.getItem(key) || "{}");
+      const write = (values) => localStorage.setItem(key, JSON.stringify(values));
+      return {
+        async get(keys) {
+          const values = read();
+          if (keys === null || keys === void 0) return values;
+          if (typeof keys === "string") return { [keys]: values[keys] };
+          if (Array.isArray(keys)) return Object.fromEntries(keys.map((name) => [name, values[name]]));
+          return {};
+        },
+        async set(next) {
+          write({ ...read(), ...next });
+        },
+        async remove(keys) {
+          const values = read();
+          (Array.isArray(keys) ? keys : [keys]).forEach((name) => delete values[name]);
+          write(values);
+        },
+        async clear() {
+          localStorage.removeItem(key);
+        },
+        async getBytesInUse() {
+          return new TextEncoder().encode(localStorage.getItem(key) ?? "").length;
+        }
+      };
     };
     globalThis.chrome = {
       runtime: { id: "preview", getURL: (path) => new URL(path, location.href).href },
       storage: {
-        sync: sync2,
+        sync: area(syncKey),
+        local: area(localKey),
         // Other preview tabs writing to localStorage stand in for other tabs and devices.
         onChanged: {
           addListener(listener) {
             window.addEventListener("storage", (event) => {
               if (event.key === syncKey) listener({}, "sync");
+              else if (event.key === localKey) listener({}, "local");
             });
           }
         }
@@ -789,111 +961,6 @@
   var init_chrome_fallback = __esm({
     "src/core/chrome-fallback.ts"() {
       "use strict";
-    }
-  });
-
-  // src/core/media-store.ts
-  function blobToDataUrl(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error ?? new Error("\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u58C1\u7EB8"));
-      reader.readAsDataURL(blob);
-    });
-  }
-  var DATABASE, STORE, KINDS, MediaStore, mediaStore;
-  var init_media_store = __esm({
-    "src/core/media-store.ts"() {
-      "use strict";
-      init_backup();
-      DATABASE = "infinity-wallpaper";
-      STORE = "wallpapers";
-      KINDS = ["image", "video"];
-      MediaStore = class {
-        database = null;
-        async get(kind) {
-          const database = await this.open();
-          return new Promise((resolve, reject) => {
-            const request = database.transaction(STORE, "readonly").objectStore(STORE).get(kind);
-            request.onsuccess = () => resolve(request.result instanceof Blob ? request.result : null);
-            request.onerror = () => reject(request.error ?? new Error("\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u58C1\u7EB8"));
-          });
-        }
-        async set(kind, value) {
-          await this.write((store) => store.put(value, kind), "\u65E0\u6CD5\u4FDD\u5B58\u672C\u5730\u58C1\u7EB8", "\u672C\u5730\u58C1\u7EB8\u5B58\u50A8\u5DF2\u4E2D\u6B62");
-        }
-        async clear(kind) {
-          await this.write((store) => store.delete(kind), "\u65E0\u6CD5\u5220\u9664\u672C\u5730\u58C1\u7EB8", "\u672C\u5730\u58C1\u7EB8\u5220\u9664\u5DF2\u4E2D\u6B62");
-        }
-        async clearAll() {
-          await Promise.all(KINDS.map((kind) => this.clear(kind)));
-        }
-        async snapshot() {
-          const [image, video] = await Promise.all(KINDS.map((kind) => this.get(kind)));
-          return { image, video };
-        }
-        async restore(snapshot) {
-          for (const kind of KINDS) {
-            const blob = snapshot[kind];
-            if (blob) await this.set(kind, blob);
-            else await this.clear(kind);
-          }
-        }
-        async export() {
-          const { image, video } = await this.snapshot();
-          return {
-            image: image ? await blobToDataUrl(image) : null,
-            video: video ? await blobToDataUrl(video) : null
-          };
-        }
-        async import(value) {
-          if (!isRecord(value)) {
-            await this.clearAll();
-            return;
-          }
-          for (const kind of KINDS) {
-            const blob = dataUrlToBlob(value[kind]);
-            if (blob) await this.set(kind, blob);
-            else await this.clear(kind);
-          }
-        }
-        async write(run, failed, aborted) {
-          const database = await this.open();
-          await new Promise((resolve, reject) => {
-            const transaction = database.transaction(STORE, "readwrite");
-            run(transaction.objectStore(STORE));
-            transaction.oncomplete = () => resolve();
-            transaction.onerror = () => reject(transaction.error ?? new Error(failed));
-            transaction.onabort = () => reject(transaction.error ?? new Error(aborted));
-          });
-        }
-        /** One connection for the page; it is dropped if it fails or another page upgrades the database. */
-        open() {
-          this.database ??= new Promise((resolve, reject) => {
-            const request = indexedDB.open(DATABASE, 1);
-            request.onupgradeneeded = () => {
-              if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
-            };
-            request.onsuccess = () => {
-              const database = request.result;
-              database.onversionchange = () => {
-                database.close();
-                this.database = null;
-              };
-              database.onclose = () => {
-                this.database = null;
-              };
-              resolve(database);
-            };
-            request.onerror = () => reject(request.error ?? new Error("\u65E0\u6CD5\u6253\u5F00\u58C1\u7EB8\u6570\u636E\u5E93"));
-          });
-          this.database.catch(() => {
-            this.database = null;
-          });
-          return this.database;
-        }
-      };
-      mediaStore = new MediaStore();
     }
   });
 

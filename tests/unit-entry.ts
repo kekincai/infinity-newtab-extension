@@ -7,19 +7,20 @@ import { convexSquircle, precalculateDisplacements } from '../src/components/liq
 import { bookmarkIcon, bookmarkIconCanUpgrade, bookmarkIconFallback, bookmarkIconSrcSet, faviconUrl, isAddressLike, normalizeUrl, siteLabel } from '../src/core/utils';
 
 const syncData: Record<string, unknown> = {};
+const localData: Record<string, unknown> = {};
 let failWrites = false;
 type ChangeListener = (changes: Record<string, unknown>, areaName: string) => void;
 const changeListeners: ChangeListener[] = [];
 /** Like Chrome, change events reach every page after the write, this one included. */
-function announceChange(keys: string[]): void {
-    setTimeout(() => changeListeners.forEach((listener) => listener(Object.fromEntries(keys.map((key) => [key, {}])), 'sync')), 0);
+function announceChange(keys: string[], areaName = 'sync'): void {
+    setTimeout(() => changeListeners.forEach((listener) => listener(Object.fromEntries(keys.map((key) => [key, {}])), areaName)), 0);
 }
 
 const runtime = {
     getURL: (path: string) => `chrome-extension://unit-test${path}`
 };
 /** Promise-based like Chrome's own storage areas: a refused write rejects. */
-function area(data: Record<string, unknown>) {
+function area(data: Record<string, unknown>, areaName = 'sync') {
     return {
         async get(keys: string[] | string | null): Promise<Record<string, unknown>> {
             if (keys === null) return { ...data };
@@ -29,16 +30,16 @@ function area(data: Record<string, unknown>) {
         async set(values: Record<string, unknown>): Promise<void> {
             if (failWrites) throw new Error('quota exceeded');
             Object.assign(data, structuredClone(values));
-            announceChange(Object.keys(values));
+            announceChange(Object.keys(values), areaName);
         },
         async remove(keys: string[]): Promise<void> {
             keys.forEach((key) => delete data[key]);
-            announceChange(keys);
+            announceChange(keys, areaName);
         },
         async clear(): Promise<void> {
             const keys = Object.keys(data);
             keys.forEach((key) => delete data[key]);
-            announceChange(keys);
+            announceChange(keys, areaName);
         }
     };
 }
@@ -47,6 +48,7 @@ function area(data: Record<string, unknown>) {
     runtime,
     storage: {
         sync: area(syncData),
+        local: area(localData, 'local'),
         onChanged: { addListener: (listener: ChangeListener) => changeListeners.push(listener) }
     }
 };
@@ -347,10 +349,48 @@ async function testImportDropsExtraChunks(): Promise<void> {
     assert.equal(bookmarkChunkKey(1) in syncData, false, '导入较少的书签时清掉多余的分片');
 }
 
+/** The wallpaper names media only this device has, so its settings stay on this device. */
+async function testWallpaperStaysOnDevice(): Promise<void> {
+    const clear = (data: Record<string, unknown>) => Object.keys(data).forEach((key) => delete data[key]);
+    clear(syncData);
+    clear(localData);
+    const store = new AppStore(async () => true);
+    await store.init();
+    await store.updateSettings('wallpaper', { type: 'local', value: 'local-1', blur: 8 });
+    await store.updateSettings('appearance', { glass: 'tinted' });
+    assert.equal((localData.wallpaper as any).value, 'local-1', '壁纸设置写在本机');
+    assert.equal('wallpaper' in (syncData.settings as any), false, '同步的设置里没有壁纸');
+    assert.equal((syncData.settings as any).appearance.glass, 'tinted', '其余设置照常同步');
+
+    // Another device's synced choice from before 3.7.1: taken over only with the media it names.
+    clear(syncData);
+    clear(localData);
+    syncData.settings = { appearance: { glass: 'tinted' }, wallpaper: { type: 'video', value: 'local-9', blur: 4, idleHide: false, framing: { scale: 2, x: 0.2, y: 0.3 } } };
+    const without = new AppStore(async () => false);
+    await without.init();
+    assert.equal(without.state.settings.wallpaper.type, 'gradient', '本机没有那段视频：回到默认场景');
+    assert.deepEqual(without.state.settings.wallpaper.framing, { scale: 1, x: 0.5, y: 0.5 }, '别的设备的取景不带过来');
+    assert.equal(without.state.settings.wallpaper.idleHide, false, '其他壁纸偏好保留');
+    assert.equal((localData.wallpaper as any).type, 'gradient', '迁移结果写进本机，只迁移一次');
+
+    clear(localData);
+    const withMedia = new AppStore(async () => true);
+    await withMedia.init();
+    assert.equal(withMedia.state.settings.wallpaper.value, 'local-9', '本机有这段视频：沿用原来的设置');
+    assert.equal(withMedia.state.settings.wallpaper.blur, 4);
+
+    // A save on another device no longer reaches this device's wallpaper.
+    syncData.settings = { ...(syncData.settings as object), wallpaper: { type: 'local', value: 'local-77' } };
+    const later = new AppStore(async () => true);
+    await later.init();
+    assert.equal(later.state.settings.wallpaper.value, 'local-9', '同步区里的旧壁纸设置不再生效');
+}
+
 testTransactions()
     .then(testQueryBookmarksSurvive)
     .then(testTabsDoNotOverwriteEachOther)
     .then(testImportDropsExtraChunks)
+    .then(testWallpaperStaysOnDevice)
     .then(() => console.log('TypeScript core tests passed.'))
     .catch((error) => {
         console.error(error);
