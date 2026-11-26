@@ -75,7 +75,10 @@ async function installChromeMock(page, seed = initialData, options = {}) {
                 local: storageArea(localKey),
                 onChanged: {
                     addListener(listener) {
-                        window.addEventListener('storage', (event) => { if (event.key === syncKey) listener({}, 'sync'); });
+                        window.addEventListener('storage', (event) => {
+                            if (event.key === syncKey) listener({}, 'sync');
+                            else if (event.key === localKey) listener({}, 'local');
+                        });
                     }
                 }
             },
@@ -404,7 +407,7 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
         mimeType: 'image/png',
         buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
     });
-    await expect.poll(() => page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('local');
+    await expect.poll(() => page.evaluate(() => window.__readMockLocal().wallpaper.type)).toBe('local');
     await expect(page.locator('.wallpaper-name')).toHaveText('本地图片');
     await expect(page.locator('[data-segment="wallpaperKind"] [data-value="image"]')).toHaveClass(/is-active/);
     await page.reload();
@@ -413,6 +416,8 @@ test('persists layout, theme and local wallpaper controls', async ({ page }) => 
     const stored = await page.evaluate(() => window.__readMockSync().settings);
     expect(stored.layout.showStatus).toBe(false);
     expect(stored.layout.showBookmarks).toBe(true);
+    // The picture is only on this device, and so is the choice of it.
+    expect(stored).not.toHaveProperty('wallpaper');
     expect(stored.appearance.theme).toBe('dark');
     expect(stored.appearance.clockFormat).toBe('12h');
     expect(stored.appearance.hdrHighlights).toBe(true);
@@ -444,7 +449,7 @@ test('takes a wallpaper dropped onto or pasted into the wallpaper settings', asy
     await page.locator('.settings-pane[data-pane="data"]').dispatchEvent('dragover', { dataTransfer: transfer });
     await page.locator('.settings-pane[data-pane="data"]').dispatchEvent('drop', { dataTransfer: transfer });
     await page.waitForTimeout(300);
-    expect(await page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('gradient');
+    expect(await page.evaluate(() => window.__readMockLocal().wallpaper.type)).toBe('gradient');
     await expect(page).toHaveURL(/\/newtab\.html$/);
 
     // Dragging over the card highlights it; dropping saves the picture.
@@ -453,16 +458,16 @@ test('takes a wallpaper dropped onto or pasted into the wallpaper settings', asy
     await expect(card).toHaveClass(/is-drop-target/);
     await card.dispatchEvent('drop', { dataTransfer: transfer });
     await expect(card).not.toHaveClass(/is-drop-target/);
-    await expect.poll(() => page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('local');
+    await expect.poll(() => page.evaluate(() => window.__readMockLocal().wallpaper.type)).toBe('local');
     await expect(page.locator('.wallpaper-name')).toHaveText('本地图片');
-    const dropped = await page.evaluate(() => window.__readMockSync().settings.wallpaper.value);
+    const dropped = await page.evaluate(() => window.__readMockLocal().wallpaper.value);
 
     // A picture copied in Photos (⌘C) arrives as a pasted image file.
     transfer = await fileTransfer(page, { name: 'image.png', type: 'image/png', base64: PIXEL_PNG });
     await page.evaluate((clipboardData) => {
         document.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
     }, transfer);
-    await expect.poll(() => page.evaluate(() => window.__readMockSync().settings.wallpaper.value)).not.toBe(dropped);
+    await expect.poll(() => page.evaluate(() => window.__readMockLocal().wallpaper.value)).not.toBe(dropped);
 
     // HEIC photos get a way out instead of a decoding error.
     transfer = await fileTransfer(page, { name: 'IMG_0001.HEIC', type: '', base64: PIXEL_PNG });
@@ -477,7 +482,7 @@ test('takes a wallpaper dropped onto or pasted into the wallpaper settings', asy
         clipboardData.setData('text/plain', '暗化');
         document.activeElement.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
     });
-    expect(await page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('local');
+    expect(await page.evaluate(() => window.__readMockLocal().wallpaper.type)).toBe('local');
     expect(errors).toEqual([]);
 });
 
@@ -495,7 +500,7 @@ test('moves through the wallpaper type buttons without opening anything', async 
     await page.keyboard.press('ArrowLeft');
     await page.waitForTimeout(300);
     expect(chooserOpened).toBe(false);
-    expect(await page.evaluate(() => window.__readMockSync().settings.wallpaper.type)).toBe('gradient');
+    expect(await page.evaluate(() => window.__readMockLocal().wallpaper.type)).toBe('gradient');
     // Enter is what starts the action.
     const chooser = page.waitForEvent('filechooser');
     await page.keyboard.press('Enter');
@@ -540,7 +545,8 @@ test('keeps the previous wallpaper when IndexedDB storage fails', async ({ page 
     });
     await expect(page.locator('.toast.is-error')).toContainText('IndexedDB');
     const state = await page.evaluate(() => ({ sync: window.__readMockSync(), local: window.__readMockLocal() }));
-    expect(state.sync.settings.wallpaper).toEqual(initialData.settings.wallpaper);
+    // The wallpaper settings were taken over from sync into this device's storage on load, and stayed as they were.
+    expect(state.local.wallpaper).toMatchObject(initialData.settings.wallpaper);
     expect(state.local).not.toHaveProperty('localImageWallpaper');
     expect(state.local).not.toHaveProperty('localVideoWallpaper');
     expect(errors).toEqual([]);
@@ -572,9 +578,8 @@ test('reports native video playback failures instead of swallowing them', async 
             transaction.onerror = () => reject(transaction.error);
         });
         database.close();
-        const stored = window.__readMockSync();
-        stored.settings.wallpaper = { ...stored.settings.wallpaper, type: 'video', value: 'local-1' };
-        await new Promise((resolve) => chrome.storage.sync.set({ settings: stored.settings }, resolve));
+        const { wallpaper } = window.__readMockLocal();
+        await chrome.storage.local.set({ wallpaper: { ...wallpaper, type: 'video', value: 'local-1' } });
     }, videoBase64);
     await page.reload();
     await expect(page.locator('.app-notice')).toBeVisible();
@@ -839,7 +844,7 @@ async function pinch(page, steps, deltaY) {
 const zoomOf = (page) => page.locator('wallpaper-surface').evaluate((element) => Number(element.dataset.zoom ?? 1));
 
 const mediaRect = (page) => page.locator('.wallpaper-media').evaluate((media) => media.getBoundingClientRect().toJSON());
-const savedFraming = (page) => page.evaluate(() => window.__readMockSync().settings.wallpaper.framing);
+const savedFraming = (page) => page.evaluate(() => window.__readMockLocal().wallpaper.framing);
 
 test('reframes the wallpaper in place and keeps the framing', async ({ page }) => {
     const errors = await openExtension(page);

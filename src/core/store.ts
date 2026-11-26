@@ -2,6 +2,7 @@ import {
     DEFAULT_SETTINGS,
     MAX_INLINE_ICON_LENGTH,
     finiteNumber,
+    isRecord,
     normalizeFolders,
     normalizeRecentSearches,
     renumberFolders,
@@ -14,8 +15,9 @@ import {
     staleBookmarkKeys,
     storedChunkCount
 } from './bookmark-storage';
-import { onSyncChanged, storageClear, storageGet, storageRemove, storageSet } from './storage';
-import type { AppSettings, AppState, Bookmark, SettingsSection } from './types';
+import { localClear, localGet, localSet, onStorageChanged, storageClear, storageGet, storageRemove, storageSet } from './storage';
+import { mediaStore } from './media-store';
+import type { AppSettings, AppState, Bookmark, SettingsSection, WallpaperSettings } from './types';
 import { ROOT_FOLDER, cleanText, compareBookmarks, normalizeUrl, sanitizeRemoteUrl } from './utils';
 
 export type StoreChangeKey = keyof AppState | `settings.${SettingsSection}`;
@@ -39,12 +41,28 @@ function initialState(): AppState {
     };
 }
 
+/** Whether this device holds the picture or video a wallpaper setting points at. */
+export type MediaCheck = (kind: 'image' | 'video') => Promise<boolean>;
+
+const hasStoredMedia: MediaCheck = async (kind) => {
+    try {
+        return Boolean(await mediaStore.get(kind));
+    } catch {
+        return false;
+    }
+};
+
 /**
- * The page's copy of everything in sync storage. Writes run one at a time, and
- * changes made by other tabs or devices are reloaded so a later save here never
- * overwrites them with stale data.
+ * The page's copy of everything in storage: bookmarks and settings from sync,
+ * the wallpaper settings from this device's local area. Writes run one at a
+ * time, and changes made by other tabs or devices are reloaded so a later save
+ * here never overwrites them with stale data.
  */
 export class AppStore extends EventTarget {
+    constructor(private readonly hasMedia: MediaCheck = hasStoredMedia) {
+        super();
+    }
+
     private stateValue = initialState();
     private initialized: Promise<void> | null = null;
     private bookmarkChunks = 0;
@@ -59,7 +77,7 @@ export class AppStore extends EventTarget {
         this.initialized ??= this.serial(async () => {
             this.stateValue = await this.read();
             this.emit(ALL_CHANGES);
-            onSyncChanged(this.queueReload);
+            onStorageChanged(this.queueReload);
         });
         this.initialized.catch(() => { this.initialized = null; });
         return this.initialized;
@@ -189,10 +207,12 @@ export class AppStore extends EventTarget {
             await storageSet({
                 ...encoded.values,
                 folders: next.folders,
-                settings: next.settings,
+                settings: syncedSettings(next.settings),
                 recentSearches: fitRecentSearches(next.recentSearches),
                 lastBackupPrompt: next.lastBackupPrompt
             });
+            // The backup's wallpaper comes with its media, so it belongs to this device.
+            await localSet({ [WALLPAPER_KEY]: next.settings.wallpaper });
             // The backup is saved once the write lands; leftover chunks are cleaned up like after any other save.
             this.stateValue = structuredClone(next);
             this.stateValue.recentSearches = fitRecentSearches(next.recentSearches);
@@ -204,6 +224,7 @@ export class AppStore extends EventTarget {
     reset(): Promise<void> {
         return this.serial(async () => {
             await storageClear();
+            await localClear();
             this.bookmarkChunks = 0;
             this.stateValue = initialState();
             this.emit(ALL_CHANGES);
@@ -218,16 +239,39 @@ export class AppStore extends EventTarget {
     }
 
     private async read(): Promise<AppState> {
-        const stored = await storageGet<Record<string, unknown>>(null);
+        const [stored, device] = await Promise.all([
+            storageGet<Record<string, unknown>>(null),
+            localGet<Record<string, unknown>>(WALLPAPER_KEY)
+        ]);
         this.bookmarkChunks = storedChunkCount(stored);
         const bookmarks = sanitizeBookmarks(decodeBookmarks(stored));
+        const synced = isRecord(stored.settings) ? stored.settings : {};
+        const wallpaper = WALLPAPER_KEY in device && device[WALLPAPER_KEY] !== undefined
+            ? device[WALLPAPER_KEY]
+            : await this.adoptSyncedWallpaper(synced.wallpaper);
         return {
             bookmarks,
             folders: normalizeFolders(stored.folders, bookmarks),
-            settings: sanitizeSettings(stored.settings),
+            settings: sanitizeSettings({ ...synced, wallpaper }),
             recentSearches: normalizeRecentSearches(stored.recentSearches),
             lastBackupPrompt: finiteNumber(stored.lastBackupPrompt, 0)
         };
+    }
+
+    /**
+     * Before 3.7.1 the wallpaper settings were synced, so a device may hold
+     * another device's choice. It is taken over once, as this device's own,
+     * only where this device has the media it names; otherwise this device
+     * starts from the built-in scene, keeping the other wallpaper preferences.
+     */
+    private async adoptSyncedWallpaper(value: unknown): Promise<WallpaperSettings> {
+        const wallpaper = sanitizeSettings({ wallpaper: value }).wallpaper;
+        const kind = wallpaper.type === 'video' ? 'video' : wallpaper.type === 'local' ? 'image' : null;
+        const adopted = kind && !await this.hasMedia(kind)
+            ? { ...wallpaper, type: DEFAULT_SETTINGS.wallpaper.type, value: DEFAULT_SETTINGS.wallpaper.value, framing: DEFAULT_SETTINGS.wallpaper.framing }
+            : wallpaper;
+        await localSet({ [WALLPAPER_KEY]: adopted }).catch(() => undefined);
+        return adopted;
     }
 
     /** Several change events (a save and its chunk cleanup) collapse into one reload. */
@@ -254,8 +298,16 @@ export class AppStore extends EventTarget {
             const draft = structuredClone(this.stateValue);
             if (mutator(draft) === false) return;
             const values: Record<string, unknown> = {};
+            const deviceValues: Record<string, unknown> = {};
             let bookmarkChunks: number | null = null;
             keys.forEach((key) => {
+                if (key === 'settings') {
+                    // The wallpaper section is this device's; the other sections are synced.
+                    const sections = changes.filter((change) => change.startsWith('settings.'));
+                    if (!sections.length || sections.includes('settings.wallpaper')) deviceValues[WALLPAPER_KEY] = draft.settings.wallpaper;
+                    if (!sections.length || sections.some((change) => change !== 'settings.wallpaper')) values.settings = syncedSettings(draft.settings);
+                    return;
+                }
                 if (key !== 'bookmarks') {
                     values[key] = draft[key];
                     return;
@@ -264,7 +316,8 @@ export class AppStore extends EventTarget {
                 Object.assign(values, encoded.values);
                 bookmarkChunks = encoded.count;
             });
-            await storageSet(values);
+            if (Object.keys(values).length) await storageSet(values);
+            if (Object.keys(deviceValues).length) await localSet(deviceValues);
             this.stateValue = draft;
             if (bookmarkChunks !== null) await this.dropStaleBookmarkKeys(bookmarkChunks);
             this.emit(changes);
@@ -286,6 +339,15 @@ export class AppStore extends EventTarget {
     private emit(changes: StoreChangeKey[]): void {
         this.dispatchEvent(new CustomEvent('change', { detail: { state: this.stateValue, changes } }));
     }
+}
+
+/** The local storage key that holds this device's wallpaper settings. */
+const WALLPAPER_KEY = 'wallpaper';
+
+/** Settings as they are synced: everything but the wallpaper, which stays on its device. */
+function syncedSettings(settings: AppSettings): Omit<AppSettings, 'wallpaper'> {
+    const { wallpaper: _wallpaper, ...synced } = settings;
+    return synced;
 }
 
 /** chrome.storage.sync caps one item at 8 KB; recent searches in CJK can pass that well before the 20-entry limit. */

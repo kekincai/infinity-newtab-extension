@@ -5,40 +5,45 @@
 export function installChromeFallback(): void {
     if ((globalThis as any).chrome?.storage?.sync) return;
     const syncKey = 'infinity-preview-sync';
-    const read = (): Record<string, unknown> => JSON.parse(localStorage.getItem(syncKey) || '{}');
-    const write = (values: Record<string, unknown>) => localStorage.setItem(syncKey, JSON.stringify(values));
-    const sync = {
-        async get(keys: unknown): Promise<Record<string, unknown>> {
-            const values = read();
-            if (keys === null || keys === undefined) return values;
-            if (typeof keys === 'string') return { [keys]: values[keys] };
-            if (Array.isArray(keys)) return Object.fromEntries(keys.map((key) => [key, values[key]]));
-            return {};
-        },
-        async set(next: Record<string, unknown>): Promise<void> {
-            write({ ...read(), ...next });
-        },
-        async remove(keys: string | string[]): Promise<void> {
-            const values = read();
-            (Array.isArray(keys) ? keys : [keys]).forEach((key) => delete values[key]);
-            write(values);
-        },
-        async clear(): Promise<void> {
-            localStorage.removeItem(syncKey);
-        },
-        async getBytesInUse(): Promise<number> {
-            return new TextEncoder().encode(localStorage.getItem(syncKey) ?? '').length;
-        }
+    const localKey = 'infinity-preview-local';
+    const area = (key: string) => {
+        const read = (): Record<string, unknown> => JSON.parse(localStorage.getItem(key) || '{}');
+        const write = (values: Record<string, unknown>) => localStorage.setItem(key, JSON.stringify(values));
+        return {
+            async get(keys: unknown): Promise<Record<string, unknown>> {
+                const values = read();
+                if (keys === null || keys === undefined) return values;
+                if (typeof keys === 'string') return { [keys]: values[keys] };
+                if (Array.isArray(keys)) return Object.fromEntries(keys.map((name) => [name, values[name]]));
+                return {};
+            },
+            async set(next: Record<string, unknown>): Promise<void> {
+                write({ ...read(), ...next });
+            },
+            async remove(keys: string | string[]): Promise<void> {
+                const values = read();
+                (Array.isArray(keys) ? keys : [keys]).forEach((name) => delete values[name]);
+                write(values);
+            },
+            async clear(): Promise<void> {
+                localStorage.removeItem(key);
+            },
+            async getBytesInUse(): Promise<number> {
+                return new TextEncoder().encode(localStorage.getItem(key) ?? '').length;
+            }
+        };
     };
     (globalThis as any).chrome = {
         runtime: { id: 'preview', getURL: (path: string) => new URL(path, location.href).href },
         storage: {
-            sync,
+            sync: area(syncKey),
+            local: area(localKey),
             // Other preview tabs writing to localStorage stand in for other tabs and devices.
             onChanged: {
                 addListener(listener: (changes: Record<string, unknown>, areaName: string) => void) {
                     window.addEventListener('storage', (event) => {
                         if (event.key === syncKey) listener({}, 'sync');
+                        else if (event.key === localKey) listener({}, 'local');
                     });
                 }
             }
